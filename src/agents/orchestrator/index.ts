@@ -2916,47 +2916,80 @@ export class AgentOrchestrator {
         reportTotalCost: (c: number) => { totalCost = c; },
       });
     } catch (error) {
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.error("[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.error("[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
-      // Only transition to FAILED if not already completed
-      const currentState = stateMachine.getState();
-      if (currentState !== "COMPLETED" && currentState !== "FAILED") {
-        await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
-      }
-
-      const totalTimeMs = Date.now() - startTime;
-
-      await completeAnalysis({
-        analysisId: analysis.id,
-        success: false,
-        totalCost,
-        totalTimeMs,
-        summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        results: allResults,
-        mode: analysisModeOverride ?? "full_analysis",
-        statusOverride: "FAILED",
-      });
-
-      // End cost monitoring after final results are persisted so `_costReport`
-      // survives the failed completion payload as well.
-      await costMonitor.endAnalysis({
-        persistAnalysisSummary: false,
-      });
-
-      return this.addWarningsToResult({
-        sessionId: analysis.id,
+      return await this.failFullAnalysis(error, {
+        stateMachine,
+        analysis,
         dealId,
-        type: "full_analysis",
-        success: false,
-        results: allResults,
         totalCost,
-        totalTimeMs,
-        summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        tiersExecuted: [...TIERS_EXECUTED],
-      }, collectedWarnings);
+        allResults,
+        analysisModeOverride,
+        startTime,
+        collectedWarnings,
+      });
     }
+  }
+
+  /**
+   * d-2b-3 — Gestion d'échec terminale de full_analysis (transition FAILED best-effort +
+   * completeAnalysis + endAnalysis + addWarningsToResult), extraite BYTE-INERT du catch de
+   * runFullAnalysisPipeline. PARTAGÉE par runFullAnalysisPipeline ET runFullAnalysisStepwise
+   * (même handler d'échec, pas de drift). Reçoit le `totalCost` courant (déjà remonté par
+   * reportTotalCost depuis le tail) → coût d'échec identique à avant l'extraction.
+   */
+  private async failFullAnalysis(
+    error: unknown,
+    ctx: {
+      stateMachine: AnalysisStateMachine;
+      analysis: Awaited<ReturnType<typeof createAnalysis>>;
+      dealId: string;
+      totalCost: number;
+      allResults: Record<string, AgentResult>;
+      analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+      startTime: number;
+      collectedWarnings: EarlyWarning[];
+    }
+  ): Promise<AnalysisResult> {
+    const { stateMachine, analysis, dealId, totalCost, allResults, analysisModeOverride, startTime, collectedWarnings } = ctx;
+    // DEBUG log removed for production - uncomment for debugging:
+    // console.error("[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
+    // DEBUG log removed for production - uncomment for debugging:
+    // console.error("[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
+    // Only transition to FAILED if not already completed
+    const currentState = stateMachine.getState();
+    if (currentState !== "COMPLETED" && currentState !== "FAILED") {
+      await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
+    }
+
+    const totalTimeMs = Date.now() - startTime;
+
+    await completeAnalysis({
+      analysisId: analysis.id,
+      success: false,
+      totalCost,
+      totalTimeMs,
+      summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      results: allResults,
+      mode: analysisModeOverride ?? "full_analysis",
+      statusOverride: "FAILED",
+    });
+
+    // End cost monitoring after final results are persisted so `_costReport`
+    // survives the failed completion payload as well.
+    await costMonitor.endAnalysis({
+      persistAnalysisSummary: false,
+    });
+
+    return this.addWarningsToResult({
+      sessionId: analysis.id,
+      dealId,
+      type: "full_analysis",
+      success: false,
+      results: allResults,
+      totalCost,
+      totalTimeMs,
+      summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      tiersExecuted: [...TIERS_EXECUTED],
+    }, collectedWarnings);
   }
 
 
