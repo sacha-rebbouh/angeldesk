@@ -1,6 +1,23 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-01 — Durabilité Deep Dive D.5c + design D.5d + D.5d-1a (harness infra + fondations driver)
+
+### Contexte
+Suite de D.5b. **D.5c** : infrastructure du golden harness. **Design D.5d** verrouillé avec Codex (4 tours). **D.5d-1a** : fondations du driver. Tout ADDITIF/byte-inert (driver pas encore câblé). Gate Codex par micro-étape (thread #2 `019e8433-…`).
+
+### Modifications (sur `fix/thesis-gate-guard`, NON poussé, gated APPROVE)
+- **D.5c (`5735e3a`)** : `step-runner.ts` — `StepRunner` interface + `InlineStepRunner` (OFF, run=fn()) + `InngestStepRunner` (délègue step.run) + `FakeStepRunner` (mémoïse JSON + round-trip wire à chaque run + kill/resume via startPass/FakeStepKill + forgetStep/executedIds/memoHits) + `runStepwiseUntilDone`. 10 tests : E1 (Inline===Fake), E2 (kill/resume), négatif à dents (pipeline Date-dependent diverge), intégration bridge build→wire→rehydrate→restore.
+- **Design D.5d v4** (Codex, 4 REQUEST_CHANGES→APPROVE) : **modèle B** (rehydrate seulement au replay `!bodyRan` → E1 structurel) ; driver UNIFIÉ (Inline OFF byte-inert / Inngest ON hors `step.run('run-analysis')` externe) ; bootstrap toujours-exécuté non mémoïsé (stateMachine.start() dedans) ; unités durables `tier0-facts`→`tier0-thesis`→tier1-a/b/c/d→post-tier1-glue→tier3-pre→tier2-sector→tier3-post ; `terminalResult` wire pour early-returns ; `transitionCount` cumulatif (summary `transitions` E2===E1) ; persistStateTransition = télémétrie hors invariant (doublons replay = résiduel D.6). Golden d-1 scopé au niveau DRIVER (helpers stubés ; E1 full-pipeline réel = go/no-go preview D.6).
+- **D.5d-1a (`b3d3129`)** : DTO `full-analysis-step-state.ts` +`tier0-facts` (FullAnalysisUnit, isole le `createFactEventsBatch` non idempotent) +`terminalResult: Record|null` +`transitionCount: number` (validation bornée). Bridge : build/rehydrate portent les 2 nouveaux champs. State machine `state-machine.ts` : `restoredTransitionBase`, `getTransitionCount()` = base+length (CUMULATIF), `getSummary().transitions` via le getter, `restoreFromStepState` pose la base + reset transitions ; `UNIT_TO_STATE['tier0-facts']=INITIALIZING`. 13 nouveaux tests.
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, séparé, avant chaque commit) ; vitest orchestration+orchestrateur **233 passés**.
+
+### Reste
+**D.5d-1** (extraction byte-inert du corps pipeline + wrapper stepwise UNE step + inngest ON + golden driver), **d-2..k** (split 1 frontière/commit), **D.6** (activation + go/no-go FactEvent/E1-réel), **F** (watchdog), **G** (resume unification).
+
+---
 ## 2026-06-01 — Durabilité Deep Dive D.5b : contrat d'état complet (DTO v2 + pont live↔wire + restore)
 
 ### Contexte
