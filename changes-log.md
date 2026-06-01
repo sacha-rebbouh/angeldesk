@@ -1,6 +1,24 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-01 — Durabilité Deep Dive D.5a : driver stepwise fondation (flag + conditionnement checkpoint)
+
+### Contexte
+Suite du chantier durabilité Deep Dive (`PLAN-DEEPDIVE-DURABILITY.md`). Après la couche préconditions idempotence (D.1→D.4c, gatées Codex APPROVE), **D.5a** pose la FONDATION du driver stepwise : le flag `DEEP_DIVE_STEPWISE` + le conditionnement D.4c-3b qui garantit qu'en mode stepwise **aucun checkpoint legacy n'est émis** (les snapshots durables `STEPWISE:*` ne sont câblés qu'en D.5d). Gate Codex MCP read-only `xhigh` par micro-étape — thread #1 `019e82e8-…` expiré → rouvert thread #2 `019e8433-…` (`.codex-gate-thread`).
+
+### Modifications (1 commit code `1fa3dbf` sur `fix/thesis-gate-guard`, NON poussé, gated APPROVE 1er tour)
+- **`src/agents/orchestrator/types.ts`** : champ `stepwise?: boolean` sur `AnalysisOptions` + `AdvancedAnalysisOptions`.
+- **`src/agents/orchestrator/index.ts`** : threading **explicite** de `stepwise` (orchestrateur singleton + concurrency 3 → pas d'état d'instance, sinon course) de `AnalysisOptions` → `advancedOptions` → `initializeFullAnalysisRun` → `FullAnalysisRunInit` → `runFullAnalysis` → 3 helpers (`runPostTier1Aggregation`, `runTier3PreTier2Batch`, `runTier2ConsensusReflexionStep`) + `persistTierCheckpoint` + `runFinalCompletion`. Param `stepwise` **REQUIS** → `tsc=0` prouve que tous les call-sites le passent. Conditionnement des 3 sources de checkpoint legacy : (a) state machine `enableCheckpointing: !stepwise` (coupe périodique + transition + flush, ET le checkpoint FAILED via `stateMachine.fail()`), (b) `persistTierCheckpoint` early-return `if (stepwise) return;` (4 frontières ANALYZING), (c) `runFinalCompletion` met le `saveCheckpoint("COMPLETED")` sous `if (!stepwise)` — `completeAnalysis` (complétion canonique) conservée hors garde.
+- **`src/lib/inngest.ts`** : `dealAnalysisFunction` lit `runStepwise = process.env.DEEP_DIVE_STEPWISE === "1" && type === "full_analysis"`. OFF (défaut) → spread `...{}` (l'objet passé à `runAnalysis` reste `{dealId,type,enableTrace}` runtime-identique). ON → ajoute `stepwise:true` (stub single-pass ; le découpage N-steps vient en D.5d). Structure `step.run`/try-catch/compensate/refund inchangée.
+- **`src/agents/orchestrator/__tests__/full-analysis-stepwise.test.ts`** (nouveau, 4 tests, pattern `cache-behavior`) : `persistTierCheckpoint` no-op si stepwise / écrit ANALYZING sinon ; `runFinalCompletion` sans `saveCheckpoint("COMPLETED")` si stepwise (mais `completeAnalysis` appelé) / avec sinon.
+
+### Vérif
+`tsc --noEmit` **exit 0** (lu en appel séparé avant commit) ; vitest orchestrateur **90/90** (86 baseline + 4) ; suite unit complète **4138 passés / 2 skipped**. Invariant « zéro checkpoint legacy en stepwise » validé Codex sur chemins succès ET échec ; byte-inertness OFF confirmée empiriquement (86 tests existants verts inchangés).
+
+### Reste
+**D.5b** (audit des champs lus → DTO `FullAnalysisStepState` v2 + build/rehydrate + `restoreFromStepState`), **D.5c** (golden harness `FakeStepRunner` — c'est là que `StepRunner`, différé en D.5a, arrive), **D.5d..** (conversion par agent/unit + `writeStepwiseSnapshot`, byte-equiv re-vérifiée), **D.6** (activation preview→prod + go/no-go FactEvent).
+
+---
 ## 2026-06-01 — Durabilité Deep Dive Phase 1 : extraction byte-inert C.3g→C.3m + dette doc
 
 ### Contexte
