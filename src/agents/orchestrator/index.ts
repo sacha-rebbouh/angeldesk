@@ -2187,6 +2187,33 @@ export class AgentOrchestrator {
     return crossValidation;
   }
 
+  private async runRedFlagConsolidationStep(params: {
+    allResults: Record<string, AgentResult>;
+    enrichedContext: EnrichedAgentContext;
+  }): Promise<void> {
+    const { allResults, enrichedContext } = params;
+    // STEP 4.6: CONSOLIDATE RED FLAGS (F77 - unified taxonomy)
+    try {
+      const { consolidateRedFlags } = await import("../red-flag-taxonomy");
+      const agentRedFlagMap: Record<string, { redFlags?: Array<{ id: string; category: string; severity: string; [key: string]: unknown }> }> = {};
+      for (const [agentName, result] of Object.entries(allResults)) {
+        if (result.success && "data" in result) {
+          const data = (result as { data?: Record<string, unknown> }).data;
+          if (data?.redFlags && Array.isArray(data.redFlags)) {
+            agentRedFlagMap[agentName] = { redFlags: data.redFlags as Array<{ id: string; category: string; severity: string }> };
+          }
+        }
+      }
+      const consolidatedFlags = consolidateRedFlags(agentRedFlagMap);
+      if (consolidatedFlags.length > 0) {
+        enrichedContext.consolidatedRedFlags = consolidatedFlags;
+        console.log(`[Orchestrator] F77: Consolidated ${consolidatedFlags.length} red flags from ${Object.keys(agentRedFlagMap).length} agents`);
+      }
+    } catch (err) {
+      console.error("[Orchestrator] Red flag consolidation failed:", err);
+    }
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2452,26 +2479,7 @@ export class AgentOrchestrator {
 
       this.runTier1CrossValidationStep({ allResults, enrichedContext });
 
-      // STEP 4.6: CONSOLIDATE RED FLAGS (F77 - unified taxonomy)
-      try {
-        const { consolidateRedFlags } = await import("../red-flag-taxonomy");
-        const agentRedFlagMap: Record<string, { redFlags?: Array<{ id: string; category: string; severity: string; [key: string]: unknown }> }> = {};
-        for (const [agentName, result] of Object.entries(allResults)) {
-          if (result.success && "data" in result) {
-            const data = (result as { data?: Record<string, unknown> }).data;
-            if (data?.redFlags && Array.isArray(data.redFlags)) {
-              agentRedFlagMap[agentName] = { redFlags: data.redFlags as Array<{ id: string; category: string; severity: string }> };
-            }
-          }
-        }
-        const consolidatedFlags = consolidateRedFlags(agentRedFlagMap);
-        if (consolidatedFlags.length > 0) {
-          enrichedContext.consolidatedRedFlags = consolidatedFlags;
-          console.log(`[Orchestrator] F77: Consolidated ${consolidatedFlags.length} red flags from ${Object.keys(agentRedFlagMap).length} agents`);
-        }
-      } catch (err) {
-        console.error("[Orchestrator] Red flag consolidation failed:", err);
-      }
+      await this.runRedFlagConsolidationStep({ allResults, enrichedContext });
 
       // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
       // Run conditions-analyst, contradiction-detector, devils-advocate in PARALLEL
