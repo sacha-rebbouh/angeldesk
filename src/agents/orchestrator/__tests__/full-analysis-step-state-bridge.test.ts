@@ -5,6 +5,8 @@ import {
   rehydrateContext,
   buildTerminalEnvelope,
   reviveTerminalEnvelope,
+  buildTier0FactsWire,
+  applyTier0FactsWire,
 } from "../full-analysis-step-state-bridge";
 import type { AnalysisResult } from "../types";
 import {
@@ -377,5 +379,114 @@ describe("buildTerminalEnvelope / reviveTerminalEnvelope (D.5d-1c — enveloppe 
     expect("earlyWarnings" in env).toBe(false); // undefined droppé (comme JSON)
     const revived = reviveTerminalEnvelope(JSON.parse(JSON.stringify(env)));
     expect(revived.sessionId).toBe("a1");
+  });
+});
+
+// ============================================================================
+// d-2b — tier0-facts wire (buildTier0FactsWire / applyTier0FactsWire)
+// ============================================================================
+
+describe("d-2b — tier0-facts wire (DTO step de sortie)", () => {
+  function makeFactStore() {
+    return [
+      {
+        factKey: "arr",
+        value: "1.2M",
+        category: "financial",
+        firstSeenAt: new Date("2026-01-01T00:00:00.000Z"),
+        lastUpdatedAt: new Date("2026-02-01T00:00:00.000Z"),
+        validAt: new Date("2026-01-15T00:00:00.000Z"),
+        eventHistory: [
+          {
+            eventType: "ASSERTED",
+            createdAt: new Date("2026-01-01T00:00:00.000Z"),
+            validAt: new Date("2026-01-01T00:00:00.000Z"),
+          },
+        ],
+      },
+    ];
+  }
+
+  it("round-trip lossless : build -> JSON (frontière step) -> apply ravive les Date du factStore", () => {
+    const factStore = makeFactStore();
+    const founderResponses = [{ questionId: "q1", question: "ARR ?", answer: "1.2M", category: "financial" }];
+    const factExtractorResult = {
+      agentName: "fact-extractor",
+      success: true,
+      executionTimeMs: 1234,
+      cost: 0.05,
+      data: { facts: [{ key: "arr", value: "1.2M" }] },
+    };
+
+    const wire = buildTier0FactsWire({
+      totalCost: 0.05,
+      completedCount: 1,
+      factStore,
+      factStoreFormatted: "ARR: 1.2M",
+      founderResponses,
+      factExtractorResult,
+    });
+
+    // La frontière step Inngest sérialise/désérialise le retour en JSON.
+    const roundTripped = JSON.parse(JSON.stringify(wire)) as typeof wire;
+    const applied = applyTier0FactsWire(roundTripped);
+
+    expect(applied.totalCost).toBe(0.05);
+    expect(applied.completedCount).toBe(1);
+    expect(applied.factStoreFormatted).toBe("ARR: 1.2M");
+    expect(applied.founderResponses).toEqual(founderResponses);
+    // factStore : Date RAVIVÉES → deep-equal à l'original (Date objects).
+    expect(applied.factStore).toEqual(factStore);
+    expect((applied.factStore[0] as Record<string, unknown>).firstSeenAt).toBeInstanceOf(Date);
+    const ev = (applied.factStore[0] as { eventHistory: Array<Record<string, unknown>> }).eventHistory[0];
+    expect(ev.createdAt).toBeInstanceOf(Date);
+    // factExtractorResult : wire (pas de Date ici → identique).
+    expect(applied.factExtractorResult).toEqual(factExtractorResult);
+  });
+
+  it("factExtractorResult absent (scopedDocuments vide) → null préservé build + apply", () => {
+    const wire = buildTier0FactsWire({
+      totalCost: 0,
+      completedCount: 0,
+      factStore: [],
+      factStoreFormatted: "",
+      founderResponses: [],
+      factExtractorResult: undefined,
+    });
+    expect(wire.factExtractorResult).toBeNull();
+    const applied = applyTier0FactsWire(JSON.parse(JSON.stringify(wire)));
+    expect(applied.factExtractorResult).toBeNull();
+    expect(applied.factStore).toEqual([]);
+    expect(applied.totalCost).toBe(0);
+  });
+
+  it("normalizer STRICT : NaN dans totalCost → LÈVE (DTO non wire-safe)", () => {
+    expect(() =>
+      buildTier0FactsWire({
+        totalCost: NaN,
+        completedCount: 0,
+        factStore: [],
+        factStoreFormatted: "",
+        founderResponses: [],
+        factExtractorResult: null,
+      }),
+    ).toThrow();
+  });
+
+  it("normalizer STRICT : Date dans factExtractorResult.data → ISO (aucune Date résiduelle wire)", () => {
+    const wire = buildTier0FactsWire({
+      totalCost: 0,
+      completedCount: 1,
+      factStore: [],
+      factStoreFormatted: "",
+      founderResponses: [],
+      factExtractorResult: {
+        agentName: "fact-extractor",
+        success: true,
+        data: { extractedAt: new Date("2026-03-01T00:00:00.000Z") },
+      },
+    });
+    const data = (wire.factExtractorResult as { data: Record<string, unknown> }).data;
+    expect(data.extractedAt).toBe("2026-03-01T00:00:00.000Z");
   });
 });

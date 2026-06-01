@@ -22,6 +22,7 @@ import {
   type FullAnalysisStepState,
   type FullAnalysisUnit,
   assertSerializableStepState,
+  assertPlainJson,
 } from "./full-analysis-step-state";
 
 export interface BuildStepStateInput {
@@ -439,6 +440,83 @@ export function rehydrateContext(state: FullAnalysisStepState): RehydratedState 
     analysisId: state.analysisId,
     dealId: state.dealId,
     analysisType: state.analysisType,
+  };
+}
+
+// ============================================================================
+// d-2b — tier0-facts : DTO « step de sortie » (lock Codex #2/#3)
+// ============================================================================
+
+/**
+ * DTO wire de TOUTE la mutation de runTier0Step (lock Codex #3). `tier0-facts` est un step
+ * de SORTIE (pas un snapshot unit) : son retour mémoïsé EST appliqué au state vivant au
+ * memo hit (PAS de readLatestStepwiseSnapshot — lock Codex #2). Porte les 5 champs retournés
+ * par runTier0Step + `allResults["fact-extractor"]` (muté par réf dans runTier0Step).
+ */
+export interface Tier0FactsWire {
+  totalCost: number;
+  completedCount: number;
+  /** factStore wire (Date firstSeenAt/lastUpdatedAt/validAt/eventHistory en ISO). */
+  factStore: unknown[];
+  factStoreFormatted: string;
+  founderResponses: unknown[];
+  /** allResults["fact-extractor"] wire (null si scopedDocuments vide → agent non exécuté). */
+  factExtractorResult: Record<string, unknown> | null;
+}
+
+/**
+ * Construit le DTO wire depuis la mutation vivante de runTier0Step. Normalise STRICT
+ * (Date->ISO ; LÈVE sur NaN/Map/Set/classe via les helpers toWire et assertPlainJson). `factExtractorResult`
+ * = allResults["fact-extractor"] (ou null). Valide le tout JSON-pur avant retour (cohérent
+ * avec buildStepState).
+ */
+export function buildTier0FactsWire(input: {
+  totalCost: number;
+  completedCount: number;
+  factStore: unknown[];
+  factStoreFormatted: string;
+  founderResponses: unknown[];
+  factExtractorResult: unknown;
+}): Tier0FactsWire {
+  const wire: Tier0FactsWire = {
+    totalCost: input.totalCost,
+    completedCount: input.completedCount,
+    factStore: toWireArray(input.factStore, "$.tier0Facts.factStore"),
+    factStoreFormatted: input.factStoreFormatted,
+    founderResponses: toWireArray(input.founderResponses, "$.tier0Facts.founderResponses"),
+    factExtractorResult: toWireObjectOrNull(input.factExtractorResult, "$.tier0Facts.factExtractorResult"),
+  };
+  assertPlainJson(wire, "$.tier0FactsWire");
+  return wire;
+}
+
+/** Résultat de l'application du DTO tier0-facts au state vivant. */
+export interface AppliedTier0Facts {
+  totalCost: number;
+  completedCount: number;
+  /** factStore avec Date RAVIVÉES (deep-equal au single-pass, cohérent avec rehydrateContext). */
+  factStore: unknown[];
+  factStoreFormatted: string;
+  founderResponses: unknown[];
+  /** allResults["fact-extractor"] wire (string-date, comme rehydrateContext sur allResults) ou null. */
+  factExtractorResult: Record<string, unknown> | null;
+}
+
+/**
+ * Applique le DTO tier0-facts (run sain OU memo hit — lock Codex #2 : on applique CE DTO, on
+ * ne lit PAS readLatestStepwiseSnapshot). Ravive les Date du factStore (comme rehydrateContext
+ * → deep-equal au single-pass) ; laisse `factExtractorResult` en wire (allResults est traité
+ * wire partout dans le chantier — pas de revive, cohérent avec rehydrateContext qui fait
+ * cloneWire(state.allResults)). L'appelant pose `allResults["fact-extractor"]` si non-null.
+ */
+export function applyTier0FactsWire(wire: Tier0FactsWire): AppliedTier0Facts {
+  return {
+    totalCost: wire.totalCost,
+    completedCount: wire.completedCount,
+    factStore: reviveFactStore(wire.factStore),
+    factStoreFormatted: wire.factStoreFormatted,
+    founderResponses: cloneWire(wire.founderResponses),
+    factExtractorResult: cloneWire(wire.factExtractorResult),
   };
 }
 
