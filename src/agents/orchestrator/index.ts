@@ -57,6 +57,13 @@ import { loadResults } from "@/services/analysis-results/load-results";
 import { InlineStepRunner, type StepRunner } from "./step-runner";
 import { runTerminalStepwiseDriver } from "./full-analysis-driver";
 import {
+  buildStepState,
+  rehydrateContext,
+  buildTier0FactsWire,
+  applyTier0FactsWire,
+} from "./full-analysis-step-state-bridge";
+import { writeStepwiseSnapshot, readLatestStepwiseSnapshot } from "./full-analysis-snapshot";
+import {
   getCurrentFacts,
   formatFactStoreForAgents,
   createFactEventsBatch,
@@ -3264,6 +3271,250 @@ export class AgentOrchestrator {
       // early-return, exception) → le catch terminal de runFullAnalysisPipeline voit le même
       // totalCost qu'avant l'extraction.
       reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-2b — Chemin DURABLE de full_analysis (graphe stepwise v2). Découpe l'exécution en
+   * unités step.run mémoïsées : tier0-facts (step de SORTIE, FactEvent isolé) -> tier0-thesis
+   * (1er SNAPSHOT) -> rest (terminal transitoire = le RESTE du pipeline ; vrai split d-3..d-7).
+   * MODÈLE B : sur run sain les unités tournent en séquence in-process (mutent l'état vivant),
+   * AUCUN rehydrate -> résultat === single-pass (E1 structurel). Au REPLAY (Inngest re-déroule
+   * du haut), les unités complétées sont mémoïsées ; le 1er step à snapshot (tier0-thesis)
+   * déclenche le REHYDRATE UNIQUE (état reconstruit depuis le snapshot durable). tier0-facts
+   * est un step de SORTIE (lock Codex #2) : au memo hit on APPLIQUE son DTO, on ne lit PAS le
+   * snapshot. Réutilise les MÊMES helpers que runFullAnalysisPipeline (runFullAnalysisPostThesis,
+   * failFullAnalysis) -> aucun drift de séquence. OFF (flag/version) ne passe JAMAIS ici (routing
+   * d-2b-5 : ce chemin n'est atteint qu'en stepwise + stepwiseGraphVersion===2).
+   */
+  private async runFullAnalysisStepwise(
+    deal: DealWithDocs,
+    dealId: string,
+    onProgress: AnalysisOptions["onProgress"],
+    init: FullAnalysisRunInit,
+    stepRunner: StepRunner
+  ): Promise<AnalysisResult> {
+    const {
+      isUpdate,
+      enableTrace,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      initialCanonicalDeal,
+      sectorExpert,
+      TOTAL_AGENTS,
+      corpusSnapshot,
+      scopedDocuments,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
+
+    // État vivant traversant les unités (construit en run sain, REHYDRATÉ au replay).
+    let enrichedContext: EnrichedAgentContext | undefined;
+    let extractedData: ContextSeed = {};
+    let thesisOutput: ThesisExtractorOutput | null = null;
+
+    try {
+      // Bootstrap-in-graph : stateMachine.start() tourne TOUJOURS (idempotent au replay ; la
+      // state machine est créée hors step, non sérialisable). Non mémoïsé.
+      await stateMachine.start();
+
+      // ===== UNITÉ 1 : tier0-facts (step de SORTIE — lock Codex #2/#3) =====
+      // FactEvent isolé dans sa propre unité durable. Au memo hit on APPLIQUE le DTO retourné
+      // (toute la mutation de runTier0Step), on NE lit PAS readLatestStepwiseSnapshot.
+      const tier0FactsWire = await stepRunner.run("tier0-facts", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          const r = await this.runTier0Step({
+            deal,
+            scopedDocuments,
+            isUpdate,
+            onProgress,
+            allResults,
+            totalCost,
+            completedCount,
+            factStore,
+            factStoreFormatted,
+            founderResponses,
+          });
+          return buildTier0FactsWire({
+            totalCost: r.totalCost,
+            completedCount: r.completedCount,
+            factStore: r.factStore,
+            factStoreFormatted: r.factStoreFormatted,
+            founderResponses: r.founderResponses,
+            factExtractorResult: allResults["fact-extractor"],
+          });
+        })
+      );
+      {
+        const applied = applyTier0FactsWire(tier0FactsWire);
+        totalCost = applied.totalCost;
+        completedCount = applied.completedCount;
+        factStore = applied.factStore as CurrentFact[];
+        factStoreFormatted = applied.factStoreFormatted;
+        founderResponses = applied.founderResponses as typeof founderResponses;
+        if (applied.factExtractorResult !== null) {
+          allResults["fact-extractor"] = applied.factExtractorResult as unknown as AgentResult;
+        }
+      }
+
+      // ===== UNITÉ 2 : tier0-thesis (doc-extractor + deck + context + thèse ; 1er SNAPSHOT) =====
+      let tier0ThesisBodyRan = false;
+      await stepRunner.run("tier0-thesis", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          tier0ThesisBodyRan = true;
+          const baseContext = await this.buildBaseAnalysisContext({
+            dealId,
+            initialCanonicalDeal,
+            analysis,
+            analysisModeOverride,
+            corpusSnapshot,
+            scopedDocuments,
+          });
+          ({ totalCost, completedCount, extractedData } = await this.runDocumentExtractorStep({
+            baseContext,
+            scopedDocuments,
+            onProgress,
+            analysis,
+            stateMachine,
+            allResults,
+            totalCost,
+            completedCount,
+            TOTAL_AGENTS,
+          }));
+          let deckCoherenceReport: DeckCoherenceReport | null;
+          ({ totalCost, deckCoherenceReport } = await this.runDeckCoherenceStep({
+            deal,
+            scopedDocuments,
+            extractedData,
+            onProgress,
+            allResults,
+            totalCost,
+          }));
+          const ctxResult = await this.runContextEngineStep({
+            deal,
+            dealId,
+            baseContext,
+            stateMachine,
+            extractedData,
+            analysis,
+            corpusSnapshot,
+            deckCoherenceReport,
+            founderResponses,
+            onProgress,
+            completedCount,
+            TOTAL_AGENTS,
+            factStore,
+            factStoreFormatted,
+          });
+          factStore = ctxResult.factStore;
+          factStoreFormatted = ctxResult.factStoreFormatted;
+          const ec = ctxResult.enrichedContext;
+          enrichedContext = ec;
+          ({ totalCost, completedCount, thesisOutput } = await this.runThesisExtractionStep({
+            dealId,
+            analysisModeOverride,
+            analysis,
+            enrichedContext: ec,
+            corpusSnapshot,
+            allResults,
+            enableTrace,
+            totalCost,
+            completedCount,
+          }));
+          // 1er SNAPSHOT durable (frontière tier0-thesis) — capture l'état complet.
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id,
+              dealId,
+              analysisType: "full_analysis",
+              totalAgents: TOTAL_AGENTS,
+              completedCount,
+              totalCost,
+              startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(),
+              lastUnit: "tier0-thesis",
+              done: false,
+              enrichedContext: ec,
+              allResults,
+              verificationContext: null,
+              collectedWarnings,
+              tier1Findings: [],
+            })
+          );
+          return { unit: "tier0-thesis" as const };
+        })
+      );
+
+      if (!tier0ThesisBodyRan) {
+        // memo hit sur tier0-thesis (1er step à snapshot) → REHYDRATE UNIQUE (lock Codex #2).
+        const snap = await readLatestStepwiseSnapshot(analysis.id);
+        if (!snap) {
+          throw new Error("[stepwise] tier0-thesis mémoïsé sans snapshot durable (état incohérent)");
+        }
+        const rh = rehydrateContext(snap);
+        enrichedContext = rh.enrichedContext;
+        // Remplace allResults EN PLACE (réf partagée, lue par runFullAnalysisPostThesis via init).
+        for (const k of Object.keys(allResults)) delete allResults[k];
+        Object.assign(allResults, rh.allResults);
+        totalCost = rh.totalCost;
+        completedCount = rh.completedCount;
+        factStore = (enrichedContext.factStore ?? []) as CurrentFact[];
+        factStoreFormatted = enrichedContext.factStoreFormatted ?? "";
+        founderResponses = (enrichedContext.founderResponses ?? []) as typeof founderResponses;
+        // extractedData : enrichedContext.extractedData EST le ContextSeed (toExtractedContextData
+        // = cast). undefined → {} (cas seed vide ; hasContextSeed-false-non-vide = résiduel D.6).
+        extractedData = (enrichedContext.extractedData ?? {}) as unknown as ContextSeed;
+        stateMachine.restoreFromStepState(snap, { sectorExpertName: sectorExpert?.name ?? null });
+      }
+
+      if (!enrichedContext) {
+        throw new Error("[stepwise] enrichedContext absent après tier0-thesis (état incohérent)");
+      }
+
+      // ===== UNITÉ 3 : rest (terminal transitoire, stepId dédié) =====
+      // Le RESTE du pipeline post-thèse dans une unité durable terminale (Modèle B : run sain →
+      // liveResult exact ; replay de 'rest' → reconstruction enveloppe + results relus). Le vrai
+      // split par unité (tier1 / tier3-pre / tier2 / tier3-post) vient d-3..d-7.
+      const restEnrichedContext = enrichedContext;
+      return await runTerminalStepwiseDriver({
+        stepRunner,
+        stepwise,
+        stepId: "rest",
+        pipeline: () =>
+          this.runFullAnalysisPostThesis({
+            deal,
+            dealId,
+            onProgress,
+            init,
+            enrichedContext: restEnrichedContext,
+            extractedData,
+            thesisOutput,
+            totalCost,
+            completedCount,
+            factStore,
+            factStoreFormatted,
+            reportTotalCost: (c: number) => {
+              totalCost = c;
+            },
+          }),
+        loadPersistedResults: async () =>
+          (await loadResults(analysis.id)) as AnalysisResult["results"] | null,
+      });
+    } catch (error) {
+      return await this.failFullAnalysis(error, {
+        stateMachine,
+        analysis,
+        dealId,
+        totalCost,
+        allResults,
+        analysisModeOverride,
+        startTime,
+        collectedWarnings,
+      });
     }
   }
 
