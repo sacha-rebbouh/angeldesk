@@ -2087,6 +2087,61 @@ export class AgentOrchestrator {
     return { totalCost };
   }
 
+  /**
+   * C.3e — Cost-limit post-consensus (avant synthèse), extrait BYTE-INERT de runFullAnalysis.
+   * Si le budget est atteint, termine l'analyse tôt (stateMachine.complete + completeAnalysis
+   * + costMonitor.endAnalysis) et renvoie { done: true, result }. Sinon { done: false }.
+   * N'inclut PAS STEP 4.5 cross-validation, STEP 4.6 red-flags, ni Tier2/Tier3.
+   */
+  private async runPostConsensusCostLimit(params: {
+    maxCostUsd?: number;
+    totalCost: number;
+    stateMachine: AnalysisStateMachine;
+    allResults: Record<string, AgentResult>;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    dealId: string;
+    collectedWarnings: EarlyWarning[];
+    startTime: number;
+  }): Promise<{ done: true; result: AnalysisResult } | { done: false }> {
+    const { maxCostUsd, totalCost, stateMachine, allResults, analysis, analysisModeOverride, dealId, collectedWarnings, startTime } = params;
+    // Check cost limit before synthesis phase
+    if (maxCostUsd && totalCost >= maxCostUsd) {
+      console.log(`[Orchestrator] Cost limit reached (${totalCost.toFixed(2)} >= ${maxCostUsd}), skipping remaining phases`);
+      await stateMachine.complete();
+
+      const summary = generateFullAnalysisSummary(allResults);
+      const totalTimeMs = Date.now() - startTime;
+
+      await completeAnalysis({
+        analysisId: analysis.id,
+        success: true,
+        totalCost,
+        totalTimeMs,
+        summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit (${maxCostUsd})`,
+        results: allResults,
+        mode: analysisModeOverride ?? "full_analysis",
+      });
+
+      await costMonitor.endAnalysis({
+        persistAnalysisSummary: false,
+      });
+
+      return { done: true, result: this.addWarningsToResult({
+        sessionId: analysis.id,
+        dealId,
+        type: "full_analysis",
+        success: true,
+        results: allResults,
+        totalCost,
+        totalTimeMs,
+        summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit (${maxCostUsd})`,
+        tiersExecuted: [...TIERS_EXECUTED],
+      }, collectedWarnings) };
+    }
+    return { done: false };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2337,40 +2392,18 @@ export class AgentOrchestrator {
         totalCost,
       }));
 
-      // Check cost limit before synthesis phase
-      if (maxCostUsd && totalCost >= maxCostUsd) {
-        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), skipping remaining phases`);
-        await stateMachine.complete();
-
-        const summary = generateFullAnalysisSummary(allResults);
-        const totalTimeMs = Date.now() - startTime;
-
-        await completeAnalysis({
-          analysisId: analysis.id,
-          success: true,
-          totalCost,
-          totalTimeMs,
-          summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
-          results: allResults,
-          mode: analysisModeOverride ?? "full_analysis",
-        });
-
-        await costMonitor.endAnalysis({
-          persistAnalysisSummary: false,
-        });
-
-        return this.addWarningsToResult({
-          sessionId: analysis.id,
-          dealId,
-          type: "full_analysis",
-          success: true,
-          results: allResults,
-          totalCost,
-          totalTimeMs,
-          summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
-          tiersExecuted: [...TIERS_EXECUTED],
-        }, collectedWarnings);
-      }
+      const costLimitResult = await this.runPostConsensusCostLimit({
+        maxCostUsd,
+        totalCost,
+        stateMachine,
+        allResults,
+        analysis,
+        analysisModeOverride,
+        dealId,
+        collectedWarnings,
+        startTime,
+      });
+      if (costLimitResult.done) return costLimitResult.result;
 
       // STEP 4.5: TIER 1 CROSS-VALIDATION (deterministic, no LLM) (F34/F39)
       const crossValidation = runTier1CrossValidation(allResults);
