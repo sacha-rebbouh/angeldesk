@@ -13,6 +13,10 @@ import {
   cleanupOldCheckpoints,
   type CheckpointData,
 } from "../orchestrator/persistence";
+import type {
+  FullAnalysisStepState,
+  FullAnalysisUnit,
+} from "../orchestrator/full-analysis-step-state";
 
 // ============================================================================
 // STATE TYPES
@@ -37,6 +41,31 @@ export interface StateTransition {
   timestamp: Date;
   metadata?: Record<string, unknown>;
 }
+
+/**
+ * Mapping unité stepwise -> AnalysisState restauré (D.5b b-4). L'état reflète le startX
+ * déjà effectué quand l'unité s'est terminée, de sorte que la transition validée du
+ * step SUIVANT parte d'un état légal (cf. graphe isValidTransition) :
+ *   init -> INITIALIZING (start()) ; tier0-thesis -> GATHERING (startGathering au
+ *   context-engine ; thesis ne transitionne pas) ; tier1-* -> ANALYZING (startAnalysis) ;
+ *   post-tier1-glue -> DEBATING (startDebate dans le consensus global) ; tier3-pre /
+ *   tier2-sector / tier3-post -> SYNTHESIZING (startSynthesis ; aucun retour ANALYZING).
+ * Continuations valides : GATHERING->ANALYZING, ANALYZING->DEBATING, DEBATING->SYNTHESIZING,
+ * SYNTHESIZING->COMPLETED. (Gate Codex : tier2-sector NE DOIT PAS mapper ANALYZING, sinon
+ * complete() depuis ANALYZING serait une transition invalide.)
+ */
+const UNIT_TO_STATE: Record<FullAnalysisUnit, AnalysisState> = {
+  "init": "INITIALIZING",
+  "tier0-thesis": "GATHERING",
+  "tier1-phase-a": "ANALYZING",
+  "tier1-phase-b": "ANALYZING",
+  "tier1-phase-c": "ANALYZING",
+  "tier1-phase-d": "ANALYZING",
+  "post-tier1-glue": "DEBATING",
+  "tier3-pre": "SYNTHESIZING",
+  "tier2-sector": "SYNTHESIZING",
+  "tier3-post": "SYNTHESIZING",
+};
 
 export interface AnalysisCheckpoint {
   id: string;
@@ -638,6 +667,65 @@ export class AnalysisStateMachine {
       console.error("[StateMachine] Failed to restore from DB:", error);
       return false;
     }
+  }
+
+  /**
+   * Restore l'état interne depuis un FullAnalysisStepState stepwise (D.5b b-4).
+   *
+   * En mode stepwise `enableCheckpointing=false` → la state machine n'émet AUCUN
+   * checkpoint legacy → `restoreFromDb` (qui exclut STEPWISE:*) renverrait null. Le
+   * StepState ne porte PAS completedAgents/pendingAgents/findings/failedAgents/state
+   * séparément : on les DÉRIVE de `allResults` + `lastUnit` (la string STEPWISE:* n'est
+   * JAMAIS posée comme état — on mappe via UNIT_TO_STATE).
+   *
+   * Dérivation calquée sur recordAgentComplete/recordAgentFailed, restreinte au SET
+   * RECORDABLE (config.agents + sector expert si fourni) — `fact-extractor`,
+   * `deck-coherence-checker`, `thesis-extractor`, `context-engine` (hors config.agents)
+   * sont naturellement exclus (gate Codex : ne pas polluer la state machine). Pour chaque
+   * agent recordable présent dans allResults : success → completedAgents + results + findings
+   * (_react.findings, comme recordAgentComplete) ; échec → failedAgents (retries=1, comme
+   * restoreFromCheckpoint) ; dans les deux cas il quitte pendingAgents. Cohérence garantie
+   * par construction (dérivé d'allResults, pas de completedAgents porté qui divergerait).
+   */
+  restoreFromStepState(
+    state: FullAnalysisStepState,
+    opts?: { sectorExpertName?: string | null }
+  ): void {
+    const allResults = state.allResults as Record<
+      string,
+      (AnalysisAgentResult & { success?: boolean; error?: string; _react?: { findings?: ScoredFinding[] } }) | undefined
+    >;
+
+    const recordable = new Set<string>(this.config.agents);
+    if (opts?.sectorExpertName) recordable.add(opts.sectorExpertName);
+
+    this.completedAgents = new Set<string>();
+    this.failedAgents = new Map<string, { error: string; retries: number }>();
+    this.results = new Map<string, AnalysisAgentResult>();
+    this.findings = [];
+    this.pendingAgents = new Set<string>(this.config.agents);
+
+    for (const agentName of recordable) {
+      const result = allResults[agentName];
+      if (result === undefined) continue; // pas encore exécuté -> reste pending
+      this.pendingAgents.delete(agentName); // (no-op pour le sector expert, absent de config.agents)
+      if (result.success) {
+        this.completedAgents.add(agentName);
+        this.results.set(agentName, result as AnalysisAgentResult);
+        if (result._react?.findings) this.findings.push(...result._react.findings);
+      } else {
+        this.failedAgents.set(agentName, { error: result.error ?? "no error msg", retries: 1 });
+      }
+    }
+
+    this.startTime = new Date(state.startTimeMs);
+    this.stateStartTime = new Date();
+    this.state = UNIT_TO_STATE[state.lastUnit];
+
+    console.log(
+      `[StateMachine] Restored from StepState: unit=${state.lastUnit} -> state=${this.state}, ` +
+        `completed=${this.completedAgents.size}/${this.config.agents.length}, pending=${this.pendingAgents.size}`
+    );
   }
 
   /**
