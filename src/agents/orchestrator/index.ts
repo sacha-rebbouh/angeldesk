@@ -2394,6 +2394,69 @@ export class AgentOrchestrator {
     return { totalCost, completedCount };
   }
 
+  private async runTier2SectorStep(params: {
+    sectorExpert: Awaited<ReturnType<typeof getTier2SectorExpert>>;
+    totalCost: number;
+    completedCount: number;
+    enrichedContext: EnrichedAgentContext;
+    allResults: Record<string, AgentResult>;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    TOTAL_AGENTS: number;
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { sectorExpert, enrichedContext, allResults, stateMachine, analysis, dealId, onProgress, TOTAL_AGENTS } = params;
+    let { totalCost, completedCount } = params;
+    // STEP 6: SECTOR EXPERT PHASE - Tier 2 (active si secteur détecté)
+    if (sectorExpert) {
+      onProgress?.({
+        currentAgent: `tier2-${sectorExpert.name}`,
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+      });
+
+      try {
+        const sectorResult = await sectorExpert.run(enrichedContext);
+        allResults[sectorExpert.name] = sectorResult;
+        totalCost += sectorResult.cost;
+        completedCount++;
+        enrichedContext.previousResults![sectorExpert.name] = sectorResult;
+
+        if (sectorResult.success) {
+          stateMachine.recordAgentComplete(
+            sectorExpert.name,
+            sectorResult as unknown as AnalysisAgentResult
+          );
+        } else {
+          stateMachine.recordAgentFailed(sectorExpert.name, sectorResult.error ?? "Unknown");
+        }
+
+        await processAgentResult(dealId, sectorExpert.name, sectorResult);
+        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+        onProgress?.({
+          currentAgent: sectorExpert.name,
+          completedAgents: completedCount,
+          totalAgents: TOTAL_AGENTS,
+          latestResult: sectorResult,
+        });
+      } catch (error) {
+        const errorResult: AgentResult = {
+          agentName: sectorExpert.name,
+          success: false,
+          executionTimeMs: 0,
+          cost: 0,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+        allResults[sectorExpert.name] = errorResult;
+        stateMachine.recordAgentFailed(sectorExpert.name, errorResult.error ?? "Unknown");
+        completedCount++;
+      }
+    }
+    return { totalCost, completedCount };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2678,52 +2741,18 @@ export class AgentOrchestrator {
         TOTAL_AGENTS,
       }));
 
-      // STEP 6: SECTOR EXPERT PHASE - Tier 2 (active si secteur détecté)
-      if (sectorExpert) {
-        onProgress?.({
-          currentAgent: `tier2-${sectorExpert.name}`,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-        });
-
-        try {
-          const sectorResult = await sectorExpert.run(enrichedContext);
-          allResults[sectorExpert.name] = sectorResult;
-          totalCost += sectorResult.cost;
-          completedCount++;
-          enrichedContext.previousResults![sectorExpert.name] = sectorResult;
-
-          if (sectorResult.success) {
-            stateMachine.recordAgentComplete(
-              sectorExpert.name,
-              sectorResult as unknown as AnalysisAgentResult
-            );
-          } else {
-            stateMachine.recordAgentFailed(sectorExpert.name, sectorResult.error ?? "Unknown");
-          }
-
-          await processAgentResult(dealId, sectorExpert.name, sectorResult);
-          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-          onProgress?.({
-            currentAgent: sectorExpert.name,
-            completedAgents: completedCount,
-            totalAgents: TOTAL_AGENTS,
-            latestResult: sectorResult,
-          });
-        } catch (error) {
-          const errorResult: AgentResult = {
-            agentName: sectorExpert.name,
-            success: false,
-            executionTimeMs: 0,
-            cost: 0,
-            error: error instanceof Error ? error.message : "Unknown error",
-          };
-          allResults[sectorExpert.name] = errorResult;
-          stateMachine.recordAgentFailed(sectorExpert.name, errorResult.error ?? "Unknown");
-          completedCount++;
-        }
-      }
+      ({ totalCost, completedCount } = await this.runTier2SectorStep({
+        sectorExpert,
+        totalCost,
+        completedCount,
+        enrichedContext,
+        allResults,
+        stateMachine,
+        analysis,
+        dealId,
+        onProgress,
+        TOTAL_AGENTS,
+      }));
 
       // STEP 6.5: CONSENSUS + REFLEXION for Tier 2 sector expert
       if (sectorExpert) {
