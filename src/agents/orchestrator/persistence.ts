@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import type { ScoredFinding } from "@/scoring/types";
 import type { AnalysisType } from "./types";
+import { STEPWISE_STATE_PREFIX } from "./full-analysis-snapshot";
 
 /**
  * Log a persistence error in ALL environments.
@@ -937,9 +938,13 @@ export async function loadLatestCheckpoint(
   analysisId: string
 ): Promise<CheckpointData | null> {
   try {
-    // Get latest checkpoint (even FAILED ones have valid completedAgents/results data)
+    // Get latest checkpoint (even FAILED ones have valid completedAgents/results data).
+    // Phase D — EXCLUT les checkpoints stepwise `STEPWISE:*` : leur `results` est un
+    // FullAnalysisStepState (pas un set de résultats d'agents) et leur `state` n'est pas
+    // un AnalysisState valide. Le resume legacy + restoreFromDb ne doivent JAMAIS les
+    // interpréter (le driver stepwise lit via readLatestStepwiseSnapshot, pas ici).
     const checkpoint = await prisma.analysisCheckpoint.findFirst({
-      where: { analysisId },
+      where: { analysisId, state: { not: { startsWith: STEPWISE_STATE_PREFIX } } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
 

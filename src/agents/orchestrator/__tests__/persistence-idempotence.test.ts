@@ -12,6 +12,7 @@ const prismaMocks = vi.hoisted(() => {
   const prisma = {
     debateRecord: { upsert: vi.fn() },
     scoredFinding: { deleteMany: vi.fn(), createMany: vi.fn() },
+    analysisCheckpoint: { findFirst: vi.fn() },
     $transaction: vi.fn(),
   };
   return { prisma };
@@ -23,7 +24,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/services/storage", () => ({ uploadFile: vi.fn() }));
 
-import { persistDebateRecord, persistScoredFindings } from "../persistence";
+import { persistDebateRecord, persistScoredFindings, loadLatestCheckpoint } from "../persistence";
 import type { ScoredFinding } from "@/scoring/types";
 
 const debateResult = {
@@ -131,5 +132,22 @@ describe("persistScoredFindings — delete+insert transactionnel (Phase D replay
     await persistScoredFindings("analysis_1", "financial-auditor", []);
     expect(prismaMocks.prisma.$transaction).not.toHaveBeenCalled();
     expect(prismaMocks.prisma.scoredFinding.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadLatestCheckpoint — ignore les checkpoints STEPWISE:* (garde resume legacy, Phase D)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMocks.prisma.analysisCheckpoint.findFirst.mockResolvedValue(null);
+  });
+
+  it("filtre OUT state STEPWISE:* dans la requête (le resume legacy + restoreFromDb ne voient jamais un StepState)", async () => {
+    await loadLatestCheckpoint("analysis_1");
+
+    expect(prismaMocks.prisma.analysisCheckpoint.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { analysisId: "analysis_1", state: { not: { startsWith: "STEPWISE:" } } },
+      })
+    );
   });
 });
