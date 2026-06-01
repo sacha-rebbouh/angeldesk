@@ -8,22 +8,36 @@ const orchestratorSource = readFileSync(
 
 describe("Tier 1 phase checkpointing guard", () => {
   it("flushes a checkpoint immediately after Tier 1 phase progress is persisted", () => {
-    const phaseRunnerStart = orchestratorSource.indexOf("private async runTier1Phases");
-    expect(phaseRunnerStart).toBeGreaterThanOrEqual(0);
-
-    const progressCall = orchestratorSource.indexOf(
-      "await updateAnalysisProgress(analysisId, completedCount, params.initialTotalCost + totalCost);",
-      phaseRunnerStart
+    // C.3a — le corps d'une phase Tier 1 vit désormais dans `runTier1Phase`
+    // (extrait de `runTier1Phases`). On borne la recherche au body de ce helper
+    // pour prouver l'invariant exactement là où il s'exécute, sans fragilité.
+    const phaseStart = orchestratorSource.indexOf("private async runTier1Phase(");
+    expect(phaseStart).toBeGreaterThanOrEqual(0);
+    // borne haute = la méthode suivante (runTier1Phases) — le body de runTier1Phase
+    // est strictement entre les deux.
+    const phaseRunnerStart = orchestratorSource.indexOf(
+      "private async runTier1Phases(params: {",
+      phaseStart
     );
-    expect(progressCall).toBeGreaterThan(phaseRunnerStart);
+    expect(phaseRunnerStart).toBeGreaterThan(phaseStart);
 
-    const flushCall = orchestratorSource.indexOf(
+    const phaseBody = orchestratorSource.slice(phaseStart, phaseRunnerStart);
+
+    // 1) updateAnalysisProgress(...) existe dans runTier1Phase.
+    const progressCall = phaseBody.indexOf(
+      "await updateAnalysisProgress(analysisId, completedCount, initialTotalCost + totalCost);"
+    );
+    expect(progressCall).toBeGreaterThanOrEqual(0);
+
+    // 2) le flush arrive juste après la persistance de progression.
+    const flushCall = phaseBody.indexOf(
       "await stateMachine?.flushCheckpoint();",
       progressCall
     );
     expect(flushCall).toBeGreaterThan(progressCall);
 
-    const phaseCompletionLog = orchestratorSource.indexOf(
+    // 3) le log de complétion de phase reste après le flush.
+    const phaseCompletionLog = phaseBody.indexOf(
       "[Orchestrator] ${phase.name} complete",
       progressCall
     );

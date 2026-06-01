@@ -2778,6 +2778,223 @@ export class AgentOrchestrator {
    *
    * Used by both runFullAnalysis() and runTier1Analysis().
    */
+  /**
+   * C.3a — Corps d'UNE itération de la boucle Tier 1 (phase A/B/C/D), extrait BYTE-INERT
+   * de runTier1Phases. Appelé par la boucle existante pour chaque phase.
+   * Mute PAR RÉFÉRENCE : allResults, allFindings, allValidations, collectedWarnings,
+   * enrichedContext (+ previousResults/factStore/...), stateMachine. Renvoie les locals
+   * réassignés (totalCost, completedCount, factStore, factStoreFormatted, verificationContext).
+   * Le throw Phase A (échec critique) se propage à la boucle appelante (comportement inchangé).
+   */
+  private async runTier1Phase(
+    phase: { name: string; agents: readonly string[] },
+    refs: {
+      enrichedContext: EnrichedAgentContext;
+      tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
+      analysisId: string;
+      dealId: string;
+      onProgress?: AnalysisOptions["onProgress"];
+      totalAgents: number;
+      onEarlyWarning?: OnEarlyWarning;
+      collectedWarnings: EarlyWarning[];
+      allResults: Record<string, AgentResult>;
+      allFindings: ScoredFinding[];
+      allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[];
+      extractedData: {
+        tagline?: string;
+        competitors?: string[];
+        founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+        productDescription?: string;
+        businessModel?: string;
+      };
+      stateMachine?: AnalysisStateMachine;
+      initialTotalCost: number;
+    },
+    state: {
+      totalCost: number;
+      completedCount: number;
+      factStore: CurrentFact[];
+      factStoreFormatted: string;
+      verificationContext: VerificationContext;
+    }
+  ): Promise<{
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    verificationContext: VerificationContext;
+  }> {
+    const {
+      enrichedContext, tier1AgentMap, analysisId, dealId,
+      onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+      allResults, allFindings, allValidations, extractedData, stateMachine,
+      initialTotalCost,
+    } = refs;
+    let { totalCost, completedCount, factStore, factStoreFormatted, verificationContext } = state;
+    onProgress?.({
+      currentAgent: `tier1 ${phase.name}`,
+      completedAgents: completedCount,
+      totalAgents,
+      estimatedCostSoFar: initialTotalCost + totalCost,
+    });
+
+    // Run agents in this phase (parallel within phase)
+    const phaseResults = await Promise.all(
+      phase.agents.map(async (agentName) => {
+        const agent = tier1AgentMap[agentName];
+        try {
+          const result = await agent.run(enrichedContext);
+          return { agentName, result };
+        } catch (error) {
+          return {
+            agentName,
+            result: {
+              agentName,
+              success: false,
+              executionTimeMs: 0,
+              cost: 0,
+              error: error instanceof Error ? error.message : "Unknown error",
+            } as AgentResult,
+          };
+        }
+      })
+    );
+
+    // Collect phase results
+    for (const { agentName, result } of phaseResults) {
+      // Sanitize narrative fields for prescriptive language (Rule #1)
+      if (result.success && "data" in result) {
+        const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+        if (totalViolations > 0) {
+          console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+          (result as { data: unknown }).data = sanitized;
+        }
+      }
+      allResults[agentName] = result;
+      totalCost += result.cost;
+      completedCount++;
+      // Sanitize to prevent confirmation bias in downstream agents (F52)
+      enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result);
+
+      if (stateMachine) {
+        if (result.success) {
+          stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
+        } else {
+          stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
+        }
+      }
+
+      this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
+      await processAgentResult(dealId, agentName, result);
+    }
+
+    // Extract findings for this phase
+    const phaseAgentResults: Record<string, AgentResult> = {};
+    for (const agentName of phase.agents) {
+      if (allResults[agentName]) {
+        phaseAgentResults[agentName] = allResults[agentName];
+      }
+    }
+    const { allFindings: phaseFindings, agentConfidences: phaseConfidences } =
+      extractAllFindings(phaseAgentResults);
+    allFindings.push(...phaseFindings);
+
+    // Inline reflexion for this phase
+    // Only apply if agent confidence < 50% (threshold set in ReflexionConfig)
+    // REMOVED: Phase A/B forced reflexion — was doubling cost for no measurable quality gain
+    for (const { agentName, result } of phaseResults) {
+      if (!result.success) continue;
+
+      const confidence = phaseConfidences.get(agentName);
+      const needsReflect = confidence && confidence.score < 60;
+
+      if (needsReflect) {
+        const agentFindings = allFindings.filter(f => f.agentName === agentName);
+        const reflexionStats = await this.applyReflexion(
+          analysisId,
+          agentName,
+          result as AnalysisAgentResult,
+          agentFindings,
+          `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
+          1,
+          verificationContext,
+          allResults,
+          enrichedContext
+        );
+        totalCost += reflexionStats.tokensUsed * 0.00001;
+      }
+    }
+
+    // Extract validated claims and update fact store in memory
+    for (const agentName of phase.agents) {
+      const result = allResults[agentName];
+      if (result?.success) {
+        const validations = extractValidatedClaims(result, agentName);
+        if (validations.length > 0) {
+          allValidations.push(...validations);
+          factStore = updateFactsInMemory(factStore, validations);
+          factStoreFormatted = reformatFactStoreWithValidations(factStore, allValidations);
+          enrichedContext.factStore = factStore;
+          enrichedContext.factStoreFormatted = factStoreFormatted;
+          enrichedContext.evidenceLedger = buildEvidenceLedgerFromContext(enrichedContext);
+          enrichedContext.evidenceLedgerFormatted = formatEvidenceLedgerForPrompt(enrichedContext.evidenceLedger);
+          console.log(`[Orchestrator:${phase.name}] ${agentName}: ${validations.length} fact validations applied`);
+        }
+      }
+    }
+
+    // Rebuild verificationContext after Phase B and Phase C (factStoreFormatted has changed)
+    if (phase.name.includes("Phase B") || phase.name.includes("Phase C")) {
+      verificationContext = await this.buildVerificationContext(
+        enrichedContext,
+        extractedData,
+        factStoreFormatted,
+        enrichedContext.deal,
+      );
+      console.log(`[Orchestrator] Rebuilt verificationContext after ${phase.name} with updated factStore`);
+    }
+
+    // Consensus within phase (if multiple agents in phase)
+    if (phase.agents.length > 1 && phaseFindings.length > 1) {
+      const debateStats = await this.runConsensusDebate(
+        analysisId, phaseFindings, verificationContext, enrichedContext
+      );
+      totalCost += debateStats.totalTokens * 0.00001;
+      console.log(`[Orchestrator:${phase.name}] Consensus: ${debateStats.debateCount} debates`);
+    }
+
+    await updateAnalysisProgress(analysisId, completedCount, initialTotalCost + totalCost);
+    await stateMachine?.flushCheckpoint();
+
+    const phaseSuccessCount = phaseResults.filter(r => r.result.success).length;
+    const phaseFailCount = phaseResults.length - phaseSuccessCount;
+    console.log(
+      `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
+    );
+
+    if (phase.name.includes("Phase A") && phaseFailCount > 0) {
+      const failedNames = phaseResults
+        .filter(r => !r.result.success)
+        .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
+        .join(", ");
+      console.error(
+        `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
+      );
+      throw new Error(`Critical Tier 1 phase failed: ${failedNames}`);
+    }
+
+    if (phase.name.includes("Phase B") && phaseFailCount > 0) {
+      const failedNames = phaseResults
+        .filter(r => !r.result.success)
+        .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
+        .join(", ");
+      console.warn(
+        `[Orchestrator] Phase B agent(s) failed (non-fatal, continuing): ${failedNames}`
+      );
+    }
+    return { totalCost, completedCount, factStore, factStoreFormatted, verificationContext };
+  }
+
   private async runTier1Phases(params: {
     enrichedContext: EnrichedAgentContext;
     tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
@@ -2839,167 +3056,16 @@ export class AgentOrchestrator {
       ];
 
     for (const phase of tier1Phases) {
-      onProgress?.({
-        currentAgent: `tier1 ${phase.name}`,
-        completedAgents: completedCount,
-        totalAgents,
-        estimatedCostSoFar: params.initialTotalCost + totalCost,
-      });
-
-      // Run agents in this phase (parallel within phase)
-      const phaseResults = await Promise.all(
-        phase.agents.map(async (agentName) => {
-          const agent = tier1AgentMap[agentName];
-          try {
-            const result = await agent.run(enrichedContext);
-            return { agentName, result };
-          } catch (error) {
-            return {
-              agentName,
-              result: {
-                agentName,
-                success: false,
-                executionTimeMs: 0,
-                cost: 0,
-                error: error instanceof Error ? error.message : "Unknown error",
-              } as AgentResult,
-            };
-          }
-        })
-      );
-
-      // Collect phase results
-      for (const { agentName, result } of phaseResults) {
-        // Sanitize narrative fields for prescriptive language (Rule #1)
-        if (result.success && "data" in result) {
-          const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
-          if (totalViolations > 0) {
-            console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
-            (result as { data: unknown }).data = sanitized;
-          }
-        }
-        allResults[agentName] = result;
-        totalCost += result.cost;
-        completedCount++;
-        // Sanitize to prevent confirmation bias in downstream agents (F52)
-        enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result);
-
-        if (stateMachine) {
-          if (result.success) {
-            stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-          } else {
-            stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
-          }
-        }
-
-        this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
-        await processAgentResult(dealId, agentName, result);
-      }
-
-      // Extract findings for this phase
-      const phaseAgentResults: Record<string, AgentResult> = {};
-      for (const agentName of phase.agents) {
-        if (allResults[agentName]) {
-          phaseAgentResults[agentName] = allResults[agentName];
-        }
-      }
-      const { allFindings: phaseFindings, agentConfidences: phaseConfidences } =
-        extractAllFindings(phaseAgentResults);
-      allFindings.push(...phaseFindings);
-
-      // Inline reflexion for this phase
-      // Only apply if agent confidence < 50% (threshold set in ReflexionConfig)
-      // REMOVED: Phase A/B forced reflexion — was doubling cost for no measurable quality gain
-      for (const { agentName, result } of phaseResults) {
-        if (!result.success) continue;
-
-        const confidence = phaseConfidences.get(agentName);
-        const needsReflect = confidence && confidence.score < 60;
-
-        if (needsReflect) {
-          const agentFindings = allFindings.filter(f => f.agentName === agentName);
-          const reflexionStats = await this.applyReflexion(
-            analysisId,
-            agentName,
-            result as AnalysisAgentResult,
-            agentFindings,
-            `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
-            1,
-            verificationContext,
-            allResults,
-            enrichedContext
-          );
-          totalCost += reflexionStats.tokensUsed * 0.00001;
-        }
-      }
-
-      // Extract validated claims and update fact store in memory
-      for (const agentName of phase.agents) {
-        const result = allResults[agentName];
-        if (result?.success) {
-          const validations = extractValidatedClaims(result, agentName);
-          if (validations.length > 0) {
-            allValidations.push(...validations);
-            factStore = updateFactsInMemory(factStore, validations);
-            factStoreFormatted = reformatFactStoreWithValidations(factStore, allValidations);
-            enrichedContext.factStore = factStore;
-            enrichedContext.factStoreFormatted = factStoreFormatted;
-            enrichedContext.evidenceLedger = buildEvidenceLedgerFromContext(enrichedContext);
-            enrichedContext.evidenceLedgerFormatted = formatEvidenceLedgerForPrompt(enrichedContext.evidenceLedger);
-            console.log(`[Orchestrator:${phase.name}] ${agentName}: ${validations.length} fact validations applied`);
-          }
-        }
-      }
-
-      // Rebuild verificationContext after Phase B and Phase C (factStoreFormatted has changed)
-      if (phase.name.includes("Phase B") || phase.name.includes("Phase C")) {
-        verificationContext = await this.buildVerificationContext(
-          enrichedContext,
-          extractedData,
-          factStoreFormatted,
-          enrichedContext.deal,
-        );
-        console.log(`[Orchestrator] Rebuilt verificationContext after ${phase.name} with updated factStore`);
-      }
-
-      // Consensus within phase (if multiple agents in phase)
-      if (phase.agents.length > 1 && phaseFindings.length > 1) {
-        const debateStats = await this.runConsensusDebate(
-          analysisId, phaseFindings, verificationContext, enrichedContext
-        );
-        totalCost += debateStats.totalTokens * 0.00001;
-        console.log(`[Orchestrator:${phase.name}] Consensus: ${debateStats.debateCount} debates`);
-      }
-
-      await updateAnalysisProgress(analysisId, completedCount, params.initialTotalCost + totalCost);
-      await stateMachine?.flushCheckpoint();
-
-      const phaseSuccessCount = phaseResults.filter(r => r.result.success).length;
-      const phaseFailCount = phaseResults.length - phaseSuccessCount;
-      console.log(
-        `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
-      );
-
-      if (phase.name.includes("Phase A") && phaseFailCount > 0) {
-        const failedNames = phaseResults
-          .filter(r => !r.result.success)
-          .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
-          .join(", ");
-        console.error(
-          `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
-        );
-        throw new Error(`Critical Tier 1 phase failed: ${failedNames}`);
-      }
-
-      if (phase.name.includes("Phase B") && phaseFailCount > 0) {
-        const failedNames = phaseResults
-          .filter(r => !r.result.success)
-          .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
-          .join(", ");
-        console.warn(
-          `[Orchestrator] Phase B agent(s) failed (non-fatal, continuing): ${failedNames}`
-        );
-      }
+      ({ totalCost, completedCount, factStore, factStoreFormatted, verificationContext } = await this.runTier1Phase(
+        phase,
+        {
+          enrichedContext, tier1AgentMap, analysisId, dealId,
+          onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+          allResults, allFindings, allValidations, extractedData, stateMachine,
+          initialTotalCost: params.initialTotalCost,
+        },
+        { totalCost, completedCount, factStore, factStoreFormatted, verificationContext },
+      ));
     }
 
     // Persist validated facts to DB (event sourcing)
