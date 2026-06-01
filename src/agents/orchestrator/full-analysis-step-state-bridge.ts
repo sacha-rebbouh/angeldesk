@@ -180,3 +180,229 @@ export function buildStepState(input: BuildStepStateInput): FullAnalysisStepStat
   assertSerializableStepState(state);
   return state;
 }
+
+// ============================================================================
+// b-3 — rehydrateContext : DTO wire -> état VIVANT (revive Date aux chemins connus)
+// ============================================================================
+
+/**
+ * Ravive une string ISO en Date STRICTE (gate Codex b-1 : pas de `Invalid Date`).
+ * Lève si la valeur n'est pas une string ou si la date est invalide.
+ */
+function reviveDateStrict(value: unknown, path: string): Date {
+  if (typeof value !== "string") {
+    throw new Error(`[rehydrate] date attendue (string ISO) en ${path}, reçu ${typeof value}`);
+  }
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`[rehydrate] date ISO invalide en ${path}: ${value}`);
+  }
+  return d;
+}
+
+/** Ravive obj[key] en Date si présent (non null/undefined). In-place. */
+function reviveField(obj: Record<string, unknown>, key: string, path: string): void {
+  const v = obj[key];
+  if (v === null || v === undefined) return;
+  obj[key] = reviveDateStrict(v, `${path}.${key}`);
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+/** Clone profond d'un wire (JSON pur — aucune Date à perdre, ce sont des string ISO). */
+function cloneWire<T>(wire: T): T {
+  return wire === null || wire === undefined ? wire : (JSON.parse(JSON.stringify(wire)) as T);
+}
+
+/** Ravive les 3 dates d'un document (uploadedAt/sourceDate/receivedAt). In-place. */
+function reviveDocDates(doc: Record<string, unknown>, path: string): void {
+  reviveField(doc, "uploadedAt", path);
+  reviveField(doc, "sourceDate", path);
+  reviveField(doc, "receivedAt", path);
+}
+
+/**
+ * Deal snapshot : createdAt/updatedAt + founders[].createdAt + documents[].dates.
+ * `buildCanonicalRuntimeDeal` fait `{...deal}` → canonicalDeal CONSERVE les relations
+ * `founders` (createdAt) ET `documents` (uploadedAt/sourceDate/receivedAt) du DealWithDocs
+ * vivant — distinctes de `scopedDocuments`, mais portant aussi des Date à raviver
+ * (gate Codex b-3 : le round-trip wire ne détecte pas une string ISO non ravivée).
+ */
+function reviveDeal(wire: Record<string, unknown>): Record<string, unknown> {
+  const d = cloneWire(wire);
+  reviveField(d, "createdAt", "canonicalDeal");
+  reviveField(d, "updatedAt", "canonicalDeal");
+  if (Array.isArray(d.founders)) {
+    (d.founders as unknown[]).forEach((f, i) => {
+      const fo = asRecord(f);
+      if (fo) reviveField(fo, "createdAt", `canonicalDeal.founders[${i}]`);
+    });
+  }
+  if (Array.isArray(d.documents)) {
+    (d.documents as unknown[]).forEach((doc, i) => {
+      const o = asRecord(doc);
+      if (o) reviveDocDates(o, `canonicalDeal.documents[${i}]`);
+    });
+  }
+  return d;
+}
+
+/** Documents (scopedDocuments) : uploadedAt / sourceDate / receivedAt. */
+function reviveDocuments(wire: unknown[]): unknown[] {
+  const docs = cloneWire(wire);
+  docs.forEach((doc, i) => {
+    const o = asRecord(doc);
+    if (o) reviveDocDates(o, `scopedDocuments[${i}]`);
+  });
+  return docs;
+}
+
+/** factStore : firstSeenAt / lastUpdatedAt / validAt + eventHistory[].createdAt/validAt. */
+function reviveFactStore(wire: unknown[]): unknown[] {
+  const facts = cloneWire(wire);
+  facts.forEach((fact, i) => {
+    const o = asRecord(fact);
+    if (!o) return;
+    reviveField(o, "firstSeenAt", `factStore[${i}]`);
+    reviveField(o, "lastUpdatedAt", `factStore[${i}]`);
+    reviveField(o, "validAt", `factStore[${i}]`);
+    if (Array.isArray(o.eventHistory)) {
+      (o.eventHistory as unknown[]).forEach((ev, j) => {
+        const eo = asRecord(ev);
+        if (!eo) return;
+        reviveField(eo, "createdAt", `factStore[${i}].eventHistory[${j}]`);
+        reviveField(eo, "validAt", `factStore[${i}].eventHistory[${j}]`);
+      });
+    }
+  });
+  return facts;
+}
+
+/** collectedWarnings : timestamp. */
+function reviveWarnings(wire: unknown[]): unknown[] {
+  const warns = cloneWire(wire);
+  warns.forEach((w, i) => {
+    const o = asRecord(w);
+    if (o) reviveField(o, "timestamp", `collectedWarnings[${i}]`);
+  });
+  return warns;
+}
+
+/**
+ * evidenceContext : Record<docId, DocumentEvidenceContext>. Dates profondes —
+ * documentDate.date, asOf.date, forecast.start/end, actuals[].start/end,
+ * detectedAttachments[].emailSourceDate, claims[].dateStart/dateEnd.
+ */
+function reviveEvidenceContext(wire: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (wire === null) return null;
+  const ctx = cloneWire(wire);
+  for (const [docId, docCtxRaw] of Object.entries(ctx)) {
+    const docCtx = asRecord(docCtxRaw);
+    if (!docCtx) continue;
+    const base = `evidenceContext.${docId}`;
+    const documentDate = asRecord(docCtx.documentDate);
+    if (documentDate) reviveField(documentDate, "date", `${base}.documentDate`);
+    const asOf = asRecord(docCtx.asOf);
+    if (asOf) reviveField(asOf, "date", `${base}.asOf`);
+    const forecast = asRecord(docCtx.forecast);
+    if (forecast) {
+      reviveField(forecast, "start", `${base}.forecast`);
+      reviveField(forecast, "end", `${base}.forecast`);
+    }
+    if (Array.isArray(docCtx.actuals)) {
+      (docCtx.actuals as unknown[]).forEach((p, i) => {
+        const po = asRecord(p);
+        if (!po) return;
+        reviveField(po, "start", `${base}.actuals[${i}]`);
+        reviveField(po, "end", `${base}.actuals[${i}]`);
+      });
+    }
+    if (Array.isArray(docCtx.detectedAttachments)) {
+      (docCtx.detectedAttachments as unknown[]).forEach((a, i) => {
+        const ao = asRecord(a);
+        if (ao) reviveField(ao, "emailSourceDate", `${base}.detectedAttachments[${i}]`);
+      });
+    }
+    if (Array.isArray(docCtx.claims)) {
+      (docCtx.claims as unknown[]).forEach((c, i) => {
+        const co = asRecord(c);
+        if (!co) return;
+        reviveField(co, "dateStart", `${base}.claims[${i}]`);
+        reviveField(co, "dateEnd", `${base}.claims[${i}]`);
+      });
+    }
+  }
+  return ctx;
+}
+
+/**
+ * État vivant reconstruit depuis un FullAnalysisStepState. enrichedContext est assemblé
+ * depuis les blobs portés (Date ravivées) SANS ré-appeler attachEvidenceLedger (qui
+ * régénérerait evidenceLedger.generatedAt wall-clock → byte-divergence). Le sectorExpert
+ * (closure) n'est PAS ici : reconstruit par le driver via getTier2SectorExpert(sector).
+ */
+export interface RehydratedState {
+  enrichedContext: EnrichedAgentContext;
+  allResults: Record<string, unknown>;
+  verificationContext: Record<string, unknown> | null;
+  collectedWarnings: unknown[];
+  totalCost: number;
+  completedCount: number;
+  startTimeMs: number;
+  totalAgents: number;
+  lastUnit: FullAnalysisUnit;
+  done: boolean;
+  analysisId: string;
+  dealId: string;
+  analysisType: string;
+}
+
+export function rehydrateContext(state: FullAnalysisStepState): RehydratedState {
+  const canonicalDeal = reviveDeal(state.canonicalDeal);
+  const evidenceToday = reviveDateStrict(state.evidenceTodayIso, "evidenceTodayIso");
+
+  const enrichedContext = {
+    dealId: state.dealId,
+    deal: canonicalDeal,
+    canonicalDeal,
+    analysis: cloneWire(state.analysisBinding),
+    documents: reviveDocuments(state.scopedDocuments),
+    evidenceContext: reviveEvidenceContext(state.evidenceContext) ?? undefined,
+    evidenceToday,
+    previousResults: cloneWire(state.previousResults),
+    contextEngine: cloneWire(state.contextEngine) ?? undefined,
+    baPreferences: cloneWire(state.baPreferences) ?? undefined,
+    factStore: reviveFactStore(state.factStore),
+    factStoreFormatted: state.factStoreFormatted,
+    evidenceLedger: cloneWire(state.evidenceLedger) ?? undefined,
+    evidenceLedgerFormatted: state.evidenceLedgerFormatted,
+    deckCoherenceReport: cloneWire(state.deckCoherenceReport) ?? undefined,
+    thesis: cloneWire(state.thesis) ?? undefined,
+    tier1CrossValidation: cloneWire(state.tier1CrossValidation) ?? undefined,
+    consolidatedRedFlags: cloneWire(state.consolidatedRedFlags) ?? undefined,
+    extractedData: cloneWire(state.extractedData) ?? undefined,
+    founderResponses: cloneWire(state.founderResponses),
+    previousAnalysisQuestions: cloneWire(state.previousAnalysisQuestions) ?? undefined,
+    dealTerms: cloneWire(state.dealTerms) ?? undefined,
+    dealStructure: cloneWire(state.dealStructure) ?? undefined,
+    conditionsAnalystMode: state.conditionsAnalystMode ?? undefined,
+  } as unknown as EnrichedAgentContext;
+
+  return {
+    enrichedContext,
+    allResults: cloneWire(state.allResults),
+    verificationContext: cloneWire(state.verificationContext),
+    collectedWarnings: reviveWarnings(state.collectedWarnings),
+    totalCost: state.totalCost,
+    completedCount: state.completedCount,
+    startTimeMs: state.startTimeMs,
+    totalAgents: state.totalAgents,
+    lastUnit: state.lastUnit,
+    done: state.done,
+    analysisId: state.analysisId,
+    dealId: state.dealId,
+    analysisType: state.analysisType,
+  };
+}
