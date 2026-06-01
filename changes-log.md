@@ -1,6 +1,24 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-01 — Durabilité Deep Dive D.5b : contrat d'état complet (DTO v2 + pont live↔wire + restore)
+
+### Contexte
+Suite de D.5a. **D.5b** construit le contrat d'état porté entre steps durables : le DTO `FullAnalysisStepState` v2 (contexte complet), `buildStepState` (live→wire), `rehydrateContext` (wire→live, revive Date) et `AnalysisStateMachine.restoreFromStepState`. ADDITIF/byte-inert (rien câblé dans `runFullAnalysis` ; câblage = D.5c golden harness + D.5d). Audit exhaustif des champs (sous-agents) + **design gaté Codex à part** (1 REQUEST_CHANGES→APPROVE). Stratégie **CARRY > REBUILD** : tout ce qui finit dans un prompt ou dépend du wall-clock/DB mutable est PORTÉ (vérifié `evidenceLedger.generatedAt = new Date()` wall-clock → rebuild driverait les bytes de prompt). 4 commits, chacun gated Codex APPROVE :
+
+### Modifications (sur `fix/thesis-gate-guard`, NON poussé)
+- **b-1 (`9bcabb0`)** : `full-analysis-step-state.ts` v1→v2 (`version` 2). ~20 champs wire ajoutés (deal snapshot, scopedDocuments, evidenceContext, evidenceTodayIso, factStore, thesis, contextEngine, evidenceLedger(+Formatted), extractedData, deckCoherenceReport, baPreferences, dealTerms, dealStructure, conditionsAnalystMode, founderResponses, previousAnalysisQuestions, analysisBinding, collectedWarnings, startTimeMs). Validation rendue **table-driven** (REQUIRED/NULLABLE × OBJECT/ARRAY + scalaires + NULLABLE_STRING). 52 tests.
+- **b-2 (`e9c0ffb`)** : nouveau `full-analysis-step-state-bridge.ts` — `buildStepState(live→DTO)` via **normalizer STRICT** `normalizeToWire` (Date→ISO ; **LÈVE** sur NaN/Infinity/Map/Set/instance-de-classe/function/symbol/bigint avec chemin fautif). Gate Codex (1er REQUEST_CHANGES) : un `JSON.parse(JSON.stringify())` aveugle convertissait NaN→null et Map/Set→{} silencieusement. 15 tests.
+- **b-3 (`0ec00b4`)** : `rehydrateContext(DTO→live)` — revivers Date stricts (rejet `Invalid Date`) pour deal (createdAt/updatedAt/founders/**documents** — gate Codex : la relation `documents` portée par `{...deal}` dans `buildCanonicalRuntimeDeal`), scopedDocuments, factStore+eventHistory, evidenceContext (profond), collectedWarnings, evidenceToday. N'appelle PAS `attachEvidenceLedger` (evidenceLedger CARRY). Test clé : **build∘rehydrate∘build === build** (wire stable + revive complet). 22 tests.
+- **b-4 (`b801e06`)** : `AnalysisStateMachine.restoreFromStepState(state, opts?)` — `UNIT_TO_STATE` (init→INITIALIZING … tier2-sector/tier3-post→SYNTHESIZING pour que `complete()` reste une transition valide) ; dérive completed/failed/results/findings/pending/startTime du **set recordable** (config.agents ∪ sectorExpert), calqué sur `recordAgentComplete`/`recordAgentFailed`. 7 tests.
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, appel séparé, avant chaque commit) ; vitest orchestration+orchestrateur **220 passés**.
+
+### Reste
+**D.5c** (golden harness : `StepRunner`/`InngestStepRunner`/`FakeStepRunner` + byte-equivalence single-pass vs stepwise + kill/resume + négatif), **D.5d..** (conversion par unité + câblage write/rehydrate), **D.6** (activation), **F** (watchdog), **G** (resume unification).
+
+---
 ## 2026-06-01 — Durabilité Deep Dive D.5a : driver stepwise fondation (flag + conditionnement checkpoint)
 
 ### Contexte
