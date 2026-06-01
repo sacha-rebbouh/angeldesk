@@ -1920,6 +1920,102 @@ export class AgentOrchestrator {
     return { totalCost, completedCount, thesisOutput };
   }
 
+  /**
+   * C.3b — Agrégation post-Tier1 (avant FAIL-FAST), extraite BYTE-INERT de runFullAnalysis.
+   * Lance runTier1Phases, rebuild verificationContext, publie les findings sur le messageBus,
+   * persiste les findings tier1-aggregate + le checkpoint, log le récap Tier1.
+   * allResults muté PAR RÉFÉRENCE (param) ; renvoie les locals réassignés + allFindings/
+   * lowConfidenceAgents. N'inclut PAS le FAIL-FAST, le consensus global, le cost-limit,
+   * la cross-validation, la consolidation red-flags, ni Tier2/Tier3.
+   */
+  private async runPostTier1Aggregation(params: {
+    enrichedContext: EnrichedAgentContext;
+    tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    TOTAL_AGENTS: number;
+    onEarlyWarning?: OnEarlyWarning;
+    collectedWarnings: EarlyWarning[];
+    allResults: Record<string, AgentResult>;
+    extractedData: ContextSeed;
+    stateMachine: AnalysisStateMachine;
+    startTime: number;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+  }): Promise<{
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    verificationContext: VerificationContext;
+    allFindings: ScoredFinding[];
+    lowConfidenceAgents: string[];
+  }> {
+    const {
+      enrichedContext, tier1AgentMap, analysis, dealId, onProgress, TOTAL_AGENTS,
+      onEarlyWarning, collectedWarnings, allResults, extractedData, stateMachine, startTime,
+    } = params;
+    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    const phasesResult = await this.runTier1Phases({
+      enrichedContext,
+      tier1AgentMap,
+      analysisId: analysis.id,
+      dealId,
+      onProgress,
+      totalAgents: TOTAL_AGENTS,
+      onEarlyWarning,
+      collectedWarnings,
+      allResults,
+      initialTotalCost: totalCost,
+      initialCompletedCount: completedCount,
+      factStore,
+      factStoreFormatted,
+      extractedData,
+      stateMachine,
+    });
+
+    const { allFindings, lowConfidenceAgents } = phasesResult;
+    totalCost += phasesResult.costIncurred;
+    completedCount += phasesResult.completedInPhases;
+    factStore = phasesResult.updatedFactStore;
+    factStoreFormatted = phasesResult.updatedFactStoreFormatted;
+
+    // Rebuild verificationContext for global consensus and downstream use
+    const verificationContext = await this.buildVerificationContext(
+      enrichedContext,
+      extractedData,
+      factStoreFormatted,
+      enrichedContext.deal,
+    );
+
+    // Publish all findings to message bus
+    for (const finding of allFindings) {
+      await messageBus.publish(createFindingMessage(finding.agentName, "*", finding));
+    }
+
+    // Persist all findings
+    if (allFindings.length > 0) {
+      await persistScoredFindings(analysis.id, "tier1-aggregate", allFindings);
+    }
+
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
+
+    // Diagnostic log: show tier1 success/failure breakdown
+    const tier1SuccessCount = TIER1_AGENT_NAMES.filter(n => allResults[n]?.success).length;
+    const tier1FailCount = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success).length;
+    const tier1FailedNames = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success);
+    console.log(
+      `[Orchestrator] Tier 1 results: ${tier1SuccessCount}/${TIER1_AGENT_NAMES.length} succeeded, ${tier1FailCount} failed. ` +
+      `Extracted ${allFindings.length} findings. ` +
+      `Low confidence: ${lowConfidenceAgents.join(", ") || "none"}` +
+      (tier1FailedNames.length > 0 ? `. Failed: ${tier1FailedNames.join(", ")}` : "")
+    );
+    return { totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings, lowConfidenceAgents };
+  }
+
   private async runFullAnalysis(
     deal: DealWithDocs,
     dealId: string,
@@ -2111,60 +2207,27 @@ export class AgentOrchestrator {
 
       const tier1AgentMap = await getTier1Agents();
 
-      const phasesResult = await this.runTier1Phases({
+      let verificationContext: VerificationContext;
+      let allFindings: ScoredFinding[];
+      let lowConfidenceAgents: string[];
+      ({ totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings, lowConfidenceAgents } = await this.runPostTier1Aggregation({
         enrichedContext,
         tier1AgentMap,
-        analysisId: analysis.id,
+        analysis,
         dealId,
         onProgress,
-        totalAgents: TOTAL_AGENTS,
+        TOTAL_AGENTS,
         onEarlyWarning,
         collectedWarnings,
         allResults,
-        initialTotalCost: totalCost,
-        initialCompletedCount: completedCount,
-        factStore,
-        factStoreFormatted,
         extractedData,
         stateMachine,
-      });
-
-      const { allFindings, lowConfidenceAgents } = phasesResult;
-      totalCost += phasesResult.costIncurred;
-      completedCount += phasesResult.completedInPhases;
-      factStore = phasesResult.updatedFactStore;
-      factStoreFormatted = phasesResult.updatedFactStoreFormatted;
-
-      // Rebuild verificationContext for global consensus and downstream use
-      const verificationContext = await this.buildVerificationContext(
-        enrichedContext,
-        extractedData,
+        startTime,
+        totalCost,
+        completedCount,
+        factStore,
         factStoreFormatted,
-        enrichedContext.deal,
-      );
-
-      // Publish all findings to message bus
-      for (const finding of allFindings) {
-        await messageBus.publish(createFindingMessage(finding.agentName, "*", finding));
-      }
-
-      // Persist all findings
-      if (allFindings.length > 0) {
-        await persistScoredFindings(analysis.id, "tier1-aggregate", allFindings);
-      }
-
-      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime);
-
-      // Diagnostic log: show tier1 success/failure breakdown
-      const tier1SuccessCount = TIER1_AGENT_NAMES.filter(n => allResults[n]?.success).length;
-      const tier1FailCount = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success).length;
-      const tier1FailedNames = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success);
-      console.log(
-        `[Orchestrator] Tier 1 results: ${tier1SuccessCount}/${TIER1_AGENT_NAMES.length} succeeded, ${tier1FailCount} failed. ` +
-        `Extracted ${allFindings.length} findings. ` +
-        `Low confidence: ${lowConfidenceAgents.join(", ") || "none"}` +
-        (tier1FailedNames.length > 0 ? `. Failed: ${tier1FailedNames.join(", ")}` : "")
-      );
+      }));
 
       // FAIL-FAST: Check for critical warnings after Tier 1
       if (failFastOnCritical) {
