@@ -12,7 +12,8 @@ const prismaMocks = vi.hoisted(() => {
   const prisma = {
     debateRecord: { upsert: vi.fn() },
     scoredFinding: { deleteMany: vi.fn(), createMany: vi.fn() },
-    analysisCheckpoint: { findFirst: vi.fn() },
+    analysisCheckpoint: { findFirst: vi.fn(), groupBy: vi.fn() },
+    analysis: { findMany: vi.fn() },
     $transaction: vi.fn(),
   };
   return { prisma };
@@ -24,7 +25,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/services/storage", () => ({ uploadFile: vi.fn() }));
 
-import { persistDebateRecord, persistScoredFindings, loadLatestCheckpoint } from "../persistence";
+import { persistDebateRecord, persistScoredFindings, loadLatestCheckpoint, findInterruptedAnalyses } from "../persistence";
 import type { ScoredFinding } from "@/scoring/types";
 
 const debateResult = {
@@ -147,6 +148,36 @@ describe("loadLatestCheckpoint — ignore les checkpoints STEPWISE:* (garde resu
     expect(prismaMocks.prisma.analysisCheckpoint.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { analysisId: "analysis_1", state: { not: { startsWith: "STEPWISE:" } } },
+      })
+    );
+  });
+});
+
+describe("findInterruptedAnalyses — n'offre pas le resume legacy sur des checkpoints STEPWISE:* seuls (Phase D)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prismaMocks.prisma.analysis.findMany.mockResolvedValue([
+      {
+        id: "a1",
+        dealId: "d1",
+        deal: { name: "Acme" },
+        type: "full_analysis",
+        mode: null,
+        startedAt: new Date("2026-06-01T00:00:00.000Z"),
+        completedAgents: 3,
+        totalAgents: 21,
+        totalCost: 1,
+      },
+    ]);
+    prismaMocks.prisma.analysisCheckpoint.groupBy.mockResolvedValue([]);
+  });
+
+  it("le groupBy de checkpoints filtre OUT STEPWISE:* (canResume legacy ne compte que des checkpoints réels)", async () => {
+    await findInterruptedAnalyses("user_1");
+
+    expect(prismaMocks.prisma.analysisCheckpoint.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { analysisId: { in: ["a1"] }, state: { not: { startsWith: "STEPWISE:" } } },
       })
     );
   });

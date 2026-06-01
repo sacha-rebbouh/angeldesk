@@ -1008,9 +1008,13 @@ export async function findInterruptedAnalyses(userId?: string): Promise<
     // BATCH FETCH: Get latest checkpoints for all analyses in one query
     // Using raw query to get MAX(createdAt) grouped by analysisId
     const analysisIds = analyses.map(a => a.id);
+    // Phase D — exclut les checkpoints stepwise : `canResume` legacy (lastCheckpointAt
+    // != null) ne doit compter QUE des checkpoints legacy réels. Sinon une analyse
+    // n'ayant que des `STEPWISE:*` serait offerte au resume legacy puis échouerait
+    // (loadLatestCheckpoint les filtre → renvoie null).
     const latestCheckpoints = await prisma.analysisCheckpoint.groupBy({
       by: ["analysisId"],
-      where: { analysisId: { in: analysisIds } },
+      where: { analysisId: { in: analysisIds }, state: { not: { startsWith: STEPWISE_STATE_PREFIX } } },
       _max: { createdAt: true },
     });
 
