@@ -75,6 +75,12 @@ export async function createAnalysis(params: {
   documentIds?: string[];
   corpusSnapshotId?: string | null;
   extractionRunIds?: string[];
+  /**
+   * Phase D — id de l'événement Inngest dispatchant ce run. Quand fourni, rend la
+   * création idempotente (get-or-create) : un retry de l'unit `init` réutilise l'analyse
+   * RUNNING du même run. Non fourni (chemin actuel) ⇒ comportement inchangé (garde + create).
+   */
+  dispatchEventId?: string | null;
 }) {
   const docIds = params.documentIds ?? [];
   let corpusSnapshotId = params.corpusSnapshotId ?? null;
@@ -107,6 +113,21 @@ export async function createAnalysis(params: {
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashForLock})`);
 
     if (params.type === "full_analysis") {
+      // Phase D — idempotence de l'unit `init` : si une analyse RUNNING du MÊME run
+      // (même dispatchEventId) existe déjà (retry d'un step Inngest survenu après le
+      // analysis.create mais avant le retour mémoïsé du step), on la RÉUTILISE au lieu
+      // de buter sur la garde "1 full_analysis RUNNING / deal" ci-dessous.
+      if (params.dispatchEventId) {
+        const sameRun = await tx.analysis.findFirst({
+          where: {
+            dealId: params.dealId,
+            status: "RUNNING",
+            dispatchEventId: params.dispatchEventId,
+          },
+        });
+        if (sameRun) return sameRun;
+      }
+
       const runningAnalysis = await tx.analysis.findFirst({
         where: {
           dealId: params.dealId,
@@ -135,6 +156,7 @@ export async function createAnalysis(params: {
         completedAgents: 0,
         startedAt: new Date(),
         mode: params.mode,
+        dispatchEventId: params.dispatchEventId ?? null,
         corpusSnapshotId,
         documents: docIds.length > 0
           ? { create: docIds.map((documentId) => ({ documentId })) }

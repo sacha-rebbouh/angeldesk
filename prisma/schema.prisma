@@ -661,6 +661,12 @@ model Analysis {
   thesisDecisionAt DateTime?
   thesisBypass     Boolean   @default(false) // true si BA a force Continue malgre verdict fragile
 
+  // Phase D (stepwise durable) — id de l'evenement Inngest qui a dispatche ce run.
+  // Rend l'unit `init` (createAnalysis) idempotente : un retry de step reutilise l'analyse
+  // RUNNING du MEME run au lieu d'echouer sur la garde "1 full_analysis RUNNING / deal".
+  // Nullable + additif : analyses existantes / non-stepwise restent a null.
+  dispatchEventId String?
+
   // Relations to sub-models (cascade delete)
   scoredFindings     ScoredFinding[]
   reasoningTraces    ReasoningTrace[]

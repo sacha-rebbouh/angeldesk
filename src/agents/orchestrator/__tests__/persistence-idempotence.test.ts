@@ -13,7 +13,8 @@ const prismaMocks = vi.hoisted(() => {
     debateRecord: { upsert: vi.fn() },
     scoredFinding: { deleteMany: vi.fn(), createMany: vi.fn() },
     analysisCheckpoint: { findFirst: vi.fn(), groupBy: vi.fn() },
-    analysis: { findMany: vi.fn() },
+    analysis: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
+    $executeRawUnsafe: vi.fn(),
     $transaction: vi.fn(),
   };
   return { prisma };
@@ -25,7 +26,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 vi.mock("@/services/storage", () => ({ uploadFile: vi.fn() }));
 
-import { persistDebateRecord, persistScoredFindings, loadLatestCheckpoint, findInterruptedAnalyses } from "../persistence";
+import { persistDebateRecord, persistScoredFindings, loadLatestCheckpoint, findInterruptedAnalyses, createAnalysis } from "../persistence";
 import type { ScoredFinding } from "@/scoring/types";
 
 const debateResult = {
@@ -180,5 +181,73 @@ describe("findInterruptedAnalyses — n'offre pas le resume legacy sur des check
         where: { analysisId: { in: ["a1"] }, state: { not: { startsWith: "STEPWISE:" } } },
       })
     );
+  });
+});
+
+describe("createAnalysis — init idempotent par dispatchEventId (Phase D)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // createAnalysis utilise la forme CALLBACK de $transaction.
+    prismaMocks.prisma.$transaction.mockImplementation(async (cb: unknown) =>
+      typeof cb === "function" ? (cb as (tx: unknown) => unknown)(prismaMocks.prisma) : cb
+    );
+  });
+
+  it("réutilise l'analyse RUNNING du même run (dispatchEventId) au lieu de créer", async () => {
+    const existing = { id: "analysis_existing", dealId: "deal_1", status: "RUNNING", dispatchEventId: "evt_1" };
+    prismaMocks.prisma.analysis.findFirst.mockResolvedValueOnce(existing); // reuse check: hit
+
+    const result = await createAnalysis({
+      dealId: "deal_1",
+      type: "full_analysis",
+      totalAgents: 21,
+      dispatchEventId: "evt_1",
+      documentIds: [],
+    });
+
+    expect(result).toBe(existing);
+    expect(prismaMocks.prisma.analysis.create).not.toHaveBeenCalled();
+    expect(prismaMocks.prisma.analysis.findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { dealId: "deal_1", status: "RUNNING", dispatchEventId: "evt_1" },
+      })
+    );
+  });
+
+  it("crée avec dispatchEventId si aucun run existant (reuse manqué + garde libre)", async () => {
+    prismaMocks.prisma.analysis.findFirst
+      .mockResolvedValueOnce(null) // reuse check: aucun run identique
+      .mockResolvedValueOnce(null); // garde: aucun autre RUNNING
+    prismaMocks.prisma.analysis.create.mockResolvedValue({ id: "analysis_new" });
+
+    const result = await createAnalysis({
+      dealId: "deal_1",
+      type: "full_analysis",
+      totalAgents: 21,
+      dispatchEventId: "evt_1",
+      documentIds: [],
+    });
+
+    expect(result).toEqual({ id: "analysis_new" });
+    expect(prismaMocks.prisma.analysis.create).toHaveBeenCalledTimes(1);
+    const createArg = prismaMocks.prisma.analysis.create.mock.calls[0][0] as { data: { dispatchEventId: string | null } };
+    expect(createArg.data.dispatchEventId).toBe("evt_1");
+  });
+
+  it("sans dispatchEventId : comportement inchangé (pas de reuse check, garde + create dispatchEventId null)", async () => {
+    prismaMocks.prisma.analysis.findFirst.mockResolvedValueOnce(null); // garde uniquement
+    prismaMocks.prisma.analysis.create.mockResolvedValue({ id: "analysis_legacy" });
+
+    await createAnalysis({
+      dealId: "deal_1",
+      type: "full_analysis",
+      totalAgents: 21,
+      documentIds: [],
+    });
+
+    expect(prismaMocks.prisma.analysis.findFirst).toHaveBeenCalledTimes(1); // un seul findFirst = la garde
+    const createArg = prismaMocks.prisma.analysis.create.mock.calls[0][0] as { data: { dispatchEventId: string | null } };
+    expect(createArg.data.dispatchEventId).toBeNull();
   });
 });
