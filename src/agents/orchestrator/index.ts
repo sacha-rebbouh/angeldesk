@@ -2739,6 +2739,23 @@ export class AgentOrchestrator {
     advancedOptions: AdvancedAnalysisOptions
   ): Promise<AnalysisResult> {
     const init = await this.initializeFullAnalysisRun(deal, dealId, advancedOptions);
+    return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
+  }
+
+  /**
+   * D.5d-1b — Corps pipeline de full_analysis (stateMachine.start() → returns), extrait
+   * BYTE-INERT de runFullAnalysis. Sépare le bootstrap (initializeFullAnalysisRun, hors de
+   * ce corps, crée la state machine non-sérialisable) du séquenceur durable — pré-requis du
+   * wrapper stepwise D.5d-1c (Modèle B). La frontière try/catch (transition FAILED +
+   * completeAnalysis + endAnalysis) reste intégralement ici. Aucun changement de logique ni
+   * d'ordre d'effet : déplacement net du bloc destructure + try/catch.
+   */
+  private async runFullAnalysisPipeline(
+    deal: DealWithDocs,
+    dealId: string,
+    onProgress: AnalysisOptions["onProgress"],
+    init: FullAnalysisRunInit
+  ): Promise<AnalysisResult> {
     const {
       failFastOnCritical,
       maxCostUsd,
