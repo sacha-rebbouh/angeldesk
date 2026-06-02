@@ -175,6 +175,15 @@ export async function POST(request: NextRequest) {
         })
       : null;
 
+    // G (Fix C) — déprécation du resume legacy sous flag stepwise ON : quand le dispatch frais
+    // serait durable (`DEEP_DIVE_STEPWISE=1` + full_analysis), NE PAS reprendre un vieux FAILED
+    // legacy via `_resumeAnalysisImpl` (chemin « thin » : skippe consensus global/cross-val/
+    // red-flags/persistScoredFindings). On laisse plutôt partir un run stepwise FRAIS (complet +
+    // durable via replay Inngest). Évite qu'un FAILED legacy dans la fenêtre 6h détourne un
+    // nouveau Deep Dive vers le chemin dégradé après activation du flag.
+    const stepwiseDispatchActive =
+      process.env.DEEP_DIVE_STEPWISE === "1" && type === "full_analysis";
+
     // Resume exige un checkpoint legacy réel : `_resumeAnalysisImpl` marque FAILED + throw
     // s'il n'y a pas de checkpoint (loadAnalysisForRecovery → loadLatestCheckpoint, désormais
     // filtré STEPWISE). On ne propose donc PAS un resume voué à l'échec sur `completedAgents > 0`
@@ -184,7 +193,8 @@ export async function POST(request: NextRequest) {
       latestThesis?.id &&
       latestThesis.corpusSnapshotId &&
       resumableAnalysis.corpusSnapshotId === latestThesis.corpusSnapshotId &&
-      resumableAnalysis.checkpoints.length > 0
+      resumableAnalysis.checkpoints.length > 0 &&
+      !stepwiseDispatchActive
     );
 
     const resumeCandidate = canResume ? resumableAnalysis : null;

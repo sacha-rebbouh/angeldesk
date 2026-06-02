@@ -336,6 +336,55 @@ describe("POST /api/analyze thesis-first contract", () => {
     );
   });
 
+  it("G — flag stepwise ON : ne reprend PAS un FAILED legacy (chemin thin) → laisse partir un run frais", async () => {
+    const prev = process.env.DEEP_DIVE_STEPWISE;
+    process.env.DEEP_DIVE_STEPWISE = "1";
+    try {
+      mocks.thesisFindFirst.mockResolvedValue({ id: "thesis_active", corpusSnapshotId: "snap_1" });
+      // Un FAILED legacy PARFAITEMENT resumable (thèse alignée + checkpoint legacy + récent) :
+      // sans le guard G il serait repris via _resumeAnalysisImpl (thin). Avec flag ON → ignoré.
+      mocks.analysisFindFirst
+        .mockResolvedValueOnce({
+          id: "analysis_resumable",
+          mode: "full_analysis",
+          thesisId: "thesis_active",
+          corpusSnapshotId: "snap_1",
+          refundedAt: null,
+          refundAmount: null,
+          checkpoints: [{ id: "cp_1" }],
+          completedAgents: 3,
+          totalAgents: 20,
+        })
+        .mockResolvedValueOnce(null);
+
+      const request = new Request("http://localhost/api/analyze", {
+        method: "POST",
+        body: JSON.stringify({ dealId: "cm1234567890123456789012", type: "full_analysis" }),
+        headers: { "content-type": "application/json" },
+      });
+
+      const response = await POST(request as never);
+      const payload = await response.json();
+
+      // Le resume legacy n'est PAS pris : pas de claim, pas d'event resume, pas de statut RESUMING.
+      expect(mocks.claimFailedAnalysisResume).not.toHaveBeenCalled();
+      expect(mocks.inngestSend).not.toHaveBeenCalledWith(
+        expect.objectContaining({ name: "analysis/deal.resume" })
+      );
+      expect(payload.data?.status).not.toBe("RESUMING");
+      // ... et un run FRAIS stepwise part à la place (dispatch durable complet).
+      expect(mocks.inngestSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "analysis/deal.analyze",
+          data: expect.objectContaining({ stepwise: true }),
+        })
+      );
+    } finally {
+      if (prev === undefined) delete process.env.DEEP_DIVE_STEPWISE;
+      else process.env.DEEP_DIVE_STEPWISE = prev;
+    }
+  });
+
   it("fallback legacy: re-debite le plein tarif si refundedAt existe sans refundAmount", async () => {
     mocks.thesisFindFirst.mockResolvedValue({ id: "thesis_active", corpusSnapshotId: "snap_1" });
     mocks.analysisFindFirst
