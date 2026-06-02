@@ -3596,6 +3596,91 @@ export class AgentOrchestrator {
       initialTotalCost,
     } = refs;
     let { totalCost, completedCount, factStore, factStoreFormatted, verificationContext } = state;
+    // Run this phase's agents in parallel, collect + sanitize results, extract findings,
+    // and materialize the ordered needsReflect list. Shared OFF/stepwise sub-method (d-3).
+    const agentsResult = await this.runTier1PhaseAgents(
+      phase,
+      {
+        enrichedContext, tier1AgentMap, dealId,
+        onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+        allResults, allFindings, stateMachine, initialTotalCost,
+      },
+      { totalCost, completedCount },
+    );
+    totalCost = agentsResult.totalCost;
+    completedCount = agentsResult.completedCount;
+    const { phaseFindings, needsReflect } = agentsResult;
+
+    const reflexed = await this.runTier1PhaseReflexion(
+      needsReflect,
+      { analysisId, enrichedContext, allResults, allFindings, verificationContext },
+      { totalCost },
+    );
+    totalCost = reflexed.totalCost;
+
+    // Finalize the phase: validated-claim fact-store updates, verificationContext
+    // rebuild (Phase B/C), intra-phase consensus, progress/checkpoint, fail-checks.
+    // Shared OFF/stepwise sub-method (d-3) — MÊME méthode = pas de drift.
+    const finalized = await this.runTier1PhaseFinalize(
+      phase,
+      phaseFindings,
+      {
+        enrichedContext, analysisId, extractedData,
+        allResults, allValidations, stateMachine,
+        initialTotalCost, completedCount,
+      },
+      { totalCost, factStore, factStoreFormatted, verificationContext },
+    );
+    return {
+      totalCost: finalized.totalCost,
+      completedCount,
+      factStore: finalized.factStore,
+      factStoreFormatted: finalized.factStoreFormatted,
+      verificationContext: finalized.verificationContext,
+    };
+  }
+
+  /**
+   * Run a Tier 1 phase's agents — shared sub-method (sequencer OFF/v2 in-process AND
+   * stepwise driver v3 call the SAME method = byte-équivalence, pas de drift).
+   *
+   * Pure extraction (d-3) of the agents segment of runTier1Phase: parallel agent run,
+   * narrative sanitize, collect into allResults (+cost/completedCount/previousResults/
+   * stateMachine record/early-warnings/processAgentResult), phase findings extraction
+   * (pushed onto allFindings), and materialization of the ORDERED `needsReflect` list
+   * (low-confidence successful agents, phase.agents order — carried to the stepwise
+   * snapshot, never re-derived at replay). Mutates allResults/allFindings/
+   * enrichedContext.previousResults/collectedWarnings/stateMachine by reference.
+   */
+  private async runTier1PhaseAgents(
+    phase: { name: string; agents: readonly string[] },
+    refs: {
+      enrichedContext: EnrichedAgentContext;
+      tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
+      dealId: string;
+      onProgress?: AnalysisOptions["onProgress"];
+      totalAgents: number;
+      onEarlyWarning?: OnEarlyWarning;
+      collectedWarnings: EarlyWarning[];
+      allResults: Record<string, AgentResult>;
+      allFindings: ScoredFinding[];
+      stateMachine?: AnalysisStateMachine;
+      initialTotalCost: number;
+    },
+    state: { totalCost: number; completedCount: number }
+  ): Promise<{
+    totalCost: number;
+    completedCount: number;
+    phaseFindings: ScoredFinding[];
+    needsReflect: string[];
+  }> {
+    const {
+      enrichedContext, tier1AgentMap, dealId,
+      onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+      allResults, allFindings, stateMachine, initialTotalCost,
+    } = refs;
+    let { totalCost, completedCount } = state;
+
     onProgress?.({
       currentAgent: `tier1 ${phase.name}`,
       completedAgents: completedCount,
@@ -3664,7 +3749,7 @@ export class AgentOrchestrator {
       extractAllFindings(phaseAgentResults);
     allFindings.push(...phaseFindings);
 
-    // Inline reflexion for this phase
+    // Determine inline-reflexion targets for this phase.
     // Only apply if agent confidence < 50% (threshold set in ReflexionConfig)
     // REMOVED: Phase A/B forced reflexion — was doubling cost for no measurable quality gain
     // MATÉRIALISER la liste ORDONNÉE des agents low-conf à réfléchir (ordre phase.agents
@@ -3678,33 +3763,7 @@ export class AgentOrchestrator {
       })
       .map(({ agentName }) => agentName);
 
-    const reflexed = await this.runTier1PhaseReflexion(
-      needsReflect,
-      { analysisId, enrichedContext, allResults, allFindings, verificationContext },
-      { totalCost },
-    );
-    totalCost = reflexed.totalCost;
-
-    // Finalize the phase: validated-claim fact-store updates, verificationContext
-    // rebuild (Phase B/C), intra-phase consensus, progress/checkpoint, fail-checks.
-    // Shared OFF/stepwise sub-method (d-3) — MÊME méthode = pas de drift.
-    const finalized = await this.runTier1PhaseFinalize(
-      phase,
-      phaseFindings,
-      {
-        enrichedContext, analysisId, extractedData,
-        allResults, allValidations, stateMachine,
-        initialTotalCost, completedCount,
-      },
-      { totalCost, factStore, factStoreFormatted, verificationContext },
-    );
-    return {
-      totalCost: finalized.totalCost,
-      completedCount,
-      factStore: finalized.factStore,
-      factStoreFormatted: finalized.factStoreFormatted,
-      verificationContext: finalized.verificationContext,
-    };
+    return { totalCost, completedCount, phaseFindings, needsReflect };
   }
 
   /**
