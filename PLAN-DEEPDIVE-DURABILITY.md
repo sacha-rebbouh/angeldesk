@@ -164,3 +164,12 @@ Merge → `main` flag **OFF** (code dormant). Preview `DEEP_DIVE_STEPWISE=1` →
 
 ## 7. Faux blocker écarté
 « Corruption disque de `inngest.ts` » (relevé par un critic) = artefact d'affichage de session ; `tsc --noEmit` = 0, fichier valide.
+
+## 8. ÉTAT FINAL (session 2026-06-02 #7) — tout l'autonome clos, reste = activation Sacha
+HEAD `fix/thesis-gate-guard` = `5b773f2`, NON poussé. tsc=0, vitest unit 4257/2skip. 13 commits gated APPROVE (thread #11). Décisions Sacha intégrées : FactEvent idempotencyKey avant prod + déprécier legacy resume sous flag ON.
+- **d-4..d-7 FAIT** (§5-D) : split post-Tier1 durable complet (tier3-pre/tier2-sector/tier3-post per-agent/terminal-final). + fix off-by-one TOTAL_AGENTS.
+- **F FAIT** (§5-F) : watchdog × stepwise (guard tests, aucun changement source).
+- **H FAIT** (§5-H) : withHardWall sur la funding-DB.
+- **G FAIT en disposition « déprécation »** (§5-G) : G-guard route.ts (`1c1ba98`) — flag ON ⇒ pas de resume legacy thin, dispatch stepwise frais. PAS le refactor 640l (superseded par le replay Inngest).
+- **D.6 FactEvent FAIT** : `idempotencyKey` (Option D : clé ordinal/scope + batch-guard first-committed-wins + $transaction conservé + refresh-on-skip), mécanisme `f53f1b0` + wiring `5b773f2` (analysisId → finalizeTier1Phases [tier1-finalize-resolved] + tier0 [tier0-created]). **MIGRATION NEON 20260602170000 APPLIQUÉE** (FactEvent 544 lignes ; colonne+index unique vérifiés en prod). Le wiring écrit idempotencyKey sur tous chemins (OFF inclus) → migration était requise avant deploy : faite.
+- **RESTE = I (activation, Sacha)** : merge→main (flag OFF, dormant) ; preview `DEEP_DIVE_STEPWISE=1` + Deep Dive lourd réel (complétion / multi-steps dashboard / pas de double-charge LLMCallLog / pas de doublon FactEvent / watchdog OK) ; prod. Rollback = flag OFF instantané. Branche non poussée.
