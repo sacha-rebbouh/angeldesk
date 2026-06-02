@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -877,6 +878,8 @@ CONTRAINTE DE SORTIE:
       score: coherentScore,
     });
 
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
+
     return {
       meta: {
         agentName: "cap-table-auditor",
@@ -884,8 +887,8 @@ CONTRAINTE DE SORTIE:
         dataCompleteness: validDataCompleteness.includes(data.meta?.dataCompleteness as typeof validDataCompleteness[number])
           ? data.meta.dataCompleteness as typeof validDataCompleteness[number]
           : "minimal",
-        confidenceLevel: data.meta?.confidenceLevel != null ? Math.min(100, Math.max(0, data.meta.confidenceLevel)) : 0,
-        confidenceIsFallback: data.meta?.confidenceLevel == null,
+        confidenceLevel: clampedConfidenceLevel,
+        confidenceIsFallback,
         limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
       },
       score: {

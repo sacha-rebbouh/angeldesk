@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -738,7 +739,7 @@ RAPPELS:
     };
 
     // Build meta
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[competitive-intel] LLM did not return confidenceLevel — using 0`);
     }
@@ -746,7 +747,7 @@ RAPPELS:
       agentName: "competitive-intel",
       analysisDate: new Date().toISOString(),
       dataCompleteness: data.meta?.dataCompleteness ?? "partial",
-      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceLevel: clampedConfidenceLevel,
       confidenceIsFallback,
       limitations: data.meta?.limitations ?? [],
     };

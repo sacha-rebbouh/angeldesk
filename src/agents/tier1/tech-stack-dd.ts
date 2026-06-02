@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -479,7 +480,7 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
   private normalizeResponse(data: LLMTechStackDDResponse, _context: EnrichedAgentContext): TechStackDDData {
     void _context;
     // Normalize meta
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[tech-stack-dd] LLM did not return confidenceLevel — using 0`);
     }
@@ -487,7 +488,7 @@ CRITICAL: Réponds UNIQUEMENT avec le JSON. Pas de texte avant ou après. Commen
       agentName: "tech-stack-dd",
       analysisDate: data.meta?.analysisDate || new Date().toISOString(),
       dataCompleteness: this.validateEnum(data.meta?.dataCompleteness, ["complete", "partial", "minimal"], "partial"),
-      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta!.confidenceLevel!)),
+      confidenceLevel: clampedConfidenceLevel,
       confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };

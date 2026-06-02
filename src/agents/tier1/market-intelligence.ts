@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -723,7 +724,7 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
   private normalizeResponse(data: LLMMarketIntelResponse): MarketIntelData {
     // Validate meta
     const validCompleteness = ["complete", "partial", "minimal"];
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[market-intelligence] LLM did not return confidenceLevel — using 0`);
     }
@@ -733,7 +734,7 @@ CRITIQUE: Tu DOIS terminer le JSON avec TOUTES les accolades fermantes. Ne t'arr
       dataCompleteness: validCompleteness.includes(data.meta?.dataCompleteness)
         ? data.meta.dataCompleteness
         : "partial",
-      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceLevel: clampedConfidenceLevel,
       confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };

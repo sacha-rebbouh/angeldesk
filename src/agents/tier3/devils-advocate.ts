@@ -29,6 +29,7 @@
  *   un debt explicitement hors scope A3.
  */
 
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import { factCheckDevilsAdvocate } from "@/services/fact-checking";
 import { DEVILS_ADVOCATE_SYSTEM_PROMPT } from "./prompts/devils-advocate-prompt";
@@ -701,7 +702,7 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
     };
 
     // Normalize meta
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[devils-advocate] LLM did not return confidenceLevel — using 0`);
     }
@@ -711,7 +712,7 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
       dataCompleteness: ["complete", "partial", "minimal"].includes(data.meta?.dataCompleteness)
         ? data.meta.dataCompleteness
         : "partial",
-      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceLevel: clampedConfidenceLevel,
       confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };

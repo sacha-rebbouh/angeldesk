@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { EnrichedAgentContext } from "@/agents/types";
+import { logger } from "@/lib/logger";
 import {
   buildStepState,
   rehydrateContext,
@@ -165,16 +166,47 @@ describe("buildStepState (D.5b b-2) — live -> DTO sérialisable", () => {
   });
 });
 
-describe("buildStepState — normalizer STRICT (gate Codex b-2 : pas de perte silencieuse)", () => {
-  it("LÈVE sur NaN imbriqué (vs JSON round-trip qui aurait fait NaN->null)", () => {
-    expect(() => build({ factStore: [{ revenue: NaN }] as unknown as never })).toThrow(/non-fini|NaN/);
+describe("buildStepState — normalizer (gate Codex b-2 + fix NaN→null) : non-fini converti, types non-JSON rejetés", () => {
+  it("convertit NaN imbriqué -> null (sémantique JSON, parité OFF) AU LIEU de throw", () => {
+    const state = build({ factStore: [{ revenue: NaN }] as unknown as never });
+    expect((state.factStore[0] as { revenue: unknown }).revenue).toBeNull();
   });
 
-  it("LÈVE sur Infinity imbriqué", () => {
-    expect(() => build({ factStore: [{ growth: Infinity }] as unknown as never })).toThrow(/non-fini|Infinity/);
+  it("convertit Infinity imbriqué -> null", () => {
+    const state = build({ factStore: [{ growth: Infinity }] as unknown as never });
+    expect((state.factStore[0] as { growth: unknown }).growth).toBeNull();
   });
 
-  it("LÈVE sur une Map imbriquée (vs JSON round-trip qui aurait fait Map->{})", () => {
+  it("NaN dans allResults (cas Avekapeti : gtm-analyst.data.meta.confidenceLevel) -> null, ne throw PAS, snapshot valide", () => {
+    const state = build(
+      {},
+      { allResults: { "gtm-analyst": { success: true, data: { meta: { confidenceLevel: NaN } } } } as never },
+    );
+    const meta = (state.allResults["gtm-analyst"] as { data: { meta: { confidenceLevel: unknown } } }).data.meta;
+    expect(meta.confidenceLevel).toBeNull();
+  });
+
+  it("scalaire STRUCTUREL non-fini (totalCost=NaN) -> LÈVE (fail loud invariant — bypasse normalizeToWire)", () => {
+    expect(() => build({}, { totalCost: NaN })).toThrow(/non-fini|NaN/);
+  });
+
+  it("émet UN warn agrégé + borné quand des non-finis sont convertis (observabilité gate Codex)", () => {
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation((() => undefined) as never);
+    try {
+      build(
+        {},
+        { allResults: { "gtm-analyst": { success: true, data: { meta: { confidenceLevel: NaN, ratio: Infinity } } } } as never },
+      );
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const arg = warnSpy.mock.calls[0][0] as unknown as { count: number; paths: string[] };
+      expect(arg.count).toBe(2);
+      expect(arg.paths).toContain("$.allResults.gtm-analyst.data.meta.confidenceLevel");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("LÈVE sur une Map imbriquée (pas de représentation JSON fidèle)", () => {
     expect(() => build({ contextEngine: { m: new Map([["a", 1]]) } as unknown as never })).toThrow(/non-plain|Map/);
   });
 

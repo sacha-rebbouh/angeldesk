@@ -5,12 +5,16 @@
  * en `FullAnalysisStepState` sérialisable (Date -> ISO). C'est l'inverse de
  * `rehydrateContext` (b-3, à venir).
  *
- * Normalisation par `normalizeToWire` STRICT (PAS un JSON round-trip aveugle — gate Codex
- * b-2) : Date -> ISO ; string/boolean/nombre fini conservés ; undefined imbriqué DROPPÉ
- * pour un objet (champ optionnel absent, comme JSON) et -> null pour un élément de tableau.
- * REJETTE (au lieu de convertir silencieusement) : NaN/Infinity, Map, Set, instance de
- * classe (hors Date), function, symbol, bigint — avec le chemin fautif. Un JSON round-trip
- * aurait transformé NaN->null et Map/Set->{} en masquant une divergence live vs replay.
+ * Normalisation par `normalizeToWire` (PAS un JSON round-trip aveugle — gate Codex b-2) :
+ * Date -> ISO ; string/boolean/nombre fini conservés ; undefined imbriqué DROPPÉ pour un objet
+ * (champ optionnel absent, comme JSON) et -> null pour un élément de tableau.
+ * NaN/Infinity -> null (sémantique JSON `JSON.stringify(NaN)==="null"`, PARITÉ avec le chemin
+ * OFF qui persiste allResults via JSON.parse(JSON.stringify) ; chemin fautif collecté → warn
+ * agrégé : un nombre non-fini dans une donnée d'agent ne tue pas le run durable).
+ * REJETTE encore (au lieu de convertir) : Map, Set, instance de classe (hors Date), function,
+ * symbol, bigint — sans représentation JSON fidèle, ils signalent un vrai type qui a fuité.
+ * Les scalaires STRUCTURELS du DTO (totalCost…) ne passent pas par ce normalizer : un non-fini
+ * s'y glissant reste rejeté par assertSerializableStepState (fail loud côté invariant).
  *
  * Le sectorExpert (closure) n'est JAMAIS porté : reconstruit via le secteur au step Tier2.
  */
@@ -24,6 +28,7 @@ import {
   assertSerializableStepState,
   assertPlainJson,
 } from "./full-analysis-step-state";
+import { logger } from "@/lib/logger";
 
 export interface BuildStepStateInput {
   analysisId: string;
@@ -64,19 +69,28 @@ export interface BuildStepStateInput {
 }
 
 /**
- * Normalizer STRICT live -> wire. Date -> ISO ; conserve string/boolean/nombre fini ;
- * DROPpe les valeurs undefined imbriquées d'un objet (champ optionnel absent, comme JSON)
- * et mappe un élément undefined de tableau -> null (comme JSON.stringify([undefined])).
- * LÈVE (au lieu de convertir silencieusement) sur NaN/Infinity, Map, Set, instance de
- * classe (hors Date), function, symbol, bigint — avec le chemin fautif.
+ * Normalizer live -> wire. Date -> ISO ; conserve string/boolean/nombre fini ; DROPpe les
+ * valeurs undefined imbriquées d'un objet (champ optionnel absent, comme JSON) et mappe un
+ * élément undefined de tableau -> null (comme JSON.stringify([undefined])). Convertit
+ * NaN/Infinity -> null (sémantique JSON ; chemin poussé dans `sink` pour warn agrégé).
+ * LÈVE (pas de représentation JSON fidèle) sur Map, Set, instance de classe (hors Date),
+ * function, symbol, bigint — avec le chemin fautif.
  */
-function normalizeToWire(value: unknown, path = "$"): unknown {
+function normalizeToWire(value: unknown, path = "$", sink?: string[]): unknown {
   if (value === null) return null;
   const t = typeof value;
   if (t === "string" || t === "boolean") return value;
   if (t === "number") {
+    // NaN/Infinity n'ont PAS de représentation JSON (`JSON.stringify(NaN)` === "null").
+    // On les convertit en `null` (sémantique JSON, PARITÉ avec le chemin OFF qui persiste
+    // allResults via `JSON.parse(JSON.stringify(...))`) AU LIEU de throw : un nombre non-fini
+    // dans la donnée d'un agent (ex. gtm-analyst.data.meta.confidenceLevel) ne doit pas tuer le
+    // run durable. Le `sink` collecte le chemin fautif → l'appelant le remonte en warn agrégé
+    // (traque l'agent émetteur). Les scalaires STRUCTURELS du DTO (totalCost, completedCount…)
+    // ne passent PAS ici : un NaN s'y glissant reste rejeté par assertSerializableStepState.
     if (!Number.isFinite(value as number)) {
-      throw new Error(`[buildStepState] nombre non-fini (NaN/Infinity) en ${path}`);
+      sink?.push(path);
+      return null;
     }
     return value;
   }
@@ -89,7 +103,7 @@ function normalizeToWire(value: unknown, path = "$"): unknown {
   if (value instanceof Date) return value.toISOString();
 
   if (Array.isArray(value)) {
-    return value.map((v, i) => (v === undefined ? null : normalizeToWire(v, `${path}[${i}]`)));
+    return value.map((v, i) => (v === undefined ? null : normalizeToWire(v, `${path}[${i}]`, sink)));
   }
 
   const proto = Object.getPrototypeOf(value as object);
@@ -101,41 +115,41 @@ function normalizeToWire(value: unknown, path = "$"): unknown {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (v === undefined) continue; // champ optionnel absent -> droppé (comme JSON)
-    out[k] = normalizeToWire(v, `${path}.${k}`);
+    out[k] = normalizeToWire(v, `${path}.${k}`, sink);
   }
   return out;
 }
 
-function toWireObject(value: unknown, path: string): Record<string, unknown> {
+function toWireObject(value: unknown, path: string, sink?: string[]): Record<string, unknown> {
   if (value === null || value === undefined) return {};
-  const w = normalizeToWire(value, path);
+  const w = normalizeToWire(value, path, sink);
   if (w === null || typeof w !== "object" || Array.isArray(w)) {
     throw new Error(`[buildStepState] objet attendu en ${path}`);
   }
   return w as Record<string, unknown>;
 }
 
-function toWireObjectOrNull(value: unknown, path: string): Record<string, unknown> | null {
+function toWireObjectOrNull(value: unknown, path: string, sink?: string[]): Record<string, unknown> | null {
   if (value === null || value === undefined) return null;
-  const w = normalizeToWire(value, path);
+  const w = normalizeToWire(value, path, sink);
   if (typeof w !== "object" || Array.isArray(w)) {
     throw new Error(`[buildStepState] objet ou null attendu en ${path}`);
   }
   return w as Record<string, unknown>;
 }
 
-function toWireArray(value: unknown, path: string): unknown[] {
+function toWireArray(value: unknown, path: string, sink?: string[]): unknown[] {
   if (value === null || value === undefined) return [];
-  const w = normalizeToWire(value, path);
+  const w = normalizeToWire(value, path, sink);
   if (!Array.isArray(w)) {
     throw new Error(`[buildStepState] tableau attendu en ${path}`);
   }
   return w;
 }
 
-function toWireArrayOrNull(value: unknown, path: string): unknown[] | null {
+function toWireArrayOrNull(value: unknown, path: string, sink?: string[]): unknown[] | null {
   if (value === null || value === undefined) return null;
-  const w = normalizeToWire(value, path);
+  const w = normalizeToWire(value, path, sink);
   if (!Array.isArray(w)) {
     throw new Error(`[buildStepState] tableau ou null attendu en ${path}`);
   }
@@ -152,6 +166,10 @@ export function buildStepState(input: BuildStepStateInput): FullAnalysisStepStat
 
   const evidenceToday =
     ctx.evidenceToday instanceof Date ? ctx.evidenceToday : new Date(input.startTimeMs);
+
+  // Collecteur des chemins où un nombre non-fini (NaN/Infinity) a été converti en null par
+  // normalizeToWire (cf. son commentaire). Remonté en un seul warn agrégé + borné en fin.
+  const nonFiniteSink: string[] = [];
 
   const state: FullAnalysisStepState = {
     version: FULL_ANALYSIS_STEP_STATE_VERSION,
@@ -171,37 +189,47 @@ export function buildStepState(input: BuildStepStateInput): FullAnalysisStepStat
     evidenceTodayIso: evidenceToday.toISOString(),
     conditionsAnalystMode: ctx.conditionsAnalystMode ?? null,
 
-    allResults: toWireObject(input.allResults, "$.allResults"),
-    previousResults: toWireObject(ctx.previousResults ?? {}, "$.previousResults"),
-    canonicalDeal: toWireObject(ctx.canonicalDeal ?? ctx.deal, "$.canonicalDeal"),
-    analysisBinding: toWireObject(ctx.analysis ?? {}, "$.analysisBinding"),
+    allResults: toWireObject(input.allResults, "$.allResults", nonFiniteSink),
+    previousResults: toWireObject(ctx.previousResults ?? {}, "$.previousResults", nonFiniteSink),
+    canonicalDeal: toWireObject(ctx.canonicalDeal ?? ctx.deal, "$.canonicalDeal", nonFiniteSink),
+    analysisBinding: toWireObject(ctx.analysis ?? {}, "$.analysisBinding", nonFiniteSink),
 
-    tier1CrossValidation: toWireObjectOrNull(ctx.tier1CrossValidation, "$.tier1CrossValidation"),
-    verificationContext: toWireObjectOrNull(input.verificationContext, "$.verificationContext"),
-    evidenceContext: toWireObjectOrNull(ctx.evidenceContext, "$.evidenceContext"),
-    thesis: toWireObjectOrNull(ctx.thesis, "$.thesis"),
-    contextEngine: toWireObjectOrNull(ctx.contextEngine, "$.contextEngine"),
-    evidenceLedger: toWireObjectOrNull(ctx.evidenceLedger, "$.evidenceLedger"),
-    extractedData: toWireObjectOrNull(ctx.extractedData, "$.extractedData"),
-    deckCoherenceReport: toWireObjectOrNull(ctx.deckCoherenceReport, "$.deckCoherenceReport"),
-    baPreferences: toWireObjectOrNull(ctx.baPreferences, "$.baPreferences"),
-    dealTerms: toWireObjectOrNull(ctx.dealTerms, "$.dealTerms"),
-    dealStructure: toWireObjectOrNull(ctx.dealStructure, "$.dealStructure"),
-    terminalResult: toWireObjectOrNull(input.terminalResult, "$.terminalResult"),
+    tier1CrossValidation: toWireObjectOrNull(ctx.tier1CrossValidation, "$.tier1CrossValidation", nonFiniteSink),
+    verificationContext: toWireObjectOrNull(input.verificationContext, "$.verificationContext", nonFiniteSink),
+    evidenceContext: toWireObjectOrNull(ctx.evidenceContext, "$.evidenceContext", nonFiniteSink),
+    thesis: toWireObjectOrNull(ctx.thesis, "$.thesis", nonFiniteSink),
+    contextEngine: toWireObjectOrNull(ctx.contextEngine, "$.contextEngine", nonFiniteSink),
+    evidenceLedger: toWireObjectOrNull(ctx.evidenceLedger, "$.evidenceLedger", nonFiniteSink),
+    extractedData: toWireObjectOrNull(ctx.extractedData, "$.extractedData", nonFiniteSink),
+    deckCoherenceReport: toWireObjectOrNull(ctx.deckCoherenceReport, "$.deckCoherenceReport", nonFiniteSink),
+    baPreferences: toWireObjectOrNull(ctx.baPreferences, "$.baPreferences", nonFiniteSink),
+    dealTerms: toWireObjectOrNull(ctx.dealTerms, "$.dealTerms", nonFiniteSink),
+    dealStructure: toWireObjectOrNull(ctx.dealStructure, "$.dealStructure", nonFiniteSink),
+    terminalResult: toWireObjectOrNull(input.terminalResult, "$.terminalResult", nonFiniteSink),
 
-    scopedDocuments: toWireArray(ctx.documents, "$.scopedDocuments"),
-    factStore: toWireArray(ctx.factStore, "$.factStore"),
-    founderResponses: toWireArray(ctx.founderResponses, "$.founderResponses"),
-    collectedWarnings: toWireArray(input.collectedWarnings, "$.collectedWarnings"),
-    tier1Findings: toWireArray(input.tier1Findings, "$.tier1Findings"),
-    allValidations: toWireArray(input.allValidations, "$.allValidations"),
-    needsReflect: toWireArray(input.needsReflect, "$.needsReflect"),
+    scopedDocuments: toWireArray(ctx.documents, "$.scopedDocuments", nonFiniteSink),
+    factStore: toWireArray(ctx.factStore, "$.factStore", nonFiniteSink),
+    founderResponses: toWireArray(ctx.founderResponses, "$.founderResponses", nonFiniteSink),
+    collectedWarnings: toWireArray(input.collectedWarnings, "$.collectedWarnings", nonFiniteSink),
+    tier1Findings: toWireArray(input.tier1Findings, "$.tier1Findings", nonFiniteSink),
+    allValidations: toWireArray(input.allValidations, "$.allValidations", nonFiniteSink),
+    needsReflect: toWireArray(input.needsReflect, "$.needsReflect", nonFiniteSink),
 
-    consolidatedRedFlags: toWireArrayOrNull(ctx.consolidatedRedFlags, "$.consolidatedRedFlags"),
-    previousAnalysisQuestions: toWireArrayOrNull(ctx.previousAnalysisQuestions, "$.previousAnalysisQuestions"),
+    consolidatedRedFlags: toWireArrayOrNull(ctx.consolidatedRedFlags, "$.consolidatedRedFlags", nonFiniteSink),
+    previousAnalysisQuestions: toWireArrayOrNull(ctx.previousAnalysisQuestions, "$.previousAnalysisQuestions", nonFiniteSink),
   };
 
   assertSerializableStepState(state);
+
+  // Observabilité (gate Codex) : un seul warn agrégé + borné par snapshot. Le chemin
+  // (ex. $.allResults.gtm-analyst.data.meta.confidenceLevel) pointe l'agent à corriger en amont.
+  if (nonFiniteSink.length > 0) {
+    logger.warn(
+      { analysisId: input.analysisId, lastUnit: input.lastUnit, count: nonFiniteSink.length, paths: nonFiniteSink.slice(0, 10) },
+      "[buildStepState] nombres non-finis (NaN/Infinity) convertis en null dans le snapshot stepwise",
+    );
+  }
+
   return state;
 }
 

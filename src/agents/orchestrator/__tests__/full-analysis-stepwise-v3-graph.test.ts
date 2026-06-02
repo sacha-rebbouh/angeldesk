@@ -391,6 +391,46 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
     expect(capInline[0].totalCost).toBeCloseTo(effTotalCost(capPipeline[0]), 9);
     expect(capInline[0].completedCount).toBe(capPipeline[0].completedCount + capPipeline[0].phasesResult.completedInPhases);
   });
+
+  it("résilience NaN (cas Avekapeti) — gtm-analyst.confidenceLevel=NaN en phase D : snapshot écrit (NaN→null) + run atteint le terminal, PAS de crash buildStepState", async () => {
+    const orch = new AgentOrchestrator() as unknown as Record<string, unknown>;
+    stubHelpers(orch, []);
+    // Reproduit le crash prod : un agent SUCCEEDED de phase D (gtm-analyst ∈ TIER1_PHASE_D) émet un
+    // confidenceLevel non-fini. SANS le fix (normalizeToWire NaN→null), buildStepState THROW au snapshot
+    // tier1-d-agents → failFullAnalysis → success:false. AVEC le fix : NaN→null, le run continue jusqu'au tail.
+    orch.runTier1PhaseAgents = vi.fn(async (
+      phase: { name: string; agents: readonly string[] },
+      refs: { allResults: Record<string, unknown>; allFindings: unknown[] },
+      state: { totalCost: number; completedCount: number },
+    ) => {
+      const phaseFindings = phase.agents.map((a) => ({ id: `f-${a}`, agentName: a, title: `${a} finding`, createdAt: FINDING_DATE }));
+      for (const a of phase.agents) {
+        refs.allResults[a] = a === "gtm-analyst"
+          ? { agentName: a, success: true, executionTimeMs: 1, cost: 0.5, data: { meta: { confidenceLevel: NaN } } }
+          : { agentName: a, success: true, executionTimeMs: 1, cost: 0.5 };
+      }
+      refs.allFindings.push(...phaseFindings);
+      return {
+        totalCost: state.totalCost + 0.5 * phase.agents.length,
+        completedCount: state.completedCount + phase.agents.length,
+        phaseFindings,
+        needsReflect: [] as string[],
+      };
+    });
+
+    const result = await (orch.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<{ success: boolean }>)(
+      {}, "deal_1", undefined, makeInit(), new InlineStepRunner(),
+    );
+
+    // Le run a atteint runFinalCompletion (REST_RESULT.success=true), PAS failFullAnalysis (success:false).
+    expect(result.success).toBe(true);
+    // Le snapshot (dernier écrit, allResults cumulatif) a été produit malgré le NaN, et
+    // gtm-analyst.data.meta.confidenceLevel y est null (sanitizé par normalizeToWire).
+    const snap = snapshotStore.map.get("analysis_1");
+    expect(snap).toBeTruthy();
+    const parsed = JSON.parse(snap!) as { allResults: Record<string, { data?: { meta?: { confidenceLevel?: unknown } } }> };
+    expect(parsed.allResults["gtm-analyst"]?.data?.meta?.confidenceLevel).toBeNull();
+  });
 });
 
 // Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — d-6 ajoute tier3-post PER-AGENT :
