@@ -3202,14 +3202,86 @@ export class AgentOrchestrator {
     reportTotalCost: (totalCost: number) => void;
   }): Promise<AnalysisResult> {
     const { deal, dealId, onProgress, init, enrichedContext, extractedData, phasesResult, reportTotalCost } = params;
+    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    try {
+      const glue = await this.runPostTier1Glue({
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        extractedData,
+        phasesResult,
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+        reportTotalCost: (c) => {
+          totalCost = c;
+        },
+      });
+      if (glue.done) return glue.result;
+      completedCount = glue.completedCount;
+
+      return await this.runPostTier1Rest({
+        deal,
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        verificationContext: glue.verificationContext,
+        allFindings: glue.allFindings,
+        totalCost,
+        completedCount,
+        reportTotalCost: (c) => {
+          totalCost = c;
+        },
+      });
+    } finally {
+      reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-3 (R3) — « GLUE » post-Tier1, extrait BYTE-INERT de runFullAnalysisPostTier1.
+   * Séquence aggregation → failFast (early-return) → consensus global → cost-limit (early-return)
+   * → cross-validation → red-flags. Mute allResults/enrichedContext par RÉFÉRENCE (cross-val :
+   * scores allResults + enrichedContext.tier1CrossValidation ; red-flags : consolidatedRedFlags)
+   * comme avant. PARTAGÉ par le chemin single-pass (runFullAnalysisPostTier1) ET le driver
+   * stepwise v3 (step durable `post-tier1-glue`, d-3-6). Le `finally` remonte le totalCost courant
+   * au scope appelant (reportTotalCost) sur TOUS les chemins de sortie (not-done, early-return,
+   * exception) — byte-équivalence du coût, pattern d-2b-1.
+   *
+   * NB byte-équivalence (gate Codex #10) : les early-returns failFast/cost-limit appellent
+   * `stateMachine.complete()` depuis ANALYZING/DEBATING (sans startSynthesis) → transition INVALIDE
+   * → `transition()` LÈVE (state-machine.ts:219). Le `return { done: true }` est donc INJOIGNABLE au
+   * runtime (préservé pour la forme, comme le code d'origine `if (failFastResult.done) return …`) ;
+   * une fois déclenchés (failFastOnCritical / maxCostUsd), ces chemins THROWENT → catch terminal →
+   * FAILED. Bug latent isolé hors chantier (corriger la transition changerait la sortie OFF).
+   */
+  private async runPostTier1Glue(params: {
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    extractedData: ContextSeed;
+    phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>>;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    /** Remonte le totalCost courant du glue au scope appelant : byte-équivalence du coût. */
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<
+    | { done: true; result: AnalysisResult }
+    | { done: false; completedCount: number; verificationContext: VerificationContext; allFindings: ScoredFinding[] }
+  > {
+    const { dealId, onProgress, init, enrichedContext, extractedData, phasesResult, reportTotalCost } = params;
     const {
       failFastOnCritical,
       maxCostUsd,
-      isUpdate,
       analysisModeOverride,
       startTime,
       collectedWarnings,
-      sectorExpert,
       TOTAL_AGENTS,
       analysis,
       stateMachine,
@@ -3220,8 +3292,8 @@ export class AgentOrchestrator {
     try {
       let verificationContext: VerificationContext;
       let allFindings: ScoredFinding[];
-      let lowConfidenceAgents: string[];
-      ({ totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings, lowConfidenceAgents } = await this.runPostTier1Aggregation({
+      // lowConfidenceAgents : retourné par aggregation mais DEAD en aval (log-only) → non propagé.
+      ({ totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings } = await this.runPostTier1Aggregation({
         stepwise,
         enrichedContext,
         analysis,
@@ -3246,7 +3318,7 @@ export class AgentOrchestrator {
         totalCost,
         startTime,
       });
-      if (failFastResult.done) return failFastResult.result;
+      if (failFastResult.done) return failFastResult;
 
       ({ totalCost } = await this.runGlobalConsensusStep({
         allFindings,
@@ -3271,12 +3343,56 @@ export class AgentOrchestrator {
         collectedWarnings,
         startTime,
       });
-      if (costLimitResult.done) return costLimitResult.result;
+      if (costLimitResult.done) return costLimitResult;
 
       this.runTier1CrossValidationStep({ allResults, enrichedContext });
 
       await this.runRedFlagConsolidationStep({ allResults, enrichedContext });
 
+      return { done: false, completedCount, verificationContext, allFindings };
+    } finally {
+      reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-3 (R3) — « REST » post-Tier1, extrait BYTE-INERT de runFullAnalysisPostTier1.
+   * Séquence synthesis-setup → tier3-pré → tier2-sector → tier2-consensus/reflexion → tier3-post →
+   * final-completion. Reçoit verificationContext/allFindings (calculés par le glue) + l'état vivant
+   * au boundary. Mute allResults/enrichedContext.previousResults par RÉFÉRENCE (tier3-pre/post +
+   * tier2-consensus). PARTAGÉ par le chemin single-pass (runFullAnalysisPostTier1) ET le driver
+   * stepwise v3 (step terminal `post-tier1`, d-3-6). Le `finally` remonte le totalCost courant
+   * (reportTotalCost) sur tous les chemins de sortie — byte-équivalence du coût.
+   */
+  private async runPostTier1Rest(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    verificationContext: VerificationContext;
+    allFindings: ScoredFinding[];
+    totalCost: number;
+    completedCount: number;
+    /** Remonte le totalCost courant du rest au scope appelant : byte-équivalence du coût. */
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<AnalysisResult> {
+    const { deal, dealId, onProgress, init, enrichedContext, verificationContext, allFindings, reportTotalCost } = params;
+    const {
+      maxCostUsd,
+      isUpdate,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      sectorExpert,
+      TOTAL_AGENTS,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount } = params;
+    try {
       const { tier3AgentMap } = await this.runSynthesisSetupStep({ deal, dealId, stateMachine, enrichedContext });
 
       ({ totalCost, completedCount } = await this.runTier3PreTier2Batch({
