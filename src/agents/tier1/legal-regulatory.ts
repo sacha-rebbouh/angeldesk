@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -1006,7 +1007,7 @@ RAPPELS CRITIQUES:
   ): LegalRegulatoryData {
     void context;
     // Normalize meta
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[legal-regulatory] LLM did not return confidenceLevel — using 0`);
     }
@@ -1014,7 +1015,7 @@ RAPPELS CRITIQUES:
       agentName: "legal-regulatory",
       analysisDate: new Date().toISOString(),
       dataCompleteness: data.meta?.dataCompleteness ?? "minimal",
-      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceLevel: clampedConfidenceLevel,
       confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };

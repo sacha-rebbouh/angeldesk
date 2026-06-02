@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -742,7 +743,7 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
 
     // Normalize meta
     const validCompleteness = ["complete", "partial", "minimal"];
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[deck-forensics] LLM did not return confidenceLevel — using 0`);
     }
@@ -752,7 +753,7 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
       dataCompleteness: validCompleteness.includes(data.meta?.dataCompleteness)
         ? (data.meta.dataCompleteness as "complete" | "partial" | "minimal")
         : "partial",
-      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceLevel: clampedConfidenceLevel,
       confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };

@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -633,7 +634,7 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
     const now = new Date().toISOString();
 
     // Normaliser meta
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[gtm-analyst] LLM did not return confidenceLevel — using 0`);
     }
@@ -641,7 +642,7 @@ Réponds UNIQUEMENT en JSON valide avec la structure exacte demandée.`;
       agentName: "gtm-analyst",
       analysisDate: now,
       dataCompleteness: this.normalizeDataCompleteness(data.meta?.dataCompleteness),
-      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceLevel: clampedConfidenceLevel,
       confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };

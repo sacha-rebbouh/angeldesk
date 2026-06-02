@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import { severityRank } from "@/services/red-flag-dedup";
 import type {
@@ -1009,7 +1010,7 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       ? data.meta.dataCompleteness
       : "minimal";
 
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[question-master] LLM did not return confidenceLevel — using 0`);
     }
@@ -1017,7 +1018,7 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       agentName: "question-master",
       analysisDate: new Date().toISOString(),
       dataCompleteness,
-      confidenceLevel: confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel)),
+      confidenceLevel: clampedConfidenceLevel,
       confidenceIsFallback,
       limitations: Array.isArray(data.meta?.limitations) ? data.meta.limitations : [],
     };

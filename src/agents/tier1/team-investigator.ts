@@ -1,3 +1,4 @@
+import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -1268,11 +1269,11 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
       : baseLimitations;
 
     // Cap confidence when no LinkedIn is verified
-    const confidenceIsFallback = data.meta?.confidenceLevel == null;
+    const { confidenceLevel: clampedConfidenceLevel, confidenceIsFallback } = clampConfidenceLevel(data.meta?.confidenceLevel);
     if (confidenceIsFallback) {
       console.warn(`[team-investigator] LLM did not return confidenceLevel — using 0`);
     }
-    const rawConfidence = confidenceIsFallback ? 0 : Math.min(100, Math.max(0, data.meta.confidenceLevel));
+    const rawConfidence = clampedConfidenceLevel;
     const confidenceLevel = !hasAnyLinkedInVerified ? Math.min(rawConfidence, 60) : rawConfidence;
 
     const meta: AgentMeta = {
