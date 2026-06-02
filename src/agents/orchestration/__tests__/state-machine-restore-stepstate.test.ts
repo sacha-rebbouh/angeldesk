@@ -56,6 +56,8 @@ function makeStepState(over: Partial<FullAnalysisStepState> = {}): FullAnalysisS
     founderResponses: [],
     collectedWarnings: [],
     tier1Findings: [],
+    allValidations: [],
+    needsReflect: [],
     consolidatedRedFlags: null,
     previousAnalysisQuestions: null,
     ...over,

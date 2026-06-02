@@ -3450,6 +3450,8 @@ export class AgentOrchestrator {
               verificationContext: null,
               collectedWarnings,
               tier1Findings: [],
+              allValidations: [],
+              needsReflect: [],
             })
           );
           return { unit: "tier0-thesis" as const };

@@ -68,6 +68,8 @@ function makeValidState(over: Partial<FullAnalysisStepState> = {}): FullAnalysis
     founderResponses: [],
     collectedWarnings: [],
     tier1Findings: [],
+    allValidations: [],
+    needsReflect: [],
     previousAnalysisQuestions: null,
     ...over,
   };

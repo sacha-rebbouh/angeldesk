@@ -53,6 +53,14 @@ export interface BuildStepStateInput {
    * PAS porté par enrichedContext. Vide (`[]`) avant l'agrégation post-Tier1. Chaque finding a
    * un `createdAt` (Date) normalisé en ISO ; ravivé seul au rehydrate (lock Codex #4, v3 d-2a). */
   tier1Findings: unknown[];
+  /**
+   * allValidations — AgentFactValidation accumulées Tier1 (carry v4, d-3). Local de runFullAnalysis.
+   * Aucune Date (primitifs seuls) → pas de reviver au rehydrate. Vide (`[]`) avant Tier1. */
+  allValidations: unknown[];
+  /**
+   * needsReflect — liste ORDONNÉE des agents low-conf restant à refléchir dans la phase courante
+   * (carry v4, d-3 ; portée, pas re-dérivée). Local de runFullAnalysis. Vide (`[]`) hors reflexion. */
+  needsReflect: unknown[];
 }
 
 /**
@@ -186,6 +194,8 @@ export function buildStepState(input: BuildStepStateInput): FullAnalysisStepStat
     founderResponses: toWireArray(ctx.founderResponses, "$.founderResponses"),
     collectedWarnings: toWireArray(input.collectedWarnings, "$.collectedWarnings"),
     tier1Findings: toWireArray(input.tier1Findings, "$.tier1Findings"),
+    allValidations: toWireArray(input.allValidations, "$.allValidations"),
+    needsReflect: toWireArray(input.needsReflect, "$.needsReflect"),
 
     consolidatedRedFlags: toWireArrayOrNull(ctx.consolidatedRedFlags, "$.consolidatedRedFlags"),
     previousAnalysisQuestions: toWireArrayOrNull(ctx.previousAnalysisQuestions, "$.previousAnalysisQuestions"),
@@ -378,6 +388,10 @@ export interface RehydratedState {
   collectedWarnings: unknown[];
   /** Findings agrégés Tier1 (createdAt ravivé). Local de runFullAnalysis (hors enrichedContext). */
   tier1Findings: unknown[];
+  /** AgentFactValidation accumulées Tier1 (carry v4, d-3 ; aucune Date). Local hors enrichedContext. */
+  allValidations: unknown[];
+  /** Liste ORDONNÉE des agents low-conf restant à refléchir dans la phase courante (carry v4, d-3). */
+  needsReflect: unknown[];
   totalCost: number;
   completedCount: number;
   startTimeMs: number;
@@ -429,6 +443,9 @@ export function rehydrateContext(state: FullAnalysisStepState): RehydratedState 
     verificationContext: cloneWire(state.verificationContext),
     collectedWarnings: reviveWarnings(state.collectedWarnings),
     tier1Findings: reviveTier1Findings(state.tier1Findings),
+    // allValidations/needsReflect = JSON pur (aucune Date) → clone seul, pas de reviver (v4, d-3).
+    allValidations: cloneWire(state.allValidations),
+    needsReflect: cloneWire(state.needsReflect),
     totalCost: state.totalCost,
     completedCount: state.completedCount,
     startTimeMs: state.startTimeMs,

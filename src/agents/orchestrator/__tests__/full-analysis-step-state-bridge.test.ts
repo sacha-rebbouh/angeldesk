@@ -80,6 +80,11 @@ function build(over: Partial<EnrichedAgentContext> = {}, locals: Partial<Paramet
     tier1Findings: [
       { id: "deck-forensics_story_coherence_ab12cd34", agentName: "deck-forensics", metric: "story_coherence", value: 72, createdAt: FINDING_CREATED },
     ],
+    // allValidations / needsReflect (v4 d-3) — locals de runFullAnalysis ; aucune Date
+    allValidations: [
+      { factKey: "revenue", status: "VERIFIED", newConfidence: 88, validatedBy: "financial-auditor", explanation: "ok" },
+    ],
+    needsReflect: ["team-investigator", "market-intelligence"],
     ...locals,
   });
 }
@@ -258,6 +263,8 @@ describe("rehydrateContext (D.5b b-3) — DTO wire -> état vivant (revive Date)
       enrichedContext: r.enrichedContext, allResults: r.allResults,
       verificationContext: r.verificationContext, collectedWarnings: r.collectedWarnings,
       tier1Findings: r.tier1Findings,
+      allValidations: r.allValidations,
+      needsReflect: r.needsReflect,
       terminalResult: r.terminalResult,
     });
     expect(dto2).toEqual(dto1);
@@ -277,6 +284,19 @@ describe("rehydrateContext (D.5b b-3) — DTO wire -> état vivant (revive Date)
     expect(revived.createdAt).toBeInstanceOf(Date);
     expect(revived.createdAt.getTime()).toBe(FINDING_CREATED.getTime());
     expect(revived.id).toBe("deck-forensics_story_coherence_ab12cd34");
+  });
+
+  it("v4 (d-3) : allValidations + needsReflect portés sur RehydratedState (hors enrichedContext ; aucune Date à raviver)", () => {
+    const state = build();
+    const r = rehydrateContext(state);
+    // allValidations = primitifs seuls → clone fidèle (deep-equal au live)
+    expect(r.allValidations).toEqual([
+      { factKey: "revenue", status: "VERIFIED", newConfidence: 88, validatedBy: "financial-auditor", explanation: "ok" },
+    ]);
+    // needsReflect ORDONNÉ → l'ordre des agents low-conf survit
+    expect(r.needsReflect).toEqual(["team-investigator", "market-intelligence"]);
+    // aucune instance Date dans ces deux blobs au wire
+    expect((state.allValidations[0] as Record<string, unknown>) instanceof Date).toBe(false);
   });
 
   it("revive PROFOND evidenceContext (forecast/actuals/claims/detectedAttachments)", () => {

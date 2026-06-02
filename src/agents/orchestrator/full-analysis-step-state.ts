@@ -27,6 +27,17 @@
  * générés à l'extraction et NON re-dérivables byte-identique ; ils sont réutilisés tels quels
  * au consensus Tier2-sectoriel (lock Codex #4) → ils doivent être PORTÉS, pas re-extraits.
  *
+ * VERSION 4 (d-3) — AJOUT `allValidations` + `needsReflect` (2 blobs tableau requis). Le split FIN
+ * de Tier1 (un step `agents` + un step de reflexion PAR agent low-conf + un step `phase-finalize`)
+ * snapshote AU MILIEU d'une phase : l'état intra-phase doit transiter. `allValidations` = les
+ * AgentFactValidation accumulées (lues CUMULATIVEMENT par reformatFactStoreWithValidations à chaque
+ * phase, pas seulement persistées en DB) ; `needsReflect` = la LISTE ORDONNÉE des agents low-conf
+ * restant à refléchir dans la phase courante (PORTÉE, pas re-dérivée : la reflexion mute allResults,
+ * donc re-extraire les confidences au replay donnerait une liste différente — lock Codex). Les
+ * findings intra-phase accumulés réutilisent le champ `tier1Findings` existant (runPostTier1Aggregation
+ * renvoie `phasesResult.allFindings` inchangé → même tableau). AgentFactValidation = primitifs seuls
+ * (aucune Date) → `allValidations` ne nécessite pas de reviver.
+ *
  * SÉRIALISATION : ce DTO est du JSON pur (cf. assertPlainJson). Les valeurs riches sont
  * stockées au niveau fil (Date → string ISO ; aucun Map/Set — confirmé par l'audit). Les
  * Date sont RAVIVÉES par le consommateur (rehydrateContext, étape D.5b ultérieure) aux
@@ -35,7 +46,7 @@
  */
 
 /** Version du schéma de snapshot — bump si la forme change (compat snapshot en vol). */
-export const FULL_ANALYSIS_STEP_STATE_VERSION = 3 as const;
+export const FULL_ANALYSIS_STEP_STATE_VERSION = 4 as const;
 
 /**
  * Identifiants d'unités du pipeline stepwise (ordre d'exécution). `tier0-facts` est
@@ -178,6 +189,18 @@ export interface FullAnalysisStepState {
    * seul au rehydrate. `lowConfidenceAgents` reste re-dérivé (log-only, hors invariant). Vide
    * (`[]`) tant que l'agrégation post-Tier1 n'a pas tourné. */
   tier1Findings: unknown[];
+  /**
+   * allValidations — AgentFactValidation accumulées sur les phases Tier1 (extractValidatedClaims).
+   * Carry (v4, d-3) : lues CUMULATIVEMENT par reformatFactStoreWithValidations à chaque phase, donc
+   * l'état intra-Tier1 doit transiter au snapshot mid-phase. AgentFactValidation = primitifs seuls
+   * (aucune Date) → pas de reviver au rehydrate. Vide (`[]`) avant la 1re validation Tier1. */
+  allValidations: unknown[];
+  /**
+   * needsReflect — LISTE ORDONNÉE des agents low-conf restant à refléchir dans la phase Tier1 en
+   * cours (split d-3 : 1 step reflexion par agent). Carry (v4) : PORTÉE et NON re-dérivée — la
+   * reflexion mute allResults, donc re-extraire les confidences au replay changerait la liste (lock
+   * Codex). Vide (`[]`) hors d'une phase en cours de reflexion. */
+  needsReflect: unknown[];
 
   // --- blobs TABLEAU nullable ---
   /** Sortie de consolidateRedFlags (inline-only). null avant post-Tier1. */
@@ -234,6 +257,8 @@ const REQUIRED_ARRAY_BLOBS: ReadonlyArray<keyof FullAnalysisStepState> = [
   "founderResponses",
   "collectedWarnings",
   "tier1Findings",
+  "allValidations",
+  "needsReflect",
 ];
 
 /** Blobs TABLEAU nullable (null OU array + JSON pur). */

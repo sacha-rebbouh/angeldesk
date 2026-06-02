@@ -57,6 +57,11 @@ function makeValidState(over: Partial<FullAnalysisStepState> = {}): FullAnalysis
     tier1Findings: [
       { id: "deck-forensics_story_coherence_ab12cd34", agentName: "deck-forensics", metric: "story_coherence", value: 72, createdAt: "2026-04-20T00:00:00.000Z" },
     ],
+    // v4 (d-3) : carry intra-Tier1 — validations accumulées + liste ordonnée de reflexion (aucune Date)
+    allValidations: [
+      { factKey: "revenue", status: "VERIFIED", newConfidence: 88, validatedBy: "financial-auditor", explanation: "matches deck" },
+    ],
+    needsReflect: ["team-investigator", "market-intelligence"],
     ...over,
   };
 }
@@ -258,8 +263,8 @@ describe("parseStepState — validation des blobs requis (audit Codex #1)", () =
 describe("FullAnalysisStepState v2 — contrat d'état complet (D.5b)", () => {
   const base = () => JSON.parse(serializeStepState(makeValidState()));
 
-  it("version courante = 3", () => {
-    expect(FULL_ANALYSIS_STEP_STATE_VERSION).toBe(3);
+  it("version courante = 4", () => {
+    expect(FULL_ANALYSIS_STEP_STATE_VERSION).toBe(4);
   });
 
   it("round-trip préserve les nouveaux champs v2 (deal snapshot, factStore, evidenceContext, collectedWarnings, dates ISO)", () => {
@@ -306,8 +311,8 @@ describe("FullAnalysisStepState v2 — contrat d'état complet (D.5b)", () => {
     expect(deserializeStepState(serializeStepState(s))).toEqual(s);
   });
 
-  it("REJETTE un nouveau champ requis manquant (canonicalDeal / scopedDocuments / factStore / startTimeMs / transitionCount / terminalResult / tier1Findings)", () => {
-    for (const field of ["canonicalDeal", "analysisBinding", "scopedDocuments", "factStore", "founderResponses", "collectedWarnings", "evidenceLedgerFormatted", "evidenceTodayIso", "startTimeMs", "transitionCount", "terminalResult", "tier1Findings"]) {
+  it("REJETTE un nouveau champ requis manquant (canonicalDeal / scopedDocuments / factStore / startTimeMs / transitionCount / terminalResult / tier1Findings / allValidations / needsReflect)", () => {
+    for (const field of ["canonicalDeal", "analysisBinding", "scopedDocuments", "factStore", "founderResponses", "collectedWarnings", "evidenceLedgerFormatted", "evidenceTodayIso", "startTimeMs", "transitionCount", "terminalResult", "tier1Findings", "allValidations", "needsReflect"]) {
       const bad = base();
       delete bad[field];
       expect(() => parseStepState(bad), `champ ${field}`).toThrow(new RegExp(field));
@@ -340,6 +345,28 @@ describe("FullAnalysisStepState v2 — contrat d'état complet (D.5b)", () => {
   it("v3 : tier1Findings vide accepté (avant agrégation post-Tier1) ; objet rejeté (doit être tableau)", () => {
     expect(() => parseStepState({ ...base(), tier1Findings: [] })).not.toThrow();
     expect(() => parseStepState({ ...base(), tier1Findings: { x: 1 } })).toThrow(/tier1Findings/);
+  });
+
+  it("v4 (d-3) : allValidations + needsReflect round-trip (carry intra-Tier1, aucune Date)", () => {
+    const s = makeValidState();
+    const back = deserializeStepState(serializeStepState(s));
+    expect(back.allValidations).toEqual(s.allValidations);
+    expect(back.needsReflect).toEqual(s.needsReflect);
+    // needsReflect est ORDONNÉ : l'ordre des agents low-conf doit survivre tel quel
+    expect(back.needsReflect).toEqual(["team-investigator", "market-intelligence"]);
+  });
+
+  it("v4 : allValidations / needsReflect vides acceptés (hors phase Tier1) ; objet rejeté (doit être tableau)", () => {
+    expect(() => parseStepState({ ...base(), allValidations: [], needsReflect: [] })).not.toThrow();
+    expect(() => parseStepState({ ...base(), allValidations: { x: 1 } })).toThrow(/allValidations/);
+    expect(() => parseStepState({ ...base(), needsReflect: { x: 1 } })).toThrow(/needsReflect/);
+  });
+
+  it("v4 NÉGATIF (dents) : un round-trip qui PERD needsReflect n'est PAS égal (l'ordre de reflexion compte)", () => {
+    const s = makeValidState();
+    const dropped = deserializeStepState(JSON.stringify({ ...JSON.parse(serializeStepState(s)), needsReflect: [] }));
+    expect(dropped).not.toEqual(s);
+    expect(dropped.needsReflect).toEqual([]);
   });
 
   it("REJETTE un blob OBJET requis non-objet (canonicalDeal array)", () => {

@@ -145,6 +145,8 @@ describe("Intégration bridge — un StepState survit à la frontière durable +
         verificationContext: null,
         collectedWarnings: [],
         tier1Findings: [],
+        allValidations: [],
+        needsReflect: [],
       })
     );
 
