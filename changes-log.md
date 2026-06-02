@@ -1,6 +1,25 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-02 — Durabilité Deep Dive d-3-1 (DTO FullAnalysisStepState v4 — carry intra-Tier1, additif byte-inert)
+
+### Contexte
+1re micro-étape d'implémentation de d-3 (split FIN Tier1 : step `agents` → 1 step reflexion par agent low-conf → step `phase-finalize`). ADDITIVE/byte-inerte AVANT toute restructuration de `runTier1Phase`. Établit le carry byte-safe exigé par Codex au design-gate d-3.
+
+### Changements (commit `5e97d83`, 3 source + 5 tests)
+- `full-analysis-step-state.ts` : `FULL_ANALYSIS_STEP_STATE_VERSION` 3→4 ; +2 blobs TABLEAU requis `allValidations` (AgentFactValidation[] accumulées, lues cumulativement par `reformatFactStoreWithValidations`) + `needsReflect` (liste ORDONNÉE d'agents low-conf, PORTÉE et non re-dérivée car la reflexion mute allResults) ; ajoutés à `REQUIRED_ARRAY_BLOBS` ; doc « VERSION 4 ».
+- `full-analysis-step-state-bridge.ts` : `BuildStepStateInput`/`RehydratedState` +2 champs ; `buildStepState` normalise via `toWireArray` ; `rehydrateContext` porte via `cloneWire` SANS reviver (AgentFactValidation = primitifs seuls, AUCUNE Date — vérifié current-facts.ts:625 + les 5 extracteurs finding-extractor.ts:1296+ ; correctedValue = number).
+- `index.ts` : snapshot tier0-thesis (~3437) passe `allValidations:[]`/`needsReflect:[]`.
+- Findings intra-phase accumulés : RÉUTILISENT le champ `tier1Findings` existant (runPostTier1Aggregation:1983 renvoie `phasesResult.allFindings` inchangé → même tableau ; applyReflexion:5040 mute allResults/previousResults, pas allFindings).
+- Tests : 5 helpers/call-sites MAJ (makeValidState ×2, makeStepState, build, step-runner) + version 3→4 + 4 nouveaux tests v4.
+
+### Vérif
+tsc=0 (appel séparé relu) ; vitest unit 4228/2skip (baseline 4224 +4) ; golden full-analysis-stepwise-graph (E1 + E2-par-frontière) VERTS ; routing (graph v3 throws) VERT. Gated APPROVE Codex (thread #7 `019e8713-53c3-7a32-b7da-72b06891a32b` ; #6 expiré). NON poussé.
+
+### Reste (byte-CRITIQUE, ARRÊT DE SCOPE — session fraîche)
+Restructurer `runTier1Phase` (PARTAGÉE OFF/ON) en sous-units résumables (agents / reflexion-par-agent / phase-finalize), puis câblage v3 stepwise + bump `STEPWISE_GRAPH_VERSION` 2→3 + routing v3. ⚠️ golden graph stube `runFullAnalysisPostThesis` → ne couvre PAS runTier1Phase ; byte-equiv via tsc + `tier1-phase-checkpoint.guard.test.ts` + raisonnement + Codex. Puis d-4..d-7, D.6, F, G.
+
+---
 ## 2026-06-02 — Durabilité Deep Dive d-3 design-gate (mesure wall-clock Tier1 + granularité Option 1 APPROVE Codex)
 
 ### Contexte
