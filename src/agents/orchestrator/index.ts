@@ -1649,6 +1649,7 @@ export class AgentOrchestrator {
     factStore: CurrentFact[];
     factStoreFormatted: string;
     founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+    analysisId: string;
   }): Promise<{
     totalCost: number;
     completedCount: number;
@@ -1656,13 +1657,14 @@ export class AgentOrchestrator {
     factStoreFormatted: string;
     founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
   }> {
-    const { deal, scopedDocuments, isUpdate, onProgress, allResults } = params;
+    const { deal, scopedDocuments, isUpdate, onProgress, allResults, analysisId } = params;
     let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = params;
     if (scopedDocuments.length > 0) {
       const tier0Result = await this.runTier0FactExtraction(
         { ...deal, documents: scopedDocuments },
         isUpdate,
-        onProgress
+        onProgress,
+        analysisId
       );
       factStore = tier0Result.factStore;
       factStoreFormatted = tier0Result.factStoreFormatted;
@@ -2892,6 +2894,7 @@ export class AgentOrchestrator {
         factStore,
         factStoreFormatted,
         founderResponses,
+        analysisId: analysis.id,
       }));
 
       let extractedData: ContextSeed;
@@ -3752,6 +3755,7 @@ export class AgentOrchestrator {
             factStore,
             factStoreFormatted,
             founderResponses,
+            analysisId: analysis.id,
           });
           return buildTier0FactsWire({
             totalCost: r.totalCost,
@@ -4035,6 +4039,7 @@ export class AgentOrchestrator {
           const r = await this.runTier0Step({
             deal, scopedDocuments, isUpdate, onProgress, allResults,
             totalCost, completedCount, factStore, factStoreFormatted, founderResponses,
+            analysisId: analysis.id,
           });
           return buildTier0FactsWire({
             totalCost: r.totalCost, completedCount: r.completedCount, factStore: r.factStore,
@@ -4240,7 +4245,7 @@ export class AgentOrchestrator {
 
       // ===== TIER1 TAIL (R2) + shim phasesResult (coût-neutre, F3) =====
       const { agentConfidences, lowConfidenceAgents } = await this.finalizeTier1Phases({
-        dealId, allValidations, allResults,
+        dealId, analysisId: analysis.id, allValidations, allResults,
       });
       const phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>> = {
         allFindings,
@@ -4919,6 +4924,7 @@ export class AgentOrchestrator {
     // d'effet : persist DB des validations puis extractAllFindings(allResults).
     const { agentConfidences, lowConfidenceAgents } = await this.finalizeTier1Phases({
       dealId,
+      analysisId,
       allValidations,
       allResults,
     });
@@ -4943,10 +4949,11 @@ export class AgentOrchestrator {
    */
   private async finalizeTier1Phases(params: {
     dealId: string;
+    analysisId: string;
     allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[];
     allResults: Record<string, AgentResult>;
   }): Promise<{ agentConfidences: Map<string, ConfidenceScore>; lowConfidenceAgents: string[] }> {
-    const { dealId, allValidations, allResults } = params;
+    const { dealId, analysisId, allValidations, allResults } = params;
 
     // Persist validated facts to DB (event sourcing)
     // Only persist facts with actual corrected values (not just analysis notes)
@@ -4981,7 +4988,10 @@ export class AgentOrchestrator {
           };
         });
       if (factEvents.length > 0) {
-        const batchResult = await createFactEventsBatch(dealId, factEvents, 'RESOLVED', 'system');
+        const batchResult = await createFactEventsBatch(dealId, factEvents, 'RESOLVED', 'system', {
+          runId: analysisId,
+          scope: "tier1-finalize-resolved",
+        });
         if (!batchResult.success) {
           // La contrainte unique (dealId, factKey, createdAt, eventType) peut
           // rejeter un batch partiellement duplique sous concurrence Tier1/Tier2.
@@ -5019,7 +5029,10 @@ export class AgentOrchestrator {
   private async runTier0FactExtraction(
     deal: DealWithDocs,
     isUpdate: boolean,
-    onProgress?: AnalysisOptions["onProgress"]
+    onProgress?: AnalysisOptions["onProgress"],
+    // Fix C — D.6 : analysisId du run full_analysis durable → arme l'idempotence des FactEvents
+    // CREATED (scope tier0-created). Absent (chemin tier1_complete non-stepwise) → pas d'idempotency.
+    analysisId?: string
   ): Promise<{
     factStore: CurrentFact[];
     factStoreFormatted: string;
@@ -5183,7 +5196,8 @@ export class AgentOrchestrator {
               reliability: fact.reliability,
             })),
             "CREATED", // eventType: new facts being created
-            "system"
+            "system",
+            analysisId ? { runId: analysisId, scope: "tier0-created" } : undefined
           );
           console.log(`[Orchestrator:Tier0] Persisted ${extractionData.facts.length} facts to database`);
         } catch (persistError) {
