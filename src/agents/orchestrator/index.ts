@@ -3145,6 +3145,78 @@ export class AgentOrchestrator {
         stateMachine,
       });
 
+      // d-3 (R1) — tail post-Tier1 (aggregation → complétion finale) extrait BYTE-INERT vers
+      // runFullAnalysisPostTier1, PARTAGÉ par ce chemin (single-pass/v2) ET le driver stepwise v3
+      // (qui exécute Tier1 per-phase puis appelle ce tail en terminal). reportTotalCost remonte le
+      // coût courant du tail dans CE scope (try/finally inchangé) → byte-équivalence sur tous les
+      // chemins de sortie (succès, early-return failFast/cost-limit, exception).
+      return await this.runFullAnalysisPostTier1({
+        deal,
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        extractedData,
+        phasesResult,
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+        reportTotalCost: (c: number) => {
+          totalCost = c;
+        },
+      });
+    } finally {
+      // d-2b-1 (gate Codex) — coût courant remonté sur TOUS les chemins de sortie (succès,
+      // early-return, exception) → le catch terminal de runFullAnalysisPipeline voit le même
+      // totalCost qu'avant l'extraction.
+      reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-3 (R1) — Tail post-Tier1 de full_analysis (STEP 4 aggregation → fail-fast → consensus
+   * global → cost-limit → cross-val → red-flags → synthèse → Tier3-pre → Tier2-sector →
+   * Tier2-consensus/reflexion → Tier3-post → complétion finale), extrait BYTE-INERT de
+   * runFullAnalysisPostThesis. Séquence PARTAGÉE par le chemin single-pass (runFullAnalysisPostThesis,
+   * APRÈS runTier1Phases) ET le chemin durable v3 (runFullAnalysisStepwiseV3, APRÈS la boucle Tier1
+   * stepwise + finalizeTier1Phases) → aucun drift de séquence. Reçoit le `phasesResult` (réel en
+   * single-pass ; shim coût-neutre `costIncurred:0`/`completedInPhases:0` en v3 où totalCost/
+   * completedCount sont DÉJÀ globaux) + l'état VIVANT au boundary post-Tier1. Le try/finally
+   * remonte le totalCost courant au scope appelant (reportTotalCost) sur tous les chemins de sortie.
+   */
+  private async runFullAnalysisPostTier1(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    extractedData: ContextSeed;
+    phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>>;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    /** Remonte le totalCost courant du tail au scope appelant : byte-équivalence du coût. */
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<AnalysisResult> {
+    const { deal, dealId, onProgress, init, enrichedContext, extractedData, phasesResult, reportTotalCost } = params;
+    const {
+      failFastOnCritical,
+      maxCostUsd,
+      isUpdate,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      sectorExpert,
+      TOTAL_AGENTS,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    try {
       let verificationContext: VerificationContext;
       let allFindings: ScoredFinding[];
       let lowConfidenceAgents: string[];
@@ -3274,9 +3346,6 @@ export class AgentOrchestrator {
         collectedWarnings,
       });
     } finally {
-      // d-2b-1 (gate Codex) — coût courant remonté sur TOUS les chemins de sortie (succès,
-      // early-return, exception) → le catch terminal de runFullAnalysisPipeline voit le même
-      // totalCost qu'avant l'extraction.
       reportTotalCost(totalCost);
     }
   }
