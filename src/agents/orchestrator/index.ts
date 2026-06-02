@@ -4082,6 +4082,41 @@ export class AgentOrchestrator {
       ));
     }
 
+    // d-3 (R2) — FactEvent persist (validations) + confidences globales, extrait BYTE-INERT vers
+    // finalizeTier1Phases, PARTAGÉ par ce chemin (single-pass/v2) ET le driver stepwise v3 (appelé
+    // APRÈS la boucle Tier1 stepwise pour bâtir le shim phasesResult coût-neutre). Même ordre
+    // d'effet : persist DB des validations puis extractAllFindings(allResults).
+    const { agentConfidences, lowConfidenceAgents } = await this.finalizeTier1Phases({
+      dealId,
+      allValidations,
+      allResults,
+    });
+
+    return {
+      allFindings,
+      agentConfidences,
+      lowConfidenceAgents,
+      updatedFactStore: factStore,
+      updatedFactStoreFormatted: factStoreFormatted,
+      costIncurred: totalCost,
+      completedInPhases: completedCount - params.initialCompletedCount,
+    };
+  }
+
+  /**
+   * d-3 (R2) — Tail de runTier1Phases extrait BYTE-INERT : persiste les FactEvent issus des
+   * validations Tier1 (event-sourcing ; idempotence FactEvent = résiduel D.6 assumé au replay)
+   * puis extrait les confidences globales via extractAllFindings(allResults). PARTAGÉ par
+   * runTier1Phases (single-pass/v2) ET runFullAnalysisStepwiseV3 (appelé APRÈS la boucle Tier1
+   * stepwise, AVANT le shim phasesResult coût-neutre). Aucun changement d'ordre d'effet.
+   */
+  private async finalizeTier1Phases(params: {
+    dealId: string;
+    allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[];
+    allResults: Record<string, AgentResult>;
+  }): Promise<{ agentConfidences: Map<string, ConfidenceScore>; lowConfidenceAgents: string[] }> {
+    const { dealId, allValidations, allResults } = params;
+
     // Persist validated facts to DB (event sourcing)
     // Only persist facts with actual corrected values (not just analysis notes)
     if (allValidations.length > 0) {
@@ -4132,16 +4167,7 @@ export class AgentOrchestrator {
 
     // Extract global confidences for downstream use
     const { agentConfidences, lowConfidenceAgents } = extractAllFindings(allResults);
-
-    return {
-      allFindings,
-      agentConfidences,
-      lowConfidenceAgents,
-      updatedFactStore: factStore,
-      updatedFactStoreFormatted: factStoreFormatted,
-      costIncurred: totalCost,
-      completedInPhases: completedCount - params.initialCompletedCount,
-    };
+    return { agentConfidences, lowConfidenceAgents };
   }
 
   // ============================================================================
