@@ -2551,6 +2551,13 @@ export class AgentOrchestrator {
     dealId: string;
     onProgress: AnalysisOptions["onProgress"];
     TOTAL_AGENTS: number;
+    /**
+     * d-6 — sous-liste de batches à exécuter. Défaut = TIER3_BATCHES_AFTER_TIER2 (single-pass,
+     * byte-identique). Le driver stepwise v3 passe UN batch par step (`tier3-post-{i}` per-agent)
+     * pour borner chaque step < 300s (gate Codex #11). Le restore previousResults + le cost-check
+     * break restent idempotents par batch (gate Codex #11).
+     */
+    batches?: readonly (readonly string[])[];
   }): Promise<{ totalCost: number; completedCount: number }> {
     const { maxCostUsd, tier3AgentMap, enrichedContext, allResults, stateMachine, analysis, dealId, onProgress, TOTAL_AGENTS } = params;
     let { totalCost, completedCount } = params;
@@ -2563,8 +2570,9 @@ export class AgentOrchestrator {
       enrichedContext.previousResults![agentName] = result;
     }
 
-    // Crédits-only : pipeline complet pour tous (synthesis-deal-scorer + memo-generator)
-    const finalSynthesisBatches = TIER3_BATCHES_AFTER_TIER2;
+    // Crédits-only : pipeline complet pour tous (synthesis-deal-scorer + memo-generator).
+    // d-6 : sous-liste optionnelle (v3 per-agent) ; défaut = tous les batches (single-pass).
+    const finalSynthesisBatches = params.batches ?? TIER3_BATCHES_AFTER_TIER2;
 
     for (const batch of finalSynthesisBatches) {
       // REAL-TIME COST CHECK: Before each batch
@@ -3569,11 +3577,10 @@ export class AgentOrchestrator {
   }
 
   /**
-   * d-5 — « REST APRÈS TIER2-SECTOR » post-Tier1, extrait BYTE-INERT de runPostTier1RestAfterTier3Pre.
-   * tier3-post (batch après Tier2 ; tier3AgentMap re-dérivé via getTier3Agents) → final-completion.
-   * Mute allResults/enrichedContext.previousResults par RÉFÉRENCE (tier3-post). PARTAGÉ par le chemin
-   * single-pass (runPostTier1RestAfterTier3Pre) ET le driver stepwise v3 (terminal `post-tier1` après le
-   * peel de tier2-sector, d-5 ; rétrécit en d-6..d-7). Le `finally` remonte le totalCost — byte-équiv coût.
+   * d-5 / d-6 — « REST APRÈS TIER2-SECTOR » post-Tier1. Délègue à `runPostTier1Tier3Post` (batch Tier3
+   * après Tier2, TOUS les batches en single-pass) puis `runFinalCompletion` (terminal). Le split permet
+   * au driver v3 de peeler `tier3-post` PER-AGENT (un step par batch, gate Codex #11) tout en gardant la
+   * chaîne comme source d'ordre du chemin OFF. Le `finally` remonte le totalCost — byte-équiv coût.
    */
   private async runPostTier1RestAfterTier2Sector(params: {
     dealId: string;
@@ -3586,12 +3593,10 @@ export class AgentOrchestrator {
   }): Promise<AnalysisResult> {
     const { dealId, onProgress, init, enrichedContext, reportTotalCost } = params;
     const {
-      maxCostUsd,
       isUpdate,
       analysisModeOverride,
       startTime,
       collectedWarnings,
-      TOTAL_AGENTS,
       analysis,
       stateMachine,
       allResults,
@@ -3599,22 +3604,14 @@ export class AgentOrchestrator {
     } = init;
     let { totalCost, completedCount } = params;
     try {
-      // tier3AgentMap re-dérivé (getTier3Agents pur + module-cached → mêmes instances que tier3-pre ;
-      // byte-safe). NON porté entre steps en v3 (DynamicAgent = instances non-sérialisables).
-      const tier3AgentMap = await getTier3Agents();
-
-      ({ totalCost, completedCount } = await this.runTier3PostTier2Batch({
-        maxCostUsd,
-        totalCost,
-        completedCount,
-        tier3AgentMap,
-        enrichedContext,
-        allResults,
-        stateMachine,
-        analysis,
+      ({ totalCost, completedCount } = await this.runPostTier1Tier3Post({
         dealId,
         onProgress,
-        TOTAL_AGENTS,
+        init,
+        enrichedContext,
+        totalCost,
+        completedCount,
+        batches: TIER3_BATCHES_AFTER_TIER2,
       }));
 
       return await this.runFinalCompletion({
@@ -3632,6 +3629,46 @@ export class AgentOrchestrator {
     } finally {
       reportTotalCost(totalCost);
     }
+  }
+
+  /**
+   * d-6 — « TIER3-POST » post-Tier1, extrait BYTE-INERT de runPostTier1RestAfterTier2Sector. Batch
+   * Tier3 après Tier2 (thesis-reconciler → synthesis-deal-scorer → memo-generator, SÉQUENTIELS).
+   * tier3AgentMap re-dérivé via getTier3Agents() (pur + module-cached → mêmes instances que tier3-pre ;
+   * byte-safe ; jamais porté entre steps). `batches` paramétrable : le driver stepwise v3 passe UN batch
+   * par step (`tier3-post-{i}` per-agent, gate Codex #11 — la somme séquentielle ~280-310s risquait
+   * > 300s). PARTAGÉ par le chemin single-pass (runPostTier1RestAfterTier2Sector, tous les batches) ET le
+   * driver stepwise v3 (un batch par step). Mute allResults/enrichedContext.previousResults par RÉFÉRENCE.
+   * Un seul leaf muteur de coût (runTier3PostTier2Batch) → pas de finally/reportTotalCost interne.
+   */
+  private async runPostTier1Tier3Post(params: {
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    totalCost: number;
+    completedCount: number;
+    batches: readonly (readonly string[])[];
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { dealId, onProgress, init, enrichedContext, totalCost, completedCount, batches } = params;
+    const { maxCostUsd, TOTAL_AGENTS, analysis, stateMachine, allResults } = init;
+
+    const tier3AgentMap = await getTier3Agents();
+
+    return await this.runTier3PostTier2Batch({
+      maxCostUsd,
+      totalCost,
+      completedCount,
+      tier3AgentMap,
+      enrichedContext,
+      allResults,
+      stateMachine,
+      analysis,
+      dealId,
+      onProgress,
+      TOTAL_AGENTS,
+      batches,
+    });
   }
 
   /**
