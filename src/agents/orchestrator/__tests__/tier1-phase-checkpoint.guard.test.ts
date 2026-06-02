@@ -8,36 +8,39 @@ const orchestratorSource = readFileSync(
 
 describe("Tier 1 phase checkpointing guard", () => {
   it("flushes a checkpoint immediately after Tier 1 phase progress is persisted", () => {
-    // C.3a — le corps d'une phase Tier 1 vit désormais dans `runTier1Phase`
-    // (extrait de `runTier1Phases`). On borne la recherche au body de ce helper
-    // pour prouver l'invariant exactement là où il s'exécute, sans fragilité.
-    const phaseStart = orchestratorSource.indexOf("private async runTier1Phase(");
-    expect(phaseStart).toBeGreaterThanOrEqual(0);
-    // borne haute = la méthode suivante (runTier1Phases) — le body de runTier1Phase
-    // est strictement entre les deux.
+    // d-3 — la finalisation d'une phase Tier 1 (progress + flush + log + fail-checks)
+    // vit désormais dans `runTier1PhaseFinalize` (extrait byte-inert de
+    // `runTier1Phase`). On borne la recherche au body de ce helper pour prouver
+    // l'invariant exactement là où il s'exécute, sans fragilité.
+    const finalizeStart = orchestratorSource.indexOf(
+      "private async runTier1PhaseFinalize("
+    );
+    expect(finalizeStart).toBeGreaterThanOrEqual(0);
+    // borne haute = la méthode suivante (runTier1Phases) — le body de
+    // runTier1PhaseFinalize est strictement entre les deux.
     const phaseRunnerStart = orchestratorSource.indexOf(
       "private async runTier1Phases(params: {",
-      phaseStart
+      finalizeStart
     );
-    expect(phaseRunnerStart).toBeGreaterThan(phaseStart);
+    expect(phaseRunnerStart).toBeGreaterThan(finalizeStart);
 
-    const phaseBody = orchestratorSource.slice(phaseStart, phaseRunnerStart);
+    const finalizeBody = orchestratorSource.slice(finalizeStart, phaseRunnerStart);
 
-    // 1) updateAnalysisProgress(...) existe dans runTier1Phase.
-    const progressCall = phaseBody.indexOf(
+    // 1) updateAnalysisProgress(...) existe dans runTier1PhaseFinalize.
+    const progressCall = finalizeBody.indexOf(
       "await updateAnalysisProgress(analysisId, completedCount, initialTotalCost + totalCost);"
     );
     expect(progressCall).toBeGreaterThanOrEqual(0);
 
     // 2) le flush arrive juste après la persistance de progression.
-    const flushCall = phaseBody.indexOf(
+    const flushCall = finalizeBody.indexOf(
       "await stateMachine?.flushCheckpoint();",
       progressCall
     );
     expect(flushCall).toBeGreaterThan(progressCall);
 
     // 3) le log de complétion de phase reste après le flush.
-    const phaseCompletionLog = phaseBody.indexOf(
+    const phaseCompletionLog = finalizeBody.indexOf(
       "[Orchestrator] ${phase.name} complete",
       progressCall
     );

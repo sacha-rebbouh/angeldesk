@@ -3690,6 +3690,83 @@ export class AgentOrchestrator {
       }
     }
 
+    // Finalize the phase: validated-claim fact-store updates, verificationContext
+    // rebuild (Phase B/C), intra-phase consensus, progress/checkpoint, fail-checks.
+    // Shared OFF/stepwise sub-method (d-3) — MÊME méthode = pas de drift.
+    const finalized = await this.runTier1PhaseFinalize(
+      phase,
+      phaseFindings,
+      {
+        enrichedContext, analysisId, extractedData,
+        allResults, allValidations, stateMachine,
+        initialTotalCost, completedCount,
+      },
+      { totalCost, factStore, factStoreFormatted, verificationContext },
+    );
+    return {
+      totalCost: finalized.totalCost,
+      completedCount,
+      factStore: finalized.factStore,
+      factStoreFormatted: finalized.factStoreFormatted,
+      verificationContext: finalized.verificationContext,
+    };
+  }
+
+  /**
+   * Finalize a Tier 1 phase — shared sub-method (sequencer OFF/v2 in-process AND
+   * stepwise driver v3 call the SAME method = byte-équivalence, pas de drift).
+   *
+   * Extracted byte-inert from runTier1Phase (d-3, tail first like C.3): validated-
+   * claim fact-store updates, verificationContext rebuild after Phase B/C, intra-
+   * phase consensus over the SAME `phaseFindings` array (never re-extracted — finding
+   * ids are crypto.randomUUID and must be carried, not regenerated), progress
+   * persistence + checkpoint flush, and the phase fail-checks.
+   *
+   * fail-counts are RECOMPUTED from `phase.agents` + `allResults` (not `phaseResults`):
+   * byte-identical because reflexion only runs on success===true agents and preserves
+   * `success`/`error` by spreading the original result (applyReflexion:5055 ->
+   * reflexion.ts:597 `{ ...currentResult, data }`), and `phase.agents` preserves
+   * `phaseResults` order — so counts and failedNames are unchanged. This keeps finalize
+   * stepwise-ready WITHOUT carrying `phaseResults` across a step boundary.
+   */
+  private async runTier1PhaseFinalize(
+    phase: { name: string; agents: readonly string[] },
+    phaseFindings: ScoredFinding[],
+    refs: {
+      enrichedContext: EnrichedAgentContext;
+      analysisId: string;
+      extractedData: {
+        tagline?: string;
+        competitors?: string[];
+        founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+        productDescription?: string;
+        businessModel?: string;
+      };
+      allResults: Record<string, AgentResult>;
+      allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[];
+      stateMachine?: AnalysisStateMachine;
+      initialTotalCost: number;
+      completedCount: number;
+    },
+    state: {
+      totalCost: number;
+      factStore: CurrentFact[];
+      factStoreFormatted: string;
+      verificationContext: VerificationContext;
+    }
+  ): Promise<{
+    totalCost: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    verificationContext: VerificationContext;
+  }> {
+    const {
+      enrichedContext, analysisId, extractedData,
+      allResults, allValidations, stateMachine,
+      initialTotalCost, completedCount,
+    } = refs;
+    let { totalCost, factStore, factStoreFormatted, verificationContext } = state;
+
     // Extract validated claims and update fact store in memory
     for (const agentName of phase.agents) {
       const result = allResults[agentName];
@@ -3731,16 +3808,18 @@ export class AgentOrchestrator {
     await updateAnalysisProgress(analysisId, completedCount, initialTotalCost + totalCost);
     await stateMachine?.flushCheckpoint();
 
-    const phaseSuccessCount = phaseResults.filter(r => r.result.success).length;
-    const phaseFailCount = phaseResults.length - phaseSuccessCount;
+    const phaseSuccessCount = phase.agents.filter(
+      (agentName) => allResults[agentName]?.success
+    ).length;
+    const phaseFailCount = phase.agents.length - phaseSuccessCount;
     console.log(
       `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
     );
 
     if (phase.name.includes("Phase A") && phaseFailCount > 0) {
-      const failedNames = phaseResults
-        .filter(r => !r.result.success)
-        .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
+      const failedNames = phase.agents
+        .filter((agentName) => !allResults[agentName]?.success)
+        .map((agentName) => `${agentName}: ${allResults[agentName]?.error ?? "unknown error"}`)
         .join(", ");
       console.error(
         `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
@@ -3749,15 +3828,15 @@ export class AgentOrchestrator {
     }
 
     if (phase.name.includes("Phase B") && phaseFailCount > 0) {
-      const failedNames = phaseResults
-        .filter(r => !r.result.success)
-        .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
+      const failedNames = phase.agents
+        .filter((agentName) => !allResults[agentName]?.success)
+        .map((agentName) => `${agentName}: ${allResults[agentName]?.error ?? "unknown error"}`)
         .join(", ");
       console.warn(
         `[Orchestrator] Phase B agent(s) failed (non-fatal, continuing): ${failedNames}`
       );
     }
-    return { totalCost, completedCount, factStore, factStoreFormatted, verificationContext };
+    return { totalCost, factStore, factStoreFormatted, verificationContext };
   }
 
   private async runTier1Phases(params: {
