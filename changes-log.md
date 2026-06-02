@@ -1,6 +1,27 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-02 — Durabilité Deep Dive d-3 design-gate (mesure wall-clock Tier1 + granularité Option 1 APPROVE Codex)
+
+### Contexte
+Étape 1 OBLIGATOIRE de d-3 = MESURER le wall-clock Tier1 réel AVANT de coder, puis soumettre la granularité à Codex. AUCUN code écrit (arrêt de scope byte-critique avant implémentation). Doc seul.
+
+### Mesure (LLMCallLog, fenêtres start→start par frontière d'agent ; full_analysis COMPLETED topologie complète)
+T1-A 102-216s · T1-B 92-173s · T1-C 121-189s · **région Phase-D (agents+reflexion→tier3-pre) 435-475s** · **post-tier1-glue ENTIER 785-883s**. Contrainte `inngest/route.ts:13 maxDuration=300` (test-asserté).
+
+### Composition vérifiée par code
+Buster = la boucle REFLEXION SÉQUENTIELLE par agent low-conf (`reflexion.ts:491`, 2 iter × 2 appels) DANS `runTier1Phase` ; le « tail » ~28 appels `unknown` post-Phase-D = reflexion de Phase D (7 agents). Consensus global = **0 appel LLM** (`detectContradictions` heuristique `consensus-engine.ts:901-984` ; `debates=0`).
+
+### Décision (Codex APPROVE, thread #6 `019e86ea-85ea-79d2-972b-b88264abcb3d`)
+**Option 1, split FIN** : par phase → step `agents` → reflexion **PAR AGENT** (pas batch) → step `phase-finalize`. Graphe **v3**. Carry byte-safe enrichi (allValidations, phaseFindings, liste ordonnée needsReflect, allResults/previousResults/factStore/verificationContext, coût, transitionCount ; NE PAS re-extraire les findings). Option 2 (relever maxDuration) REFUSÉE par le gate (dimension plan/coût Vercel → décision Sacha).
+
+### Vérif
+Aucune (doc seul, pas de code). Working tree : seuls PLAN-DEEPDIVE-DURABILITY.md + changes-log.md modifiés.
+
+### Reste
+Implémenter d-3 (byte-CRITIQUE, session fraîche) : restructurer `runTier1Phase` en sous-unités résumables, graphe v3, golden E1+E2-par-frontière à chaque commit, 1 micro-étape = 1 commit = 1 gate. Puis d-4..d-7, D.6, F, G.
+
+---
 ## 2026-06-02 — Durabilité Deep Dive d-2b (1re vraie unité du split stepwise, graphe v2)
 
 ### Contexte
