@@ -4279,19 +4279,52 @@ export class AgentOrchestrator {
         completedCount = tier3PreWire.completedCount;
       }
 
-      // ===== TERMINAL post-tier1 (rest APRÈS tier3-pre : tier2-sector→consensus→tier3-post→final ;
-      // rétrécit en d-5..d-7) =====
+      // ===== UNITÉ tier2-sector (d-5) — sector expert + consensus/reflexion (FOLDÉS, gate Codex #11)
+      // en step durable. Run sain : mute allResults (applyReflexion remplace le sector result) +
+      // snapshot not-done → le terminal `post-tier1` rehydrate au replay-après-tier2-sector. Pas
+      // d'early-return. reportTotalCost remonte le coût sectoriel si consensus throw APRÈS sector
+      // (byte-équiv exception === single-pass, gate Codex #11). Modèle B : bodyRan → applique le wire ;
+      // sinon ensureRehydrated (no-op après le 1er). =====
+      let tier2SectorBodyRan = false;
+      const tier2SectorWire = await stepRunner.run("tier2-sector", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          tier2SectorBodyRan = true;
+          const ec = enrichedContext!;
+          const r = await this.runPostTier1Tier2({
+            dealId, onProgress, init, enrichedContext: ec,
+            verificationContext: verificationContext!, allFindings,
+            totalCost, completedCount,
+            reportTotalCost: (c) => { totalCost = c; },
+          });
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+              completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier2-sector", done: false,
+              enrichedContext: ec, allResults,
+              verificationContext: verificationContext as Record<string, unknown> | null,
+              collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+            })
+          );
+          return { totalCost: r.totalCost, completedCount: r.completedCount };
+        })
+      );
+      if (!tier2SectorBodyRan) await ensureRehydrated();
+      if (tier2SectorBodyRan) {
+        totalCost = tier2SectorWire.totalCost;
+        completedCount = tier2SectorWire.completedCount;
+      }
+
+      // ===== TERMINAL post-tier1 (rest APRÈS tier2-sector : tier3-post→final ; rétrécit en d-6..d-7) =====
       const restEnrichedContext = enrichedContext!;
       return await runTerminalStepwiseDriver({
         stepRunner,
         stepwise,
         stepId: "post-tier1",
         pipeline: () =>
-          this.runPostTier1RestAfterTier3Pre({
+          this.runPostTier1RestAfterTier2Sector({
             dealId, onProgress, init,
             enrichedContext: restEnrichedContext,
-            verificationContext: verificationContext!,
-            allFindings,
             totalCost, completedCount,
             reportTotalCost: (c: number) => { totalCost = c; },
           }),

@@ -282,15 +282,21 @@ function stubHelpers(orch: Record<string, unknown>, captured: Captured[]) {
     p.reportTotalCost(p.totalCost + 0.5);
     return { done: false as const, completedCount: p.completedCount, verificationContext: { ...VC }, allFindings: p.phasesResult.allFindings };
   });
-  // d-4 — tier3-pre (synth-setup + tier3-pré batch) peelé en step durable + terminal RestAfterTier3Pre.
-  // single-pass appelle le RÉEL runPostTier1Rest (d-4-R) qui enchaîne ces deux stubs ; v3 les wrappe
-  // (tier3-pre = step durable snapshot ; RestAfterTier3Pre = terminal). Le tier3-pre stub avance
-  // coût/count (après le boundary glue capturé → invisible aux assertions summarize/cost).
+  // d-4/d-5 — tier3-pre + tier2-sector peelés en steps durables + terminal RestAfterTier2Sector.
+  // single-pass appelle le RÉEL runPostTier1Rest (d-4-R) → runPostTier1RestAfterTier3Pre (d-5-R), qui
+  // enchaînent ces stubs ; v3 les wrappe (tier3-pre / tier2-sector = steps durables ; RestAfterTier2Sector
+  // = terminal). Les stubs tier3-pre/tier2-sector avancent coût/count (après le boundary glue capturé →
+  // invisible aux assertions summarize/cost). tier2-sector appelle reportTotalCost (pattern leaf-multi).
   orch.runPostTier1Tier3Pre = vi.fn(async (p: { totalCost: number; completedCount: number }) => ({
     totalCost: p.totalCost + 0.3,
     completedCount: p.completedCount + 3,
   }));
-  orch.runPostTier1RestAfterTier3Pre = vi.fn(async (p: { totalCost: number; reportTotalCost: (c: number) => void }) => {
+  orch.runPostTier1Tier2 = vi.fn(async (p: { totalCost: number; completedCount: number; reportTotalCost: (c: number) => void }) => {
+    const totalCost = p.totalCost + 0.2;
+    p.reportTotalCost(totalCost);
+    return { totalCost, completedCount: p.completedCount + 1 };
+  });
+  orch.runPostTier1RestAfterTier2Sector = vi.fn(async (p: { totalCost: number; reportTotalCost: (c: number) => void }) => {
     p.reportTotalCost(p.totalCost);
     return REST_RESULT;
   });
@@ -385,10 +391,10 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
   });
 });
 
-// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — d-4 ajoute tier3-pre :
+// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — d-5 ajoute tier2-sector :
 // 1 tier0-facts · 2 tier0-thesis · 3 tier1-a-agents · 4 tier1-a-finalize · 5 tier1-b-agents ·
 // 6 tier1-b-finalize · 7 tier1-c-agents · 8 tier1-c-reflexion-0 · 9 tier1-c-finalize ·
-// 10 tier1-d-agents · 11 tier1-d-finalize · 12 post-tier1-glue · 13 tier3-pre · 14 post-tier1.
+// 10 tier1-d-agents · 11 tier1-d-finalize · 12 post-tier1-glue · 13 tier3-pre · 14 tier2-sector · 15 post-tier1.
 describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydrate mid-Tier1)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -477,8 +483,19 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY (d-4) : le snapshot tier3-pre porte un vc non-null → pas de rebuild au resume (tier3-pre
-    // mémoïsé not-done ; ensureRehydrated reconstruit l'état post-tier3-pre ; le terminal RestAfterTier3Pre
-    // tourne frais et retourne REST_RESULT). Force le chemin !tier3PreBodyRan → ensureRehydrated.
+    // mémoïsé not-done ; ensureRehydrated reconstruit l'état post-tier3-pre ; les steps suivants
+    // (tier2-sector + terminal RestAfterTier2Sector) tournent frais et retournent REST_RESULT). Force
+    // le chemin !tier3PreBodyRan → ensureRehydrated.
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-tier2-sector — kill APRÈS tier2-sector (step 14) → rehydrate depuis le snapshot tier2-sector, terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(14);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // CARRY (d-5) : le snapshot tier2-sector porte un vc non-null → pas de rebuild au resume (tier2-sector
+    // mémoïsé not-done ; ensureRehydrated reconstruit l'état post-tier2-sector ; le terminal RestAfterTier2Sector
+    // tourne frais et retourne REST_RESULT). Force le chemin !tier2SectorBodyRan → ensureRehydrated.
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 });
