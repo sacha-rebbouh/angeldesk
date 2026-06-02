@@ -2023,6 +2023,11 @@ model FactEvent {
   createdBy String // 'system' | 'ba'
   reason    String?
 
+  // Fix C — H/D.6 : clé d'idempotence replay-safe pour le stepwise durable. Nullable :
+  // les FactEvents hors-analyse (BA, processing doc) restent à null (NULLs distincts en
+  // Postgres → non dédupés). Format : `fact-event:<analysisId>:<scope>:<eventType>:<ordinal>`.
+  idempotencyKey String? @unique
+
   @@unique([dealId, factKey, createdAt, eventType], name: "factEvent_natural_key")
   @@index([dealId])
   @@index([dealId, factKey])

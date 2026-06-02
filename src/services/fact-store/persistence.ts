@@ -170,16 +170,32 @@ export async function createFactEvent(
  * @param facts - Array of extracted facts
  * @param eventType - Type of event for all facts
  * @param createdBy - Who created these facts
- * @returns Array of created events
+ * @param idempotency - (Fix C — H/D.6) contexte d'idempotence replay-safe pour le pipeline stepwise
+ *   durable. Quand fourni (`{ runId: analysisId, scope }`), chaque event reçoit une `idempotencyKey`
+ *   = `fact-event:<runId>:<scope>:<eventType>:<ordinal>` (ordinal = index dans validFacts). Un
+ *   batch-guard (« first-committed-batch-wins ») n'écrit RIEN si l'ordinal 0 existe déjà (le batch a
+ *   été committé par un run mort/replay — $transaction atomique → ordinal-0 présent ⟺ batch présent),
+ *   évitant les doublons au replay (y compris le drift LLM Tier0 post-commit/pre-mémoïsation). Absent
+ *   (callers hors-analyse) → `idempotencyKey` null → comportement inchangé (NULLs distincts en Postgres).
+ * @returns success + events/count, ou skipped si le batch était déjà committé.
  */
 export async function createFactEventsBatch(
   dealId: string,
   facts: ExtractedFact[],
   eventType: FactEventType,
-  createdBy: 'system' | 'ba'
-): Promise<{ success: boolean; events?: FactEvent[]; error?: string }> {
+  createdBy: 'system' | 'ba',
+  idempotency?: { runId: string; scope: string }
+): Promise<{ success: boolean; events?: FactEvent[]; count?: number; skipped?: number; error?: string }> {
+  // Préfixe stable de la clé d'idempotence (les NULLs hors-analyse restent distincts en Postgres).
+  const keyPrefix = idempotency
+    ? `fact-event:${idempotency.runId}:${idempotency.scope}:${eventType}:`
+    : null;
+
+  // Hoisté hors du try pour que le re-check race (catch) compte `validFacts.length` (cohérent avec
+  // le batch-guard), pas `facts.length` qui inclurait des facts invalides filtrés.
+  const validFacts: ExtractedFact[] = [];
+
   try {
-    const validFacts: ExtractedFact[] = [];
     const invalidReasons: string[] = [];
 
     for (const fact of facts) {
@@ -207,18 +223,56 @@ export async function createFactEventsBatch(
       };
     }
 
+    // Batch-guard (first-committed-batch-wins) : si l'ordinal 0 de ce (runId, scope, eventType)
+    // existe déjà, le batch entier a été committé (le $transaction ci-dessous est atomique) → on
+    // ne réécrit RIEN. Couvre le replay ET le drift LLM Tier0 (un run mort qui a committé N facts
+    // → un replay produisant M≠N facts ne ré-insère pas par-dessus).
+    if (keyPrefix) {
+      const committed = await prisma.factEvent.findFirst({
+        where: { idempotencyKey: `${keyPrefix}0` },
+        select: { id: true },
+      });
+      if (committed) {
+        // Le run qui a committé ce batch a PU mourir ENTRE le $transaction et le refresh ci-dessous
+        // → on reconstruit la vue matérialisée par sûreté (idempotent ; byte-inert hors idempotency).
+        await refreshCurrentFactsView();
+        return { success: true, skipped: validFacts.length };
+      }
+    }
+
     const events = await prisma.$transaction(
-      validFacts.map((fact) =>
+      validFacts.map((fact, i) =>
         prisma.factEvent.create({
-          data: buildFactEventCreateData(dealId, fact, eventType, createdBy),
+          data: {
+            ...buildFactEventCreateData(dealId, fact, eventType, createdBy),
+            idempotencyKey: keyPrefix ? `${keyPrefix}${i}` : null,
+          },
         })
       )
     );
 
     await refreshCurrentFactsView();
 
-    return { success: true, events };
+    return { success: true, events, count: events.length };
   } catch (error) {
+    // Race rare (2 batchs frais concurrents passent le guard ; l'advisory-lock D.4b la prévient
+    // largement) : le perdant tape l'unique `idempotencyKey` → rollback. Re-check ordinal 0 : s'il
+    // existe, le gagnant a committé → replay bénin (skipped). Sinon (collision natural-key intra-batch
+    // préexistante, comportement inchangé) → success:false + message d'origine.
+    if (keyPrefix) {
+      try {
+        const committed = await prisma.factEvent.findFirst({
+          where: { idempotencyKey: `${keyPrefix}0` },
+          select: { id: true },
+        });
+        if (committed) {
+          await refreshCurrentFactsView();
+          return { success: true, skipped: validFacts.length };
+        }
+      } catch {
+        // best-effort : on retombe sur le message d'erreur d'origine
+      }
+    }
     const message = error instanceof Error ? error.message : 'Unknown error creating fact events batch';
     return { success: false, error: message };
   }
