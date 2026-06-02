@@ -38,6 +38,7 @@ import { runTier1CrossValidation } from "../orchestration/tier1-cross-validation
 import { sanitizeResultForDownstream, sanitizeAgentNarratives } from "../orchestration/result-sanitizer";
 import { costMonitor } from "@/services/cost-monitor";
 import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
+import { withHardWall } from "@/lib/hard-wall";
 import { setAnalysisContext, runWithLLMContext } from "@/services/openrouter/router";
 import { runJob } from "@/services/jobs";
 import { ensureCorpusSnapshot, type CorpusSnapshotMaterialization } from "@/services/corpus";
@@ -276,6 +277,13 @@ interface FullAnalysisRunInit {
   factStoreFormatted: string;
   founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
 }
+
+/**
+ * H (Fix C) — mur dur sur la funding-DB de buildVerificationContext. Généreux : les 2 requêtes
+ * Neon (limit 20) saines sont <5s → le mur NE FIRE JAMAIS sur run sain (byte-equiv OFF/v3) ;
+ * borne un hang DB bien sous le plafond Vercel d'un step durable (300s) → pas de replay infini.
+ */
+const FUNDING_DB_WALL_MS = 30_000;
 
 export class AgentOrchestrator {
   /**
@@ -6213,22 +6221,32 @@ export class AgentOrchestrator {
         }
       : undefined;
 
-    // Funding DB data — fetch similar deals and valuation benchmarks
+    // Funding DB data — fetch similar deals and valuation benchmarks.
+    // H (Fix C) : hard wall sur les 2 requêtes Neon (le SEUL await non borné de la glue ; les
+    // agents/LLM sont déjà bornés par base-agent.withTimeout / le routeur OpenRouter). Sur
+    // timeout → throw → capté par le catch ci-dessous → `fundingDbData` reste undefined (MÊME
+    // dégradation gracieuse que sur erreur DB). Mur généreux (FUNDING_DB_WALL_MS) → ne fire
+    // jamais sur run sain (byte-equiv OFF/v3) ; borne un hang DB sous le plafond step 300s.
     let fundingDbData: Record<string, unknown> | undefined;
     try {
-      const [similarDeals, valuationBenchmarks] = await Promise.all([
-        querySimilarDeals({
-          sector: deal.sector ?? undefined,
-          stage: deal.stage ?? undefined,
-          region: deal.geography ?? undefined,
-          limit: 20,
-        }),
-        getValuationBenchmarks({
-          sector: deal.sector ?? undefined,
-          stage: deal.stage ?? undefined,
-          region: deal.geography ?? undefined,
-        }),
-      ]);
+      const [similarDeals, valuationBenchmarks] = await withHardWall(
+        "funding-db",
+        () =>
+          Promise.all([
+            querySimilarDeals({
+              sector: deal.sector ?? undefined,
+              stage: deal.stage ?? undefined,
+              region: deal.geography ?? undefined,
+              limit: 20,
+            }),
+            getValuationBenchmarks({
+              sector: deal.sector ?? undefined,
+              stage: deal.stage ?? undefined,
+              region: deal.geography ?? undefined,
+            }),
+          ]),
+        FUNDING_DB_WALL_MS
+      );
 
       if (similarDeals.length > 0 || valuationBenchmarks.count > 0) {
         fundingDbData = {
