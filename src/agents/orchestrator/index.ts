@@ -63,6 +63,7 @@ import {
   applyTier0FactsWire,
 } from "./full-analysis-step-state-bridge";
 import { writeStepwiseSnapshot, readLatestStepwiseSnapshot } from "./full-analysis-snapshot";
+import type { FullAnalysisUnit } from "./full-analysis-step-state";
 import {
   getCurrentFacts,
   formatFactStoreForAgents,
@@ -3592,6 +3593,345 @@ export class AgentOrchestrator {
         analysisModeOverride,
         startTime,
         collectedWarnings,
+      });
+    }
+  }
+
+  /**
+   * d-3 (d-3-5) — Chemin DURABLE v3 de full_analysis (graphe stepwise v3). Étend v2 en découpant
+   * Tier1 PER-PHASE en steps durables (lock Codex Option 1, budget 300s) : prologue tier0-facts
+   * (step de SORTIE) -> tier0-thesis (1er SNAPSHOT) -> pour CHAQUE phase A/B/C/D : step
+   * `tier1-{ph}-agents` (snapshot) -> 1 step `tier1-{ph}-reflexion-{i}` par agent low-conf (snapshot)
+   * -> step `tier1-{ph}-finalize` (snapshot) -> tail finalizeTier1Phases -> terminal transitoire
+   * `post-tier1` (runFullAnalysisPostTier1 ; vrai split d-4..d-7).
+   *
+   * MODÈLE B : sur run sain les sous-steps tournent en séquence in-process via les MÊMES
+   * sous-méthodes partagées (runTier1PhaseAgents/Reflexion/Finalize) que le single-pass -> E1
+   * structurel. Au REPLAY, le 1er step à snapshot mémoïsé (tier0-thesis) déclenche le REHYDRATE
+   * UNIQUE (`ensureRehydrated`, lit le snapshot le PLUS RÉCENT — potentiellement tier1 profond) ;
+   * ensuite RÈGLE PAR STEP : bodyRan=true -> applique tous les champs du résultat ; bodyRan=false ->
+   * ensureRehydrated (no-op après le 1er) + transients de phase (needsReflect) depuis le wire
+   * mémoïsé, cumulatif depuis le snapshot rehydraté (jamais la valeur stale du wire). phaseFindings
+   * re-dérivé d'allFindings (byte-safe : 1 agent = 1 phase, reflexion ne mute pas allFindings).
+   *
+   * Corrections gate Codex #9 : (F1) vc initial construit SEULEMENT si `verificationContext == null`
+   * (le snapshot tier0-thesis porte vc=null -> rebuild au replay-après-tier0-thesis ; CARRY dès
+   * qu'un snapshot tier1 porte un vc non-null). (F2) `stateMachine.startAnalysis()` DANS le body
+   * frais de `tier1-a-agents` (mémoïsé-une-fois) -> jamais rejoué hors step au replay. (F3) totalCost/
+   * completedCount GLOBAUX threadés + `initialTotalCost=0` aux sous-méthodes (progress byte-identique)
+   * + shim phasesResult `costIncurred:0`/`completedInPhases:0` -> pas de double-add à l'aggregation.
+   *
+   * NON ROUTÉ tant que STEPWISE_GRAPH_VERSION n'a pas bumpé à 3 (additif, byte-inert au runtime).
+   */
+  private async runFullAnalysisStepwiseV3(
+    deal: DealWithDocs,
+    dealId: string,
+    onProgress: AnalysisOptions["onProgress"],
+    init: FullAnalysisRunInit,
+    stepRunner: StepRunner
+  ): Promise<AnalysisResult> {
+    const {
+      isUpdate,
+      enableTrace,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      initialCanonicalDeal,
+      sectorExpert,
+      TOTAL_AGENTS,
+      corpusSnapshot,
+      scopedDocuments,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
+
+    // État vivant traversant les unités (construit en run sain, REHYDRATÉ au replay).
+    let enrichedContext: EnrichedAgentContext | undefined;
+    let extractedData: ContextSeed = {};
+    let thesisOutput: ThesisExtractorOutput | null = null;
+    // Accumulateurs Tier1 (carry v4). null/[] avant Tier1 ; peuplés par ensureRehydrated au replay.
+    let verificationContext: VerificationContext | null = null;
+    let allFindings: ScoredFinding[] = [];
+    let allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[] = [];
+
+    // REHYDRATE UNIQUE (généralisé) — déclenché au 1er memo-hit d'un step à snapshot (tier0-thesis
+    // ou tier1-*). Lit le snapshot le PLUS RÉCENT et reconstruit TOUT le cumulatif. Idempotent.
+    let rehydrated = false;
+    const ensureRehydrated = async (): Promise<void> => {
+      if (rehydrated) return;
+      const snap = await readLatestStepwiseSnapshot(analysis.id);
+      if (!snap) {
+        throw new Error("[stepwise v3] step mémoïsé sans snapshot durable (état incohérent)");
+      }
+      const rh = rehydrateContext(snap);
+      enrichedContext = rh.enrichedContext;
+      // allResults remplacé EN PLACE (réf partagée, lue par runFullAnalysisPostTier1 via init).
+      for (const k of Object.keys(allResults)) delete allResults[k];
+      Object.assign(allResults, rh.allResults);
+      totalCost = rh.totalCost;
+      completedCount = rh.completedCount;
+      factStore = (enrichedContext.factStore ?? []) as CurrentFact[];
+      factStoreFormatted = enrichedContext.factStoreFormatted ?? "";
+      founderResponses = (enrichedContext.founderResponses ?? []) as typeof founderResponses;
+      extractedData = (enrichedContext.extractedData ?? {}) as unknown as ContextSeed;
+      verificationContext = rh.verificationContext as VerificationContext | null;
+      allFindings = rh.tier1Findings as ScoredFinding[];
+      allValidations = rh.allValidations as typeof allValidations;
+      // collectedWarnings muté EN PLACE (réf partagée via init, lue par le tail post-Tier1).
+      collectedWarnings.length = 0;
+      collectedWarnings.push(...(rh.collectedWarnings as EarlyWarning[]));
+      stateMachine.restoreFromStepState(snap, { sectorExpertName: sectorExpert?.name ?? null });
+      rehydrated = true;
+    };
+
+    try {
+      await stateMachine.start();
+
+      // ===== UNITÉ 1 : tier0-facts (step de SORTIE — identique v2) =====
+      const tier0FactsWire = await stepRunner.run("tier0-facts", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          const r = await this.runTier0Step({
+            deal, scopedDocuments, isUpdate, onProgress, allResults,
+            totalCost, completedCount, factStore, factStoreFormatted, founderResponses,
+          });
+          return buildTier0FactsWire({
+            totalCost: r.totalCost, completedCount: r.completedCount, factStore: r.factStore,
+            factStoreFormatted: r.factStoreFormatted, founderResponses: r.founderResponses,
+            factExtractorResult: allResults["fact-extractor"],
+          });
+        })
+      );
+      {
+        const applied = applyTier0FactsWire(tier0FactsWire);
+        totalCost = applied.totalCost;
+        completedCount = applied.completedCount;
+        factStore = applied.factStore as CurrentFact[];
+        factStoreFormatted = applied.factStoreFormatted;
+        founderResponses = applied.founderResponses as typeof founderResponses;
+        if (applied.factExtractorResult !== null) {
+          allResults["fact-extractor"] = applied.factExtractorResult as unknown as AgentResult;
+        }
+      }
+
+      // ===== UNITÉ 2 : tier0-thesis (1er SNAPSHOT — identique v2 + ensureRehydrated généralisé) =====
+      let tier0ThesisBodyRan = false;
+      await stepRunner.run("tier0-thesis", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          tier0ThesisBodyRan = true;
+          const baseContext = await this.buildBaseAnalysisContext({
+            dealId, initialCanonicalDeal, analysis, analysisModeOverride, corpusSnapshot, scopedDocuments,
+          });
+          ({ totalCost, completedCount, extractedData } = await this.runDocumentExtractorStep({
+            baseContext, scopedDocuments, onProgress, analysis, stateMachine, allResults,
+            totalCost, completedCount, TOTAL_AGENTS,
+          }));
+          let deckCoherenceReport: DeckCoherenceReport | null;
+          ({ totalCost, deckCoherenceReport } = await this.runDeckCoherenceStep({
+            deal, scopedDocuments, extractedData, onProgress, allResults, totalCost,
+          }));
+          const ctxResult = await this.runContextEngineStep({
+            deal, dealId, baseContext, stateMachine, extractedData, analysis, corpusSnapshot,
+            deckCoherenceReport, founderResponses, onProgress, completedCount, TOTAL_AGENTS,
+            factStore, factStoreFormatted,
+          });
+          factStore = ctxResult.factStore;
+          factStoreFormatted = ctxResult.factStoreFormatted;
+          const ec = ctxResult.enrichedContext;
+          enrichedContext = ec;
+          ({ totalCost, completedCount, thesisOutput } = await this.runThesisExtractionStep({
+            dealId, analysisModeOverride, analysis, enrichedContext: ec, corpusSnapshot,
+            allResults, enableTrace, totalCost, completedCount,
+          }));
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+              completedCount, totalCost, startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier0-thesis", done: false,
+              enrichedContext: ec, allResults, verificationContext: null, collectedWarnings,
+              tier1Findings: [], allValidations: [], needsReflect: [],
+            })
+          );
+          return { unit: "tier0-thesis" as const };
+        })
+      );
+      if (!tier0ThesisBodyRan) {
+        await ensureRehydrated();
+      }
+      if (!enrichedContext) {
+        throw new Error("[stepwise v3] enrichedContext absent après tier0-thesis (état incohérent)");
+      }
+
+      // ===== TIER1 STEPWISE (per-phase) =====
+      // vc initial : construit SEULEMENT si non porté (F1 — garde funding-DB drift).
+      if (verificationContext == null) {
+        verificationContext = await this.buildVerificationContext(
+          enrichedContext, extractedData, factStoreFormatted, enrichedContext.deal,
+        );
+      }
+
+      // getTier1Agents : inconditionnel (pur, sans transition) ; nécessaire aux steps agents frais.
+      const tier1AgentMap = await getTier1Agents();
+
+      const tier1Phases: Array<{ name: string; agents: readonly string[]; unit: FullAnalysisUnit; key: string; first: boolean }> = [
+        { name: "Phase A: deck-forensics", agents: TIER1_PHASE_A, unit: "tier1-phase-a", key: "a", first: true },
+        { name: "Phase B: financial-auditor", agents: TIER1_PHASE_B, unit: "tier1-phase-b", key: "b", first: false },
+        { name: "Phase C: team + competitive + market", agents: TIER1_PHASE_C, unit: "tier1-phase-c", key: "c", first: false },
+        { name: "Phase D: remaining agents", agents: TIER1_PHASE_D, unit: "tier1-phase-d", key: "d", first: false },
+      ];
+
+      for (const phase of tier1Phases) {
+        // --- STEP tier1-{ph}-agents (snapshot + step de SORTIE pour needsReflect) ---
+        let agentsBodyRan = false;
+        const agentsWire = await stepRunner.run(`tier1-${phase.key}-agents`, () =>
+          runWithLLMContext({ analysisId: analysis.id }, async () => {
+            agentsBodyRan = true;
+            // F2 : pré-effets Tier1 (no-op persistTierCheckpoint + transition startAnalysis) DANS le
+            // body frais de tier1-a-agents — mémoïsé-une-fois, jamais rejoué hors step au replay.
+            if (phase.first) {
+              await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
+              await stateMachine.startAnalysis();
+            }
+            const ec = enrichedContext!;
+            const r = await this.runTier1PhaseAgents(
+              phase,
+              {
+                enrichedContext: ec, tier1AgentMap, dealId, onProgress, totalAgents: TOTAL_AGENTS,
+                onEarlyWarning: init.onEarlyWarning, collectedWarnings, allResults, allFindings,
+                stateMachine, initialTotalCost: 0,
+              },
+              { totalCost, completedCount },
+            );
+            await writeStepwiseSnapshot(
+              buildStepState({
+                analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                transitionCount: stateMachine.getTransitionCount(), lastUnit: phase.unit, done: false,
+                enrichedContext: ec, allResults,
+                verificationContext: verificationContext as Record<string, unknown> | null,
+                collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: r.needsReflect,
+              })
+            );
+            return { totalCost: r.totalCost, completedCount: r.completedCount, needsReflect: r.needsReflect };
+          })
+        );
+        if (!agentsBodyRan) await ensureRehydrated();
+        const needsReflect = agentsWire.needsReflect;
+        if (agentsBodyRan) {
+          totalCost = agentsWire.totalCost;
+          completedCount = agentsWire.completedCount;
+        }
+        // phaseFindings re-dérivé d'allFindings (byte-safe ; === r.phaseFindings, mêmes objets Inline).
+        const phaseFindings = allFindings.filter((f) => phase.agents.includes(f.agentName));
+
+        // --- STEPS tier1-{ph}-reflexion-{i} (1 par agent low-conf, snapshot) ---
+        for (let i = 0; i < needsReflect.length; i++) {
+          const agentName = needsReflect[i];
+          let reflexBodyRan = false;
+          const reflexWire = await stepRunner.run(`tier1-${phase.key}-reflexion-${i}`, () =>
+            runWithLLMContext({ analysisId: analysis.id }, async () => {
+              reflexBodyRan = true;
+              const ec = enrichedContext!;
+              const r = await this.runTier1PhaseReflexion(
+                [agentName],
+                { analysisId: analysis.id, enrichedContext: ec, allResults, allFindings, verificationContext: verificationContext! },
+                { totalCost },
+              );
+              await writeStepwiseSnapshot(
+                buildStepState({
+                  analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                  completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                  transitionCount: stateMachine.getTransitionCount(), lastUnit: phase.unit, done: false,
+                  enrichedContext: ec, allResults,
+                  verificationContext: verificationContext as Record<string, unknown> | null,
+                  collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect,
+                })
+              );
+              return { totalCost: r.totalCost };
+            })
+          );
+          if (!reflexBodyRan) await ensureRehydrated();
+          if (reflexBodyRan) totalCost = reflexWire.totalCost;
+        }
+
+        // --- STEP tier1-{ph}-finalize (snapshot) ---
+        let finalizeBodyRan = false;
+        let capturedFactStore: CurrentFact[] | undefined;
+        let capturedFactStoreFormatted: string | undefined;
+        let capturedVc: VerificationContext | undefined;
+        const finalizeWire = await stepRunner.run(`tier1-${phase.key}-finalize`, () =>
+          runWithLLMContext({ analysisId: analysis.id }, async () => {
+            finalizeBodyRan = true;
+            const ec = enrichedContext!;
+            const r = await this.runTier1PhaseFinalize(
+              phase,
+              phaseFindings,
+              {
+                enrichedContext: ec, analysisId: analysis.id, extractedData, allResults, allValidations,
+                stateMachine, initialTotalCost: 0, completedCount,
+              },
+              { totalCost, factStore, factStoreFormatted, verificationContext: verificationContext! },
+            );
+            capturedFactStore = r.factStore;
+            capturedFactStoreFormatted = r.factStoreFormatted;
+            capturedVc = r.verificationContext;
+            await writeStepwiseSnapshot(
+              buildStepState({
+                analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                transitionCount: stateMachine.getTransitionCount(), lastUnit: phase.unit, done: false,
+                enrichedContext: ec, allResults,
+                verificationContext: r.verificationContext as Record<string, unknown> | null,
+                collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect,
+              })
+            );
+            return { totalCost: r.totalCost };
+          })
+        );
+        if (!finalizeBodyRan) await ensureRehydrated();
+        if (finalizeBodyRan) {
+          totalCost = finalizeWire.totalCost;
+          factStore = capturedFactStore!;
+          factStoreFormatted = capturedFactStoreFormatted!;
+          verificationContext = capturedVc!;
+        }
+      }
+
+      // ===== TIER1 TAIL (R2) + shim phasesResult (coût-neutre, F3) + terminal post-Tier1 =====
+      const { agentConfidences, lowConfidenceAgents } = await this.finalizeTier1Phases({
+        dealId, allValidations, allResults,
+      });
+      const phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>> = {
+        allFindings,
+        agentConfidences,
+        lowConfidenceAgents,
+        updatedFactStore: factStore,
+        updatedFactStoreFormatted: factStoreFormatted,
+        costIncurred: 0,
+        completedInPhases: 0,
+      };
+
+      const restEnrichedContext = enrichedContext!;
+      const restExtractedData = extractedData;
+      return await runTerminalStepwiseDriver({
+        stepRunner,
+        stepwise,
+        stepId: "post-tier1",
+        pipeline: () =>
+          this.runFullAnalysisPostTier1({
+            deal, dealId, onProgress, init,
+            enrichedContext: restEnrichedContext, extractedData: restExtractedData,
+            phasesResult, totalCost, completedCount, factStore, factStoreFormatted,
+            reportTotalCost: (c: number) => { totalCost = c; },
+          }),
+        loadPersistedResults: async () =>
+          (await loadResults(analysis.id)) as AnalysisResult["results"] | null,
+      });
+    } catch (error) {
+      return await this.failFullAnalysis(error, {
+        stateMachine, analysis, dealId, totalCost, allResults, analysisModeOverride, startTime, collectedWarnings,
       });
     }
   }
