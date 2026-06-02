@@ -3667,28 +3667,23 @@ export class AgentOrchestrator {
     // Inline reflexion for this phase
     // Only apply if agent confidence < 50% (threshold set in ReflexionConfig)
     // REMOVED: Phase A/B forced reflexion — was doubling cost for no measurable quality gain
-    for (const { agentName, result } of phaseResults) {
-      if (!result.success) continue;
+    // MATÉRIALISER la liste ORDONNÉE des agents low-conf à réfléchir (ordre phase.agents
+    // préservé via phaseResults) — portée telle quelle au snapshot stepwise (DTO needsReflect),
+    // jamais re-dérivée au replay (reflexion mute allResults).
+    const needsReflect = phaseResults
+      .filter(({ agentName, result }) => {
+        if (!result.success) return false;
+        const confidence = phaseConfidences.get(agentName);
+        return confidence !== undefined && confidence.score < 60;
+      })
+      .map(({ agentName }) => agentName);
 
-      const confidence = phaseConfidences.get(agentName);
-      const needsReflect = confidence && confidence.score < 60;
-
-      if (needsReflect) {
-        const agentFindings = allFindings.filter(f => f.agentName === agentName);
-        const reflexionStats = await this.applyReflexion(
-          analysisId,
-          agentName,
-          result as AnalysisAgentResult,
-          agentFindings,
-          `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
-          1,
-          verificationContext,
-          allResults,
-          enrichedContext
-        );
-        totalCost += reflexionStats.tokensUsed * 0.00001;
-      }
-    }
+    const reflexed = await this.runTier1PhaseReflexion(
+      needsReflect,
+      { analysisId, enrichedContext, allResults, allFindings, verificationContext },
+      { totalCost },
+    );
+    totalCost = reflexed.totalCost;
 
     // Finalize the phase: validated-claim fact-store updates, verificationContext
     // rebuild (Phase B/C), intra-phase consensus, progress/checkpoint, fail-checks.
@@ -3710,6 +3705,53 @@ export class AgentOrchestrator {
       factStoreFormatted: finalized.factStoreFormatted,
       verificationContext: finalized.verificationContext,
     };
+  }
+
+  /**
+   * Apply inline reflexion to a Tier 1 phase — shared sub-method (sequencer OFF/v2
+   * in-process AND stepwise driver v3 call the SAME method = byte-équivalence).
+   *
+   * Loops over the materialized ORDERED `needsReflect` list (low-confidence successful
+   * agents, phase.agents order). Each applyReflexion re-injects the revised result into
+   * allResults[name] + enrichedContext.previousResults[name] in place for downstream
+   * agents. Order is byte-significant. The input result is read from allResults[name] —
+   * identical to the original at this point because each agent is reflexion'd at most
+   * once (needsReflect has distinct names), so no prior iteration has mutated it.
+   */
+  private async runTier1PhaseReflexion(
+    needsReflect: readonly string[],
+    refs: {
+      analysisId: string;
+      enrichedContext: EnrichedAgentContext;
+      allResults: Record<string, AgentResult>;
+      allFindings: ScoredFinding[];
+      verificationContext: VerificationContext;
+    },
+    state: { totalCost: number }
+  ): Promise<{ totalCost: number }> {
+    const { analysisId, enrichedContext, allResults, allFindings, verificationContext } = refs;
+    let { totalCost } = state;
+
+    for (const agentName of needsReflect) {
+      const result = allResults[agentName];
+      if (!result?.success) continue;
+
+      const agentFindings = allFindings.filter(f => f.agentName === agentName);
+      const reflexionStats = await this.applyReflexion(
+        analysisId,
+        agentName,
+        result as AnalysisAgentResult,
+        agentFindings,
+        `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
+        1,
+        verificationContext,
+        allResults,
+        enrichedContext
+      );
+      totalCost += reflexionStats.tokensUsed * 0.00001;
+    }
+
+    return { totalCost };
   }
 
   /**
