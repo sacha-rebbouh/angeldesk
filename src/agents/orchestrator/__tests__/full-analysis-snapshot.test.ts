@@ -18,6 +18,10 @@ vi.mock("@/lib/prisma", () => ({
       create: vi.fn(),
       findFirst: vi.fn(),
     },
+    analysis: {
+      updateMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
   },
 }));
 
@@ -26,7 +30,23 @@ const mockPrisma = prisma as unknown as {
     create: ReturnType<typeof vi.fn>;
     findFirst: ReturnType<typeof vi.fn>;
   };
+  analysis: {
+    updateMany: ReturnType<typeof vi.fn>;
+  };
+  $transaction: ReturnType<typeof vi.fn>;
 };
+
+// writeStepwiseSnapshot écrit via une transaction interactive ; on passe un `tx` qui réutilise
+// les MÊMES mocks que prisma direct (create/updateMany). resetAllMocks() nuke l'impl de
+// $transaction → installTx() la réinstalle à chaque beforeEach.
+function installTx() {
+  mockPrisma.$transaction.mockImplementation(async (cb: (t: unknown) => unknown) =>
+    cb({
+      analysisCheckpoint: { create: mockPrisma.analysisCheckpoint.create },
+      analysis: { updateMany: mockPrisma.analysis.updateMany },
+    }),
+  );
+}
 
 function makeValidState(over: Partial<FullAnalysisStepState> = {}): FullAnalysisStepState {
   return {
@@ -86,7 +106,7 @@ describe("snapshot helpers — state value", () => {
 });
 
 describe("writeStepwiseSnapshot", () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => { vi.resetAllMocks(); installTx(); });
 
   it("écrit un AnalysisCheckpoint STEPWISE:<unit> avec le StepState dans results", async () => {
     mockPrisma.analysisCheckpoint.create.mockResolvedValue({ id: "ck1" });
@@ -105,11 +125,27 @@ describe("writeStepwiseSnapshot", () => {
     const bad = makeValidState({ verificationContext: { when: new Date() } });
     await expect(writeStepwiseSnapshot(bad)).rejects.toThrow(/non-plain|sérialisable/);
     expect(mockPrisma.analysisCheckpoint.create).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("flushe Analysis.completedAgents via updateMany conditionnel (monotone + RUNNING-gated) dans la transaction", async () => {
+    mockPrisma.analysisCheckpoint.create.mockResolvedValue({ id: "ck1" });
+    mockPrisma.analysis.updateMany.mockResolvedValue({ count: 1 });
+    await writeStepwiseSnapshot(makeValidState({ completedCount: 7 }));
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.analysis.updateMany).toHaveBeenCalledTimes(1);
+    // Monotonie (jamais de régression) + gate RUNNING portés par le WHERE, pas par une lecture
+    // préalable : completedAgents:{lt} ne touche la ligne que si elle est en retard, et le filtre
+    // status="RUNNING" laisse les terminaux intacts (count=0).
+    expect(mockPrisma.analysis.updateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: "a1", status: "RUNNING", completedAgents: { lt: 7 } },
+      data: { completedAgents: 7 },
+    });
   });
 });
 
 describe("readLatestStepwiseSnapshot", () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => { vi.resetAllMocks(); installTx(); });
 
   it("filtre sur state STEPWISE:* + createdAt desc, et désérialise", async () => {
     const s = makeValidState();
@@ -141,7 +177,7 @@ describe("readLatestStepwiseSnapshot", () => {
 });
 
 describe("round-trip write→read via DB mockée (carry de bout en bout)", () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => { vi.resetAllMocks(); installTx(); });
 
   it("le state lu == le state écrit (tous les blobs non reconstructibles survivent)", async () => {
     // Simule un vrai aller-retour DB : create capture la row, findFirst la rejoue.

@@ -41,27 +41,53 @@ export function isStepwiseState(state: string | null | undefined): boolean {
 }
 
 /**
- * Persiste un StepState comme nouveau checkpoint `STEPWISE:<unit>`.
+ * Persiste un StepState comme nouveau checkpoint `STEPWISE:<unit>` ET flushe le compteur de
+ * progression `Analysis.completedAgents` — le tout dans UNE transaction (gate Codex).
  * Valide la sérialisabilité STRICTE avant écriture (lève si non JSON-pur).
  * Retourne l'id du checkpoint créé.
+ *
+ * Flush du compteur (fix « gel 2/22 ») : `Analysis.completedAgents` n'était mis à jour qu'au
+ * finalize Tier1 (updateAnalysisProgress) → entre deux frontières de tier (ex. pendant le replay
+ * de tier0-thesis ~10 min), l'UI restait figée. On flushe ici `state.completedCount` (compteur
+ * STRUCTUREL monotone — PAS `Object.keys(allResults)` qui compterait les agents échoués/synthétiques)
+ * à CHAQUE snapshot, via un `updateMany` CONDITIONNEL atomique (`where completedAgents < nouveau`
+ * → monotone garanti DB-side, jamais de régression même sous écritures concurrentes ; `status`
+ * RUNNING-gated → ne réécrit pas un terminal). Même transaction que le checkpoint → atomique : si
+ * le flush échoue, le checkpoint rollback aussi (pas de checkpoint orphelin ni de double-création
+ * au retry du step). 1 seule op DB (pas de read-then-write).
  */
 export async function writeStepwiseSnapshot(
   state: FullAnalysisStepState
 ): Promise<string> {
   assertSerializableStepState(state);
-  const saved = await prisma.analysisCheckpoint.create({
-    data: {
-      analysisId: state.analysisId,
-      state: stepwiseStateValue(state.lastUnit),
-      completedAgents: Object.keys(state.allResults),
-      pendingAgents: [],
-      failedAgents: [] as unknown as Prisma.InputJsonValue,
-      findings: [] as unknown as Prisma.InputJsonValue,
-      results: state as unknown as Prisma.InputJsonValue,
-    },
-    select: { id: true },
+  return prisma.$transaction(async (tx) => {
+    const saved = await tx.analysisCheckpoint.create({
+      data: {
+        analysisId: state.analysisId,
+        state: stepwiseStateValue(state.lastUnit),
+        completedAgents: Object.keys(state.allResults),
+        pendingAgents: [],
+        failedAgents: [] as unknown as Prisma.InputJsonValue,
+        findings: [] as unknown as Prisma.InputJsonValue,
+        results: state as unknown as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+
+    // updateMany CONDITIONNEL atomique (gate Codex) : monotone garanti par `completedAgents: { lt }`
+    // (jamais de régression, même sous écritures concurrentes) + RUNNING-gated par `status` (ne
+    // réécrit pas un terminal). count=0 quand il n'y a rien à avancer. 1 op, pas de read-then-write.
+    await tx.analysis.updateMany({
+      where: {
+        id: state.analysisId,
+        status: "RUNNING",
+        completedAgents: { lt: state.completedCount },
+      },
+      data: { completedAgents: state.completedCount },
+    });
+
+    return saved.id;
   });
-  return saved.id;
 }
 
 /**
