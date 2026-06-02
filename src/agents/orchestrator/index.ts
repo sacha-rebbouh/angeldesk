@@ -2771,6 +2771,7 @@ export class AgentOrchestrator {
     //   - `undefined|1` (d-2a) → driver « 1 step englobante » (D.5d-1c) : runs dispatchés AVANT
     //     d-2b (graphVersion 1) reprennent sur ce graphe.
     //   - `2` (d-2b) → graphe multi-unités durable (runFullAnalysisStepwise).
+    //   - `3` (d-3) → graphe v3 FIN : Tier1 per-phase + post-tier1-glue (runFullAnalysisStepwiseV3).
     // Version inconnue (worker obsolète vs dispatch plus récent) → LÈVE plutôt que mauvais graphe.
     const graphVersion = advancedOptions.stepwiseGraphVersion;
     if (graphVersion === undefined || graphVersion === 1) {
@@ -2791,6 +2792,14 @@ export class AgentOrchestrator {
         return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
       }
       return this.runFullAnalysisStepwise(deal, dealId, onProgress, init, stepRunner);
+    }
+    if (graphVersion === 3) {
+      // INVARIANT v3 ∌ stopAfterThesis (comme v2) : re-extraction courte (Tier 0 + thèse) → single-pass
+      // (le snapshot v3 ne porte pas thesisOutput ; même matérialisation que v2, gate Codex d-2b-4).
+      if (init.stopAfterThesis) {
+        return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
+      }
+      return this.runFullAnalysisStepwiseV3(deal, dealId, onProgress, init, stepRunner);
     }
     throw new Error(
       `[stepwise] version de graphe ${graphVersion} non supportée par ce worker (dispatch plus récent que le code déployé)`
@@ -3738,7 +3747,8 @@ export class AgentOrchestrator {
    * completedCount GLOBAUX threadés + `initialTotalCost=0` aux sous-méthodes (progress byte-identique)
    * + shim phasesResult `costIncurred:0`/`completedInPhases:0` -> pas de double-add à l'aggregation.
    *
-   * NON ROUTÉ tant que STEPWISE_GRAPH_VERSION n'a pas bumpé à 3 (additif, byte-inert au runtime).
+   * ROUTÉ depuis d-3 (STEPWISE_GRAPH_VERSION=3) ; byte-inert en prod (DEEP_DIVE_STEPWISE OFF →
+   * runFullAnalysisPipeline). d-4..d-7 raffinent le rest (terminal post-tier1) EN PLACE.
    */
   private async runFullAnalysisStepwiseV3(
     deal: DealWithDocs,

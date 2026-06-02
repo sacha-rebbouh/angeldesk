@@ -77,6 +77,7 @@ type RoutingPrivateMethods = {
   initializeFullAnalysisRun: (...args: unknown[]) => Promise<unknown>;
   runFullAnalysisPipeline: (...args: unknown[]) => Promise<unknown>;
   runFullAnalysisStepwise: (...args: unknown[]) => Promise<unknown>;
+  runFullAnalysisStepwiseV3: (...args: unknown[]) => Promise<unknown>;
 };
 
 function makeFakeStateMachine() {
@@ -156,18 +157,22 @@ describe("d-2b — runFullAnalysis : routing EXACT (OFF strict + version de grap
     orch.runFullAnalysisStepwise = vi
       .fn()
       .mockResolvedValue({ sessionId: "a1-stepwise", success: true }) as RoutingPrivateMethods["runFullAnalysisStepwise"];
+    orch.runFullAnalysisStepwiseV3 = vi
+      .fn()
+      .mockResolvedValue({ sessionId: "a1-stepwise-v3", success: true }) as RoutingPrivateMethods["runFullAnalysisStepwiseV3"];
     return orch;
   }
 
   const callsOf = (fn: unknown) => (fn as unknown as { mock: { calls: unknown[] } }).mock.calls;
 
   it("OFF strict (stepwise=false) → runFullAnalysisPipeline direct, peu importe la version", async () => {
-    for (const advancedOptions of [{}, { stepwiseGraphVersion: 1 }, { stepwiseGraphVersion: 2 }]) {
+    for (const advancedOptions of [{}, { stepwiseGraphVersion: 1 }, { stepwiseGraphVersion: 2 }, { stepwiseGraphVersion: 3 }]) {
       const orch = makeRoutingOrchestrator(false);
       const r = await orch.runFullAnalysis({}, "deal_1", undefined, advancedOptions);
       expect(r).toMatchObject({ sessionId: "a1" });
       expect(callsOf(orch.runFullAnalysisPipeline)).toHaveLength(1);
       expect(callsOf(orch.runFullAnalysisStepwise)).toHaveLength(0);
+      expect(callsOf(orch.runFullAnalysisStepwiseV3)).toHaveLength(0);
     }
   });
 
@@ -197,12 +202,30 @@ describe("d-2b — runFullAnalysis : routing EXACT (OFF strict + version de grap
     expect(callsOf(orch.runFullAnalysisStepwise)).toHaveLength(0);
   });
 
-  it("ON + version inconnue (3, worker obsolète vs dispatch) → LÈVE, aucun graphe ne tourne", async () => {
+  it("ON + version 3 → runFullAnalysisStepwiseV3 (graphe FIN Tier1 per-phase + post-tier1-glue)", async () => {
     const orch = makeRoutingOrchestrator(true);
-    await expect(orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 3 })).rejects.toThrow(
-      /version de graphe 3 non supportée/,
+    const r = await orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 3 });
+    expect(r).toMatchObject({ sessionId: "a1-stepwise-v3" });
+    expect(callsOf(orch.runFullAnalysisStepwiseV3)).toHaveLength(1);
+    expect(callsOf(orch.runFullAnalysisStepwise)).toHaveLength(0);
+    expect(callsOf(orch.runFullAnalysisPipeline)).toHaveLength(0);
+  });
+
+  it("ON + version 3 + stopAfterThesis → single-pass (invariant : v3 ne voit jamais stopAfterThesis)", async () => {
+    const orch = makeRoutingOrchestrator(true, true);
+    const r = await orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 3 });
+    expect(r).toMatchObject({ sessionId: "a1" });
+    expect(callsOf(orch.runFullAnalysisPipeline)).toHaveLength(1);
+    expect(callsOf(orch.runFullAnalysisStepwiseV3)).toHaveLength(0);
+  });
+
+  it("ON + version inconnue (4, worker obsolète vs dispatch) → LÈVE, aucun graphe ne tourne", async () => {
+    const orch = makeRoutingOrchestrator(true);
+    await expect(orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 4 })).rejects.toThrow(
+      /version de graphe 4 non supportée/,
     );
     expect(callsOf(orch.runFullAnalysisPipeline)).toHaveLength(0);
     expect(callsOf(orch.runFullAnalysisStepwise)).toHaveLength(0);
+    expect(callsOf(orch.runFullAnalysisStepwiseV3)).toHaveLength(0);
   });
 });

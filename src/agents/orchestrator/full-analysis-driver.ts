@@ -27,13 +27,18 @@ import { buildTerminalEnvelope, reviveTerminalEnvelope } from "./full-analysis-s
  * sur CETTE version → un run en vol ne bascule jamais sur un graphe déployé après lui.
  *   - 1 (d-2a)  : driver « 1 step englobante » (runTerminalStepwiseDriver, step 'run-analysis') —
  *     runs en vol dispatchés AVANT d-2b reprennent sur ce graphe (sticky).
- *   - 2 (d-2b)  : graphe multi-unités durable (tier0-facts / tier0-thesis / rest ; split
- *     tier1/tier3/tier2 à venir d-3..d-7) — runFullAnalysisStepwise.
+ *   - 2 (d-2b)  : graphe multi-unités durable (tier0-facts / tier0-thesis / rest) —
+ *     runFullAnalysisStepwise.
+ *   - 3 (d-3)   : graphe FIN — tier0-facts / tier0-thesis / Tier1 PER-PHASE (agents/reflexion-i/
+ *     finalize) / post-tier1-glue / terminal post-tier1 (rest) ; split tier3-pre/tier2/tier3-post/
+ *     terminal-final à venir d-4..d-7 (raffinent le graphe v3 EN PLACE, pas de run déployé en vol
+ *     tant que DEEP_DIVE_STEPWISE est OFF) — runFullAnalysisStepwiseV3.
  * Routing EXACT côté orchestrateur (runFullAnalysis) : `undefined|1` → driver 1-step ; `2` →
- * runFullAnalysisStepwise ; version inconnue → LÈVE. On N'UTILISE PAS cette constante dans
- * l'égalité de routing (littéraux) — elle ne sert qu'à STAMPER la version courante au dispatch.
+ * runFullAnalysisStepwise ; `3` → runFullAnalysisStepwiseV3 ; version inconnue → LÈVE. On N'UTILISE
+ * PAS cette constante dans l'égalité de routing (littéraux) — elle ne sert qu'à STAMPER la version
+ * courante au dispatch.
  */
-export const STEPWISE_GRAPH_VERSION = 2 as const;
+export const STEPWISE_GRAPH_VERSION = 3 as const;
 
 export interface TerminalStepwiseDriverParams {
   /** Runner d'unité : InlineStepRunner (OFF/single-pass) ou InngestStepRunner/FakeStepRunner. */
