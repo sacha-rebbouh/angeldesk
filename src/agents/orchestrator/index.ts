@@ -4169,15 +4169,48 @@ export class AgentOrchestrator {
       }
       if (!glueBodyRan) await ensureRehydrated();
 
-      // ===== TERMINAL post-tier1 (rest : synth-setup→tier3-pre→tier2→tier3-post→final ; split d-4..d-7) =====
+      // ===== UNITÉ tier3-pre (d-4) — synthesis-setup + batch Tier3 pré-Tier2 en step durable. Run
+      // sain : mute l'état vivant (enrichedContext BAPrefs/DealTerms/Structure + previousResults,
+      // allResults tier3-pré, startSynthesis DEBATING→SYNTHESIZING) + snapshot not-done → le terminal
+      // `post-tier1` rehydrate au replay-après-tier3-pre. Pas d'early-return (cost-check tier3-pré =
+      // SKIP-only). Modèle B : bodyRan → applique le wire ; sinon ensureRehydrated (no-op après le 1er). =====
+      let tier3PreBodyRan = false;
+      const tier3PreWire = await stepRunner.run("tier3-pre", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          tier3PreBodyRan = true;
+          const ec = enrichedContext!;
+          const r = await this.runPostTier1Tier3Pre({
+            deal, dealId, onProgress, init, enrichedContext: ec, totalCost, completedCount,
+          });
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+              completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier3-pre", done: false,
+              enrichedContext: ec, allResults,
+              verificationContext: verificationContext as Record<string, unknown> | null,
+              collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+            })
+          );
+          return { totalCost: r.totalCost, completedCount: r.completedCount };
+        })
+      );
+      if (!tier3PreBodyRan) await ensureRehydrated();
+      if (tier3PreBodyRan) {
+        totalCost = tier3PreWire.totalCost;
+        completedCount = tier3PreWire.completedCount;
+      }
+
+      // ===== TERMINAL post-tier1 (rest APRÈS tier3-pre : tier2-sector→consensus→tier3-post→final ;
+      // rétrécit en d-5..d-7) =====
       const restEnrichedContext = enrichedContext!;
       return await runTerminalStepwiseDriver({
         stepRunner,
         stepwise,
         stepId: "post-tier1",
         pipeline: () =>
-          this.runPostTier1Rest({
-            deal, dealId, onProgress, init,
+          this.runPostTier1RestAfterTier3Pre({
+            dealId, onProgress, init,
             enrichedContext: restEnrichedContext,
             verificationContext: verificationContext!,
             allFindings,
