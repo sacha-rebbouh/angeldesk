@@ -259,8 +259,11 @@ function stubHelpers(orch: Record<string, unknown>, captured: Captured[]) {
     return { ...REST_RESULT, success: false };
   });
 
-  // Tail post-Tier1 (capture).
-  orch.runFullAnalysisPostTier1 = vi.fn(async (p: {
+  // d-3-6 — GLUE post-Tier1 (point de capture du boundary post-Tier1) + REST (résultat terminal).
+  // Le glue est le point COMMUN : single-pass (runFullAnalysisPostTier1 RÉEL → runPostTier1Glue) ET
+  // v3 (step `post-tier1-glue` → runPostTier1Glue) y passent → on compare le MÊME boundary. Le glue
+  // stub renvoie {done:false,...} (early-return injoignable au runtime) ; le rest renvoie REST_RESULT.
+  orch.runPostTier1Glue = vi.fn(async (p: {
     totalCost: number; completedCount: number; factStore: unknown; factStoreFormatted: string;
     phasesResult: Captured["phasesResult"]; enrichedContext: Record<string, unknown>;
     init: { allResults: Record<string, unknown> };
@@ -277,6 +280,10 @@ function stubHelpers(orch: Record<string, unknown>, captured: Captured[]) {
       allValidations: undefined,
     });
     p.reportTotalCost(p.totalCost + 0.5);
+    return { done: false as const, completedCount: p.completedCount, verificationContext: { ...VC }, allFindings: p.phasesResult.allFindings };
+  });
+  orch.runPostTier1Rest = vi.fn(async (p: { totalCost: number; reportTotalCost: (c: number) => void }) => {
+    p.reportTotalCost(p.totalCost);
     return REST_RESULT;
   });
 }
@@ -370,10 +377,10 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
   });
 });
 
-// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) :
+// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — d-3-6 ajoute post-tier1-glue :
 // 1 tier0-facts · 2 tier0-thesis · 3 tier1-a-agents · 4 tier1-a-finalize · 5 tier1-b-agents ·
 // 6 tier1-b-finalize · 7 tier1-c-agents · 8 tier1-c-reflexion-0 · 9 tier1-c-finalize ·
-// 10 tier1-d-agents · 11 tier1-d-finalize · 12 post-tier1.
+// 10 tier1-d-agents · 11 tier1-d-finalize · 12 post-tier1-glue · 13 post-tier1.
 describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydrate mid-Tier1)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -446,5 +453,45 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     assertResumeEqualsRef(capRef, cap);
     // TEETH F1 (CARRY profond) : vc non-null porté par le snapshot c-finalize → pas de rebuild.
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-glue — kill APRÈS post-tier1-glue (step 12) → rehydrate depuis le snapshot glue, terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(12);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // CARRY : le snapshot post-tier1-glue porte un vc non-null → pas de rebuild au resume (le glue
+    // est mémoïsé not-done ; ensureRehydrated reconstruit l'état post-glue ; le terminal tourne frais).
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+});
+
+// d-3-6 — PIN du comportement CASSÉ des early-returns (gate Codex #10) : failFast/cost-limit appellent
+// stateMachine.complete() depuis ANALYZING/DEBATING (sans startSynthesis) → transition INVALIDE → LÈVE.
+// Le `return {done:true,result}` (success « stopped early ») est donc INJOIGNABLE ; l'analyse FINIT
+// FAILED (via le catch terminal → failFullAnalysis). C'est pourquoi le driver v3 NE porte PAS de
+// terminalEnvelope pour le done. Ce test verrouille le comportement actuel (un « fix » silencieux de
+// la transition le ferait tourner au rouge → décision explicite requise, cf. PLAN).
+describe("d-3-6 — early-return failFast : comportement cassé pinné", () => {
+  it("runPostTier1FailFast LÈVE au complete() depuis ANALYZING (FAILED, PAS success « stopped early »)", async () => {
+    const orch = new AgentOrchestrator() as unknown as Record<string, unknown>;
+    const sm = new AnalysisStateMachine({
+      analysisId: "a1", dealId: "d1", mode: "full_analysis", agents: ["deck-forensics"], enableCheckpointing: false,
+    });
+    await sm.start();          // IDLE → INITIALIZING
+    await sm.startGathering(); // INITIALIZING → GATHERING
+    await sm.startAnalysis();  // GATHERING → ANALYZING
+    await expect(
+      (orch.runPostTier1FailFast as (p: unknown) => Promise<unknown>)({
+        failFastOnCritical: true,
+        collectedWarnings: [{ severity: "critical", title: "Crit", description: "desc" }],
+        stateMachine: sm,
+        analysis: { id: "a1" },
+        dealId: "d1",
+        analysisModeOverride: undefined,
+        allResults: {},
+        totalCost: 1,
+        startTime: 0,
+      })
+    ).rejects.toThrow(/Invalid state transition: ANALYZING -> COMPLETED/);
   });
 });

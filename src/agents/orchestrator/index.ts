@@ -3718,8 +3718,9 @@ export class AgentOrchestrator {
    * Tier1 PER-PHASE en steps durables (lock Codex Option 1, budget 300s) : prologue tier0-facts
    * (step de SORTIE) -> tier0-thesis (1er SNAPSHOT) -> pour CHAQUE phase A/B/C/D : step
    * `tier1-{ph}-agents` (snapshot) -> 1 step `tier1-{ph}-reflexion-{i}` par agent low-conf (snapshot)
-   * -> step `tier1-{ph}-finalize` (snapshot) -> tail finalizeTier1Phases -> terminal transitoire
-   * `post-tier1` (runFullAnalysisPostTier1 ; vrai split d-4..d-7).
+   * -> step `tier1-{ph}-finalize` (snapshot) -> tail finalizeTier1Phases -> step `post-tier1-glue`
+   * (d-3-6, runPostTier1Glue ; snapshot not-done ; early-return = throw -> FAILED) -> terminal
+   * transitoire `post-tier1` (runPostTier1Rest ; vrai split d-4..d-7).
    *
    * MODÈLE B : sur run sain les sous-steps tournent en séquence in-process via les MÊMES
    * sous-méthodes partagées (runTier1PhaseAgents/Reflexion/Finalize) que le single-pass -> E1
@@ -4015,7 +4016,7 @@ export class AgentOrchestrator {
         }
       }
 
-      // ===== TIER1 TAIL (R2) + shim phasesResult (coût-neutre, F3) + terminal post-Tier1 =====
+      // ===== TIER1 TAIL (R2) + shim phasesResult (coût-neutre, F3) =====
       const { agentConfidences, lowConfidenceAgents } = await this.finalizeTier1Phases({
         dealId, allValidations, allResults,
       });
@@ -4029,17 +4030,68 @@ export class AgentOrchestrator {
         completedInPhases: 0,
       };
 
+      // ===== UNITÉ post-tier1-glue (d-3-6) — glue durable (aggregation→failFast→consensus→cost-limit
+      // →cross-val→red-flags) en step propre. Run sain : mute l'état vivant (vc rebuild aggregation,
+      // allFindings, allResults cross-val, enrichedContext tier1CrossValidation/consolidatedRedFlags)
+      // + snapshot not-done → le terminal `post-tier1` rehydrate au replay-après-glue. done:true
+      // (early-return failFast/cost-limit) est INJOIGNABLE au runtime — `stateMachine.complete()`
+      // LÈVE depuis ANALYZING/DEBATING (gate Codex #10) → ces chemins THROWENT → catch terminal →
+      // FAILED (byte-équiv single-pass). Run sain done → glueLiveResult ; replay-done → guard loud. =====
+      let glueBodyRan = false;
+      let glueLiveResult: AnalysisResult | undefined;
+      const glueWire = await stepRunner.run("post-tier1-glue", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          glueBodyRan = true;
+          const ec = enrichedContext!;
+          const glue = await this.runPostTier1Glue({
+            dealId, onProgress, init, enrichedContext: ec, extractedData,
+            phasesResult, totalCost, completedCount, factStore, factStoreFormatted,
+            reportTotalCost: (c) => { totalCost = c; },
+          });
+          if (glue.done) {
+            glueLiveResult = glue.result;
+            return { done: true as const };
+          }
+          completedCount = glue.completedCount;
+          verificationContext = glue.verificationContext;
+          allFindings = glue.allFindings;
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+              completedCount, totalCost, startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(), lastUnit: "post-tier1-glue", done: false,
+              enrichedContext: ec, allResults,
+              verificationContext: verificationContext as Record<string, unknown> | null,
+              collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+            })
+          );
+          return { done: false as const };
+        })
+      );
+      if (glueWire.done) {
+        // Run sain : glueLiveResult posé. Replay-done IMPOSSIBLE (un step qui throw n'est jamais
+        // mémoïsé done:true). Guard loud si l'invariant casse (ex. transition complete() corrigée
+        // plus tard sans ajouter ici le traversal terminalResult — gate Codex #10).
+        if (!glueLiveResult) {
+          throw new Error("[stepwise v3] post-tier1-glue done:true au replay non supporté (early-return termine par throw aujourd'hui)");
+        }
+        return glueLiveResult;
+      }
+      if (!glueBodyRan) await ensureRehydrated();
+
+      // ===== TERMINAL post-tier1 (rest : synth-setup→tier3-pre→tier2→tier3-post→final ; split d-4..d-7) =====
       const restEnrichedContext = enrichedContext!;
-      const restExtractedData = extractedData;
       return await runTerminalStepwiseDriver({
         stepRunner,
         stepwise,
         stepId: "post-tier1",
         pipeline: () =>
-          this.runFullAnalysisPostTier1({
+          this.runPostTier1Rest({
             deal, dealId, onProgress, init,
-            enrichedContext: restEnrichedContext, extractedData: restExtractedData,
-            phasesResult, totalCost, completedCount, factStore, factStoreFormatted,
+            enrichedContext: restEnrichedContext,
+            verificationContext: verificationContext!,
+            allFindings,
+            totalCost, completedCount,
             reportTotalCost: (c: number) => { totalCost = c; },
           }),
         loadPersistedResults: async () =>
