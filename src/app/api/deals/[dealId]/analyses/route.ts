@@ -117,18 +117,12 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ data: null });
     }
 
-    // Auto-expire stuck RUNNING analyses older than 3 hours
-    let effectiveStatus = analysisMeta.status;
-    if (analysisMeta.status === "RUNNING") {
-      const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000);
-      if (analysisMeta.createdAt < threeHoursAgo) {
-        await prisma.analysis.update({
-          where: { id: analysisMeta.id },
-          data: { status: "FAILED", summary: "Analysis timed out after 3 hours" },
-        });
-        effectiveStatus = "FAILED";
-      }
-    }
+    // Statut effectif — lecture PURE. Aucune mutation ici : ce GET est pollé toutes les 3s +
+    // au refresh navigateur ; un endpoint de lecture ne doit JAMAIS terminaliser un run (sinon
+    // un simple refresh peut tuer l'analyse). Les runs réellement figés sont terminalisés par le
+    // watchdog durable `reapStaleAnalyses` (cron Inngest + route cron, 20 min sans activité —
+    // cf. analysis-compensation.ts), pas par une requête de lecture.
+    const effectiveStatus = analysisMeta.status;
 
     // Only load results when explicitly requested via ?id=xxx.
     // The default poll NEVER loads the blob — it's several MB and takes 30s+ from Neon.

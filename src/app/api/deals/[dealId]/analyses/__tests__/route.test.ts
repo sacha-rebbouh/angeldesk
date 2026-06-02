@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   dealFindFirst: vi.fn(),
   analysisFindFirst: vi.fn(),
   analysisFindMany: vi.fn(),
+  analysisUpdate: vi.fn(),
   thesisFindFirst: vi.fn(),
   loadResults: vi.fn(),
   handleApiError: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/lib/prisma", () => ({
     analysis: {
       findFirst: mocks.analysisFindFirst,
       findMany: mocks.analysisFindMany,
+      update: mocks.analysisUpdate,
     },
     thesis: {
       findFirst: mocks.thesisFindFirst,
@@ -150,5 +152,38 @@ describe("GET /api/deals/[dealId]/analyses", () => {
 
     expect(response.status).toBe(200);
     expect(payload.data.id).toBe("analysis_canonical");
+  });
+
+  it("ne MUTE PAS un run RUNNING même âgé de >3h (lecture pure — pas d'auto-expire ; un refresh ne tue pas le run)", async () => {
+    const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000);
+    mocks.analysisFindFirst.mockResolvedValueOnce({
+      id: "analysis_old_running",
+      status: "RUNNING",
+      type: "FULL_DD",
+      mode: "full_analysis",
+      thesisId: "thesis_1",
+      thesisBypass: false,
+      corpusSnapshotId: "snapshot_running",
+      completedAgents: 5,
+      totalAgents: 22,
+      summary: null,
+      totalCost: null,
+      totalTimeMs: null,
+      startedAt: fourHoursAgo,
+      completedAt: null,
+      createdAt: fourHoursAgo,
+    });
+
+    const response = await GET(
+      makeNextRequest(`http://localhost/api/deals/${dealId}/analyses`) as never,
+      { params: Promise.resolve({ dealId }) }
+    );
+
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    // Le statut reste RUNNING : la lecture ne terminalise PAS le run (le watchdog durable s'en charge).
+    expect(payload.data.status).toBe("RUNNING");
+    // Aucune mutation DB déclenchée par ce GET.
+    expect(mocks.analysisUpdate).not.toHaveBeenCalled();
   });
 });
