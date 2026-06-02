@@ -80,7 +80,7 @@ vi.mock("../full-analysis-snapshot", () => ({
 
 const { AgentOrchestrator } = await import("../index");
 const { AnalysisStateMachine } = await import("@/agents/orchestration/state-machine");
-const { InlineStepRunner, FakeStepRunner, FakeStepKill } = await import("../step-runner");
+const { InlineStepRunner, FakeStepRunner, FakeStepKill, runStepwiseUntilDone } = await import("../step-runner");
 
 // ---------- Fixtures (Date vivantes) ----------
 const ISO = "2026-06-01T00:00:00.000Z";
@@ -91,6 +91,11 @@ const FINDING_DATE = new Date("2026-05-20T00:00:00.000Z");
 
 // Agents low-conf → reflexion (1 en phase C : competitive-intel).
 const REFLECT_AGENTS = new Set<string>(["competitive-intel"]);
+
+// TEETH F1 : tout vc null reçu par reflexion/finalize est compté (le vc DOIT être non-null une fois
+// Tier1 démarré). Un guard F1 faux (`!rehydrated` au lieu de `vc == null`) laisserait vc=null au
+// resume-après-tier0-thesis → nullSeen > 0 → test rouge. Reset en beforeEach.
+const vcGuard = { nullSeen: 0 };
 
 function makeEnrichedContext() {
   return {
@@ -222,9 +227,10 @@ function stubHelpers(orch: Record<string, unknown>, captured: Captured[]) {
   });
   orch.runTier1PhaseReflexion = vi.fn(async (
     needsReflect: readonly string[],
-    refs: { allResults: Record<string, unknown> },
+    refs: { allResults: Record<string, unknown>; verificationContext: unknown },
     state: { totalCost: number },
   ) => {
+    if (refs.verificationContext == null) vcGuard.nullSeen++;
     for (const a of needsReflect) {
       const prev = refs.allResults[a] as Record<string, unknown> | undefined;
       if (prev) refs.allResults[a] = { ...prev, reflexed: true };
@@ -237,6 +243,7 @@ function stubHelpers(orch: Record<string, unknown>, captured: Captured[]) {
     refs: { enrichedContext: Record<string, unknown>; allValidations: unknown[] },
     state: { totalCost: number; factStore: unknown[]; factStoreFormatted: string; verificationContext: unknown },
   ) => {
+    if (state.verificationContext == null) vcGuard.nullSeen++;
     refs.allValidations.push({ phase: phase.name, count: phaseFindings.length });
     const newFactStore = [...state.factStore, { factKey: `fact-${phase.name}`, currentValue: phaseFindings.length, firstSeenAt: FACT_DATE, lastUpdatedAt: FACT_DATE, eventHistory: [] }];
     const newFactStoreFormatted = `${state.factStoreFormatted}|${phase.name}`;
@@ -301,6 +308,7 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     snapshotStore.map.clear();
+    vcGuard.nullSeen = 0;
     persistenceMocks.completeAnalysis.mockResolvedValue(undefined);
     persistenceMocks.updateAnalysisProgress.mockResolvedValue(undefined);
     loadResultsMock.fn.mockResolvedValue(REST_RESULT.results);
@@ -359,5 +367,84 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
     // v3 porte le totalCost GLOBAL ; single-pass porte le pré-Tier1.
     expect(capInline[0].totalCost).toBeCloseTo(effTotalCost(capPipeline[0]), 9);
     expect(capInline[0].completedCount).toBe(capPipeline[0].completedCount + capPipeline[0].phasesResult.completedInPhases);
+  });
+});
+
+// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) :
+// 1 tier0-facts · 2 tier0-thesis · 3 tier1-a-agents · 4 tier1-a-finalize · 5 tier1-b-agents ·
+// 6 tier1-b-finalize · 7 tier1-c-agents · 8 tier1-c-reflexion-0 · 9 tier1-c-finalize ·
+// 10 tier1-d-agents · 11 tier1-d-finalize · 12 post-tier1.
+describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydrate mid-Tier1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    snapshotStore.map.clear();
+    vcGuard.nullSeen = 0;
+    persistenceMocks.completeAnalysis.mockResolvedValue(undefined);
+    persistenceMocks.updateAnalysisProgress.mockResolvedValue(undefined);
+    loadResultsMock.fn.mockResolvedValue(REST_RESULT.results);
+  });
+
+  // Référence v3 Inline (no-kill) puis v3 Fake tué après `killAfter` steps → resume → compare.
+  async function runE2(killAfter: number) {
+    const capRef: Captured[] = [];
+    const orchRef = new AgentOrchestrator() as unknown as Record<string, unknown>;
+    stubHelpers(orchRef, capRef);
+    const rRef = await (orchRef.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new InlineStepRunner());
+
+    snapshotStore.map.clear();
+    const cap: Captured[] = [];
+    const orch = new AgentOrchestrator() as unknown as Record<string, unknown>;
+    stubHelpers(orch, cap);
+    const fake = new FakeStepRunner();
+    const { passes } = await runStepwiseUntilDone(
+      (runner) => (orch.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), runner),
+      fake,
+      [killAfter, null],
+    );
+    return { capRef, cap, passes, rRef, orch, orchRef };
+  }
+
+  function assertResumeEqualsRef(capRef: Captured[], cap: Captured[]) {
+    expect(capRef).toHaveLength(1);
+    expect(cap).toHaveLength(1); // le tail n'est capturé qu'à la passe finale (résultat reconstruit)
+    expect(summarize(cap[0])).toEqual(summarize(capRef[0]));
+    expect(effTotalCost(cap[0])).toBeCloseTo(effTotalCost(capRef[0]), 9);
+    // TEETH F1 (côté usage) : aucun vc null reçu par reflexion/finalize, ni au run resumé ni au ref.
+    expect(vcGuard.nullSeen).toBe(0);
+  }
+
+  it("E2-thesis — kill APRÈS tier0-thesis (step 2) → rehydrate vc=null→F1 REBUILD, Tier1 entier frais, ===ref", async () => {
+    const { capRef, cap, passes, orch, orchRef } = await runE2(2);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // TEETH F1 (REBUILD) : le snapshot tier0-thesis porte vc=null → au resume F1 RECONSTRUIT le vc.
+    // Run resumé = pass0 (build initial) + pass1 (REBUILD après rehydrate) = 2 ; ref no-kill = 1.
+    // Un guard `!rehydrated` au lieu de `vc == null` sauterait le rebuild → 1 (ce test serait rouge).
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2);
+    expect(orchRef.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-agents — kill APRÈS tier1-a-agents (step 3) → rehydrate (vc carry non-null), finalize A+ frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(3);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // TEETH F1 (CARRY) : le snapshot tier1-a-agents porte un vc NON-null → pas de rebuild au resume.
+    // Run resumé = pass0 (build initial) seulement = 1.
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-reflexion — kill APRÈS tier1-c-reflexion-0 (step 8) → rehydrate après une reflexion individuelle, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(8);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1); // CARRY
+  });
+
+  it("E2-finalize — kill APRÈS tier1-c-finalize (step 9) → rehydrate profond, resume dans phase D, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(9);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // TEETH F1 (CARRY profond) : vc non-null porté par le snapshot c-finalize → pas de rebuild.
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 });
