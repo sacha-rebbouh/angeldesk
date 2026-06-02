@@ -1481,9 +1481,18 @@ export class AgentOrchestrator {
     const hasSectorExpert = sectorExpert !== null;
 
     // Pipeline complet : Tier 1 (12 agents) + Tier 3 (5 agents en autonomous,
-    // +1 thesis-reconciler en full_analysis) + extractor + fact-extractor + (0-1 sector expert)
+    // +1 thesis-reconciler en full_analysis) + document-extractor + fact-extractor
+    // + thesis-extractor (SAUF post_call_reanalysis qui réutilise la thèse canonique)
+    // + (0-1 sector expert).
+    // thesis-extractor (Tier 0.5) tourne et est compté dans completedCount par
+    // runThesisExtractionStep (`completedCount++` sur succès) hors post_call_reanalysis
+    // (`shouldReuseLatestThesis`). Il manquait à ce total → completedCount pouvait dépasser
+    // TOTAL_AGENTS d'1 (affichage X+1/X sur le chemin non-stepwise ; rejet buildStepState
+    // `completedCount > totalAgents` au snapshot tier3-post sur le chemin durable v3, d-6).
     const tier3AgentCount = FULL_ANALYSIS_TIER3_AGENT_NAMES.length;
-    const TOTAL_AGENTS = TIER1_AGENT_NAMES.length + tier3AgentCount + 1 + 1 + (hasSectorExpert ? 1 : 0);
+    const runsThesisExtractor = analysisModeOverride !== "post_call_reanalysis";
+    const TOTAL_AGENTS =
+      TIER1_AGENT_NAMES.length + tier3AgentCount + 1 + 1 + (runsThesisExtractor ? 1 : 0) + (hasSectorExpert ? 1 : 0);
 
     const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
       allowSupersededDocuments: analysisModeOverride === "post_call_reanalysis",
@@ -4352,18 +4361,53 @@ export class AgentOrchestrator {
         completedCount = tier2SectorWire.completedCount;
       }
 
-      // ===== TERMINAL post-tier1 (rest APRÈS tier2-sector : tier3-post→final ; rétrécit en d-6..d-7) =====
-      const restEnrichedContext = enrichedContext!;
+      // ===== UNITÉS tier3-post (d-6) — batch Tier3 après Tier2 PER-AGENT (1 step par batch, gate Codex
+      // #11 : somme séquentielle thesis-reconciler+synthesis-deal-scorer+memo-generator ~280-310s risquait
+      // > 300s). Chaque step exécute UN batch via runPostTier1Tier3Post([batch]) + snapshot not-done
+      // (lastUnit=tier3-post pour les 3, comme la reflexion Tier1 réutilisait phase.unit). Le cost-check
+      // break + le restore previousResults restent idempotents par batch (gate Codex #11). Modèle B :
+      // bodyRan → applique le wire ; sinon ensureRehydrated (no-op après le 1er). =====
+      for (let i = 0; i < TIER3_BATCHES_AFTER_TIER2.length; i++) {
+        const batch = TIER3_BATCHES_AFTER_TIER2[i];
+        let postBodyRan = false;
+        const postWire = await stepRunner.run(`tier3-post-${i}`, () =>
+          runWithLLMContext({ analysisId: analysis.id }, async () => {
+            postBodyRan = true;
+            const ec = enrichedContext!;
+            const r = await this.runPostTier1Tier3Post({
+              dealId, onProgress, init, enrichedContext: ec, totalCost, completedCount, batches: [batch],
+            });
+            await writeStepwiseSnapshot(
+              buildStepState({
+                analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier3-post", done: false,
+                enrichedContext: ec, allResults,
+                verificationContext: verificationContext as Record<string, unknown> | null,
+                collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+              })
+            );
+            return { totalCost: r.totalCost, completedCount: r.completedCount };
+          })
+        );
+        if (!postBodyRan) await ensureRehydrated();
+        if (postBodyRan) {
+          totalCost = postWire.totalCost;
+          completedCount = postWire.completedCount;
+        }
+      }
+
+      // ===== TERMINAL post-tier1 (d-7) — final-completion (complete + completeAnalysis + costMonitor +
+      // updateDealStatus + delta ; effets irréversibles → terminal driver, jamais snapshot unit, gate
+      // Codex #11). Le split post-Tier1 est COMPLET : tier3-pre → tier2-sector → tier3-post×N → final. =====
       return await runTerminalStepwiseDriver({
         stepRunner,
         stepwise,
         stepId: "post-tier1",
         pipeline: () =>
-          this.runPostTier1RestAfterTier2Sector({
-            dealId, onProgress, init,
-            enrichedContext: restEnrichedContext,
-            totalCost, completedCount,
-            reportTotalCost: (c: number) => { totalCost = c; },
+          this.runFinalCompletion({
+            stepwise, allResults, totalCost, stateMachine, analysis, dealId, startTime,
+            analysisModeOverride, isUpdate, collectedWarnings,
           }),
         loadPersistedResults: async () =>
           (await loadResults(analysis.id)) as AnalysisResult["results"] | null,

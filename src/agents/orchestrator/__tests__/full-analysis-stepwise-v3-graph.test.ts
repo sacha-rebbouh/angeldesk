@@ -168,7 +168,7 @@ function makeInit() {
     collectedWarnings: [],
     initialCanonicalDeal: { id: "deal_1", sector: "saas" },
     sectorExpert: null,
-    TOTAL_AGENTS: 21,
+    TOTAL_AGENTS: 22, // 3 tier0 + 12 tier1 + 1 tier2 + 6 tier3 (post-batch per-agent compte 3, d-6)
     corpusSnapshot: null,
     scopedDocuments: [{ id: "doc1", processingStatus: "COMPLETED" }],
     analysis: { id: "analysis_1", mode: "full_analysis" },
@@ -282,11 +282,12 @@ function stubHelpers(orch: Record<string, unknown>, captured: Captured[]) {
     p.reportTotalCost(p.totalCost + 0.5);
     return { done: false as const, completedCount: p.completedCount, verificationContext: { ...VC }, allFindings: p.phasesResult.allFindings };
   });
-  // d-4/d-5 — tier3-pre + tier2-sector peelés en steps durables + terminal RestAfterTier2Sector.
-  // single-pass appelle le RÉEL runPostTier1Rest (d-4-R) → runPostTier1RestAfterTier3Pre (d-5-R), qui
-  // enchaînent ces stubs ; v3 les wrappe (tier3-pre / tier2-sector = steps durables ; RestAfterTier2Sector
-  // = terminal). Les stubs tier3-pre/tier2-sector avancent coût/count (après le boundary glue capturé →
-  // invisible aux assertions summarize/cost). tier2-sector appelle reportTotalCost (pattern leaf-multi).
+  // d-4/d-5/d-6 — tier3-pre + tier2-sector + tier3-post (PER-AGENT) peelés en steps durables ; terminal
+  // = runFinalCompletion. single-pass appelle les RÉELS runPostTier1Rest (d-4-R) → RestAfterTier3Pre
+  // (d-5-R) → RestAfterTier2Sector (d-6-R), qui enchaînent ces stubs ; v3 les wrappe. Les stubs avancent
+  // coût/count (après le boundary glue capturé → invisible aux assertions summarize/cost). tier2 appelle
+  // reportTotalCost (leaf-multi). tier3-post avance proportionnellement à batches.length → la SOMME
+  // per-agent v3 (3 steps × 1 batch) === all-at-once single-pass (1 appel × 3 batches).
   orch.runPostTier1Tier3Pre = vi.fn(async (p: { totalCost: number; completedCount: number }) => ({
     totalCost: p.totalCost + 0.3,
     completedCount: p.completedCount + 3,
@@ -296,10 +297,11 @@ function stubHelpers(orch: Record<string, unknown>, captured: Captured[]) {
     p.reportTotalCost(totalCost);
     return { totalCost, completedCount: p.completedCount + 1 };
   });
-  orch.runPostTier1RestAfterTier2Sector = vi.fn(async (p: { totalCost: number; reportTotalCost: (c: number) => void }) => {
-    p.reportTotalCost(p.totalCost);
-    return REST_RESULT;
-  });
+  orch.runPostTier1Tier3Post = vi.fn(async (p: { totalCost: number; completedCount: number; batches: readonly unknown[] }) => ({
+    totalCost: p.totalCost + 0.1 * p.batches.length,
+    completedCount: p.completedCount + p.batches.length,
+  }));
+  orch.runFinalCompletion = vi.fn(async () => REST_RESULT);
 }
 
 // Reconcilie le contrat de coût F3 (single-pass: pré-Tier1 + costIncurred ; v3: global + 0) et
@@ -391,10 +393,11 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
   });
 });
 
-// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — d-5 ajoute tier2-sector :
+// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — d-6 ajoute tier3-post PER-AGENT :
 // 1 tier0-facts · 2 tier0-thesis · 3 tier1-a-agents · 4 tier1-a-finalize · 5 tier1-b-agents ·
 // 6 tier1-b-finalize · 7 tier1-c-agents · 8 tier1-c-reflexion-0 · 9 tier1-c-finalize ·
-// 10 tier1-d-agents · 11 tier1-d-finalize · 12 post-tier1-glue · 13 tier3-pre · 14 tier2-sector · 15 post-tier1.
+// 10 tier1-d-agents · 11 tier1-d-finalize · 12 post-tier1-glue · 13 tier3-pre · 14 tier2-sector ·
+// 15 tier3-post-0 · 16 tier3-post-1 · 17 tier3-post-2 · 18 post-tier1.
 describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydrate mid-Tier1)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -496,6 +499,24 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     // CARRY (d-5) : le snapshot tier2-sector porte un vc non-null → pas de rebuild au resume (tier2-sector
     // mémoïsé not-done ; ensureRehydrated reconstruit l'état post-tier2-sector ; le terminal RestAfterTier2Sector
     // tourne frais et retourne REST_RESULT). Force le chemin !tier2SectorBodyRan → ensureRehydrated.
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-tier3-post-mid — kill APRÈS tier3-post-0 (step 15, 1er agent) → rehydrate, tier3-post-1/2 + terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(15);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // CARRY (d-6) : kill EN COURS du post-batch per-agent (après le 1er des 3 batches). Le snapshot
+    // tier3-post (lastUnit partagé) porte vc non-null → pas de rebuild ; les steps tier3-post-1/2 + le
+    // terminal final tournent frais. Force le chemin !postBodyRan → ensureRehydrated.
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-tier3-post-all — kill APRÈS tier3-post-2 (step 17, dernier agent) → rehydrate, terminal final frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(17);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // CARRY (d-6) : kill après TOUS les batches tier3-post ; au resume seul le terminal final tourne frais.
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 });
