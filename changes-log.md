@@ -1,6 +1,180 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-02 — Durabilité Deep Dive d-3-1 (DTO FullAnalysisStepState v4 — carry intra-Tier1, additif byte-inert)
+
+### Contexte
+1re micro-étape d'implémentation de d-3 (split FIN Tier1 : step `agents` → 1 step reflexion par agent low-conf → step `phase-finalize`). ADDITIVE/byte-inerte AVANT toute restructuration de `runTier1Phase`. Établit le carry byte-safe exigé par Codex au design-gate d-3.
+
+### Changements (commit `5e97d83`, 3 source + 5 tests)
+- `full-analysis-step-state.ts` : `FULL_ANALYSIS_STEP_STATE_VERSION` 3→4 ; +2 blobs TABLEAU requis `allValidations` (AgentFactValidation[] accumulées, lues cumulativement par `reformatFactStoreWithValidations`) + `needsReflect` (liste ORDONNÉE d'agents low-conf, PORTÉE et non re-dérivée car la reflexion mute allResults) ; ajoutés à `REQUIRED_ARRAY_BLOBS` ; doc « VERSION 4 ».
+- `full-analysis-step-state-bridge.ts` : `BuildStepStateInput`/`RehydratedState` +2 champs ; `buildStepState` normalise via `toWireArray` ; `rehydrateContext` porte via `cloneWire` SANS reviver (AgentFactValidation = primitifs seuls, AUCUNE Date — vérifié current-facts.ts:625 + les 5 extracteurs finding-extractor.ts:1296+ ; correctedValue = number).
+- `index.ts` : snapshot tier0-thesis (~3437) passe `allValidations:[]`/`needsReflect:[]`.
+- Findings intra-phase accumulés : RÉUTILISENT le champ `tier1Findings` existant (runPostTier1Aggregation:1983 renvoie `phasesResult.allFindings` inchangé → même tableau ; applyReflexion:5040 mute allResults/previousResults, pas allFindings).
+- Tests : 5 helpers/call-sites MAJ (makeValidState ×2, makeStepState, build, step-runner) + version 3→4 + 4 nouveaux tests v4.
+
+### Vérif
+tsc=0 (appel séparé relu) ; vitest unit 4228/2skip (baseline 4224 +4) ; golden full-analysis-stepwise-graph (E1 + E2-par-frontière) VERTS ; routing (graph v3 throws) VERT. Gated APPROVE Codex (thread #7 `019e8713-53c3-7a32-b7da-72b06891a32b` ; #6 expiré). NON poussé.
+
+### Reste (byte-CRITIQUE, ARRÊT DE SCOPE — session fraîche)
+Restructurer `runTier1Phase` (PARTAGÉE OFF/ON) en sous-units résumables (agents / reflexion-par-agent / phase-finalize), puis câblage v3 stepwise + bump `STEPWISE_GRAPH_VERSION` 2→3 + routing v3. ⚠️ golden graph stube `runFullAnalysisPostThesis` → ne couvre PAS runTier1Phase ; byte-equiv via tsc + `tier1-phase-checkpoint.guard.test.ts` + raisonnement + Codex. Puis d-4..d-7, D.6, F, G.
+
+---
+## 2026-06-02 — Durabilité Deep Dive d-3 design-gate (mesure wall-clock Tier1 + granularité Option 1 APPROVE Codex)
+
+### Contexte
+Étape 1 OBLIGATOIRE de d-3 = MESURER le wall-clock Tier1 réel AVANT de coder, puis soumettre la granularité à Codex. AUCUN code écrit (arrêt de scope byte-critique avant implémentation). Doc seul.
+
+### Mesure (LLMCallLog, fenêtres start→start par frontière d'agent ; full_analysis COMPLETED topologie complète)
+T1-A 102-216s · T1-B 92-173s · T1-C 121-189s · **région Phase-D (agents+reflexion→tier3-pre) 435-475s** · **post-tier1-glue ENTIER 785-883s**. Contrainte `inngest/route.ts:13 maxDuration=300` (test-asserté).
+
+### Composition vérifiée par code
+Buster = la boucle REFLEXION SÉQUENTIELLE par agent low-conf (`reflexion.ts:491`, 2 iter × 2 appels) DANS `runTier1Phase` ; le « tail » ~28 appels `unknown` post-Phase-D = reflexion de Phase D (7 agents). Consensus global = **0 appel LLM** (`detectContradictions` heuristique `consensus-engine.ts:901-984` ; `debates=0`).
+
+### Décision (Codex APPROVE, thread #6 `019e86ea-85ea-79d2-972b-b88264abcb3d`)
+**Option 1, split FIN** : par phase → step `agents` → reflexion **PAR AGENT** (pas batch) → step `phase-finalize`. Graphe **v3**. Carry byte-safe enrichi (allValidations, phaseFindings, liste ordonnée needsReflect, allResults/previousResults/factStore/verificationContext, coût, transitionCount ; NE PAS re-extraire les findings). Option 2 (relever maxDuration) REFUSÉE par le gate (dimension plan/coût Vercel → décision Sacha).
+
+### Vérif
+Aucune (doc seul, pas de code). Working tree : seuls PLAN-DEEPDIVE-DURABILITY.md + changes-log.md modifiés.
+
+### Reste
+Implémenter d-3 (byte-CRITIQUE, session fraîche) : restructurer `runTier1Phase` en sous-unités résumables, graphe v3, golden E1+E2-par-frontière à chaque commit, 1 micro-étape = 1 commit = 1 gate. Puis d-4..d-7, D.6, F, G.
+
+---
+## 2026-06-02 — Durabilité Deep Dive d-2b (1re vraie unité du split stepwise, graphe v2)
+
+### Contexte
+d-2b = 1re vraie unité durable (byte-CRITIQUE, design split d-2..k APPROVE). Décomposé en 5 micro-commits gatés Codex (thread `019e853b-9b84-7f51-ae9d-a15544e372db` ; thread #4 `019e8519` expiré → rouvert). Sur `fix/thesis-gate-guard`, NON poussé. Graphe v2 DORMANT en prod (flag DEEP_DIVE_STEPWISE OFF → OFF-strict → runFullAnalysisPipeline) ; activable preview.
+
+### Modifications (5 commits, tous gated APPROVE)
+- **d-2b-1 (`1bb6b9b`)** : extraction byte-inerte du tail post-thèse de runFullAnalysisPipeline → `runFullAnalysisPostThesis` (séquence partagée single-pass + stepwise « rest », pas de drift). Gate Codex 1 REQUEST_CHANGES (coût stale au catch terminal sur échec post-thèse : le tail mutait son `totalCost` local passé par valeur) → fix : callback `reportTotalCost` dans un `finally` remonte le coût courant au scope du catch (byte-équiv sur succès/early-return/exception).
+- **d-2b-2 (`fb8a0fe`)** : bridge `buildTier0FactsWire`/`applyTier0FactsWire` (DTO « step de sortie » de runTier0Step : factStore+factStoreFormatted+founderResponses+totalCost/completedCount+allResults["fact-extractor"] ; factStore ravivé = single-pass, factExtractorResult wire = cohérent rehydrateContext). +4 tests.
+- **d-2b-3 (`2576599`)** : handler d'échec terminal extrait BYTE-INERT → `failFullAnalysis` (partagé pipeline + stepwise, pas de drift).
+- **d-2b-4 (`a385cf0`)** : `runFullAnalysisStepwise` (3 unités : `tier0-facts` step de SORTIE [DTO appliqué au memo hit, pas de read snapshot] → `tier0-thesis` 1er SNAPSHOT → `rest` terminal transitoire via runTerminalStepwiseDriver(stepId='rest')). Modèle B (run sain === single-pass ; REHYDRATE UNIQUE au memo hit de tier0-thesis : rehydrateContext + restoreFromStepState ; allResults remplacé EN PLACE car lu via init). NON câblé (routing v2 throw encore). Golden `full-analysis-stepwise-graph.test.ts` (3) : E1 (pipeline===Inline===Fake) + E2-par-frontière (kill après tier0-facts → re-run frais ; kill après tier0-thesis → rehydrate ; snapshot 1 write). Résiduels D.6 : thesisOutput=null au rehydrate (stopAfterThesis=false), extractedData edge hasContextSeed.
+- **d-2b-5 (`3f8adf5`)** : câblage routing + bump `STEPWISE_GRAPH_VERSION` 1→2. runFullAnalysis : **OFF strict** (`!stepwise` → runFullAnalysisPipeline direct, byte-inert prod) ; ON `undefined|1` → driver 1-step (in-flight sticky) ; ON `2` → runFullAnalysisStepwise (garde `stopAfterThesis` → single-pass = invariant « v2 ∌ stopAfterThesis ») ; version inconnue → LÈVE. route.ts stampe désormais 2 (OFF l'ignore).
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, appel séparé, AVANT chaque commit) ; vitest unit **4224 passés / 2 skipped (293 fichiers)** ; golden d-2b E1+E2-par-frontière verts.
+
+### Reste
+**d-3** `post-tier1-glue` (Tier1 ENTIER hors « rest » ; **MESURER le wall-clock Tier1 réel d'abord** — si >300s, split plus fin par phase A/B/C/D) → **d-4** tier3-pre → **d-5** tier2-sector → **d-6** tier3-post → **d-7** terminal-final-completion (chaque frontière : golden E1+E2-par-frontière). Puis **D.6** (activation version preview→prod + go/no-go FactEvent réel), **F** (watchdog recalibration), **G** (unification resume).
+
+---
+## 2026-06-02 — Durabilité Deep Dive d-2a (préparation byte-inert du split)
+
+### Contexte
+1er pas du split stepwise (design APPROVE Codex). ADDITIF byte-inert : prépare d-2b SANS changer le runtime (flag DEEP_DIVE_STEPWISE OFF en prod ; aucun snapshot DTO écrit/lu au runtime aujourd'hui). Sur `fix/thesis-gate-guard`, NON poussé. Gate Codex APPROVE (nouveau thread `019e8519-5e0d-7670-a92a-4d3c9a93de07` ; threads #1/#2/#3 expirés).
+
+### Modifications (1 commit `270de17`, gated APPROVE — 7 source + 8 test)
+- **DTO v3** (`full-analysis-step-state.ts`) : `FULL_ANALYSIS_STEP_STATE_VERSION` 2→3 + champ requis `tier1Findings` (blob tableau) + `REQUIRED_ARRAY_BLOBS`.
+- **Bridge** (`full-analysis-step-state-bridge.ts`) : `BuildStepStateInput.tier1Findings` (requis) ; `buildStepState` normalise via `toWireArray` ; `rehydrateContext` ravive `tier1Findings[].createdAt` SEUL (unique Date d'un ScoredFinding Tier1 sur le chemin `extractAllFindings` — le `createScoredFinding` local de finding-extractor.ts n'a pas de `benchmarkData.updatedAt`, contrairement au type global) et l'expose en `RehydratedState.tier1Findings` (HORS enrichedContext, comme `allResults`).
+- **Driver** (`full-analysis-driver.ts`) : `runTerminalStepwiseDriver(stepId?)` paramétrable, défaut `'run-analysis'` (back-compat exacte) ; constante `STEPWISE_GRAPH_VERSION=1`.
+- **stepwiseGraphVersion** : stampée inconditionnellement dans `event.data` au dispatch (`route.ts`) ; threadée `AnalysisOptions`/`AdvancedAnalysisOptions` (`types.ts`) → handler `dealAnalysisFunction` branche ON (`inngest.ts`) → `runAnalysis` → **routing EXACT dans `runFullAnalysis`** (`index.ts`, littéraux : `undefined|1`→driver 1-step ; throw sinon). Sticky → un run en vol reprend sur SON graphe.
+- Tests : DTO v3 (version=3, `tier1Findings` requis/round-trip/vide-ok), bridge (createdAt ISO→Date, round-trip build∘rehydrate∘build), driver (stepId défaut vs custom = clé mémo ; `STEPWISE_GRAPH_VERSION`=1), inngest (threading), orchestrateur (routing undefined/1→pas de throw ; 2→throw + pipeline jamais appelé), + 3 helpers makeState/buildStepState mis à jour pour le champ requis.
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, appel séparé, AVANT commit) ; vitest unit **4215 passés / 2 skipped (292 fichiers)** ; golden driver E1/E2 verts.
+
+### Reste
+**d-2b** (1re vraie unité byte-critique : `tier0-facts` step frère + `tier0-thesis` snapshot + `rest` terminal transitoire, active graphe v2) → **d-3..d-7** (split, 1 frontière/commit) → **D.6** (activation version preview→prod + go/no-go FactEvent réel), **F** (watchdog), **G** (unification resume).
+
+---
+## 2026-06-01 — Durabilité Deep Dive D.5d-1 (driver foundation) + design split d-2..k verrouillé
+
+### Contexte
+Conversion du driver stepwise unifié (Modèle B). Tout gaté Codex par micro-étape (nouveau thread `019e84c8-4e63-7583-88f5-f78b96167fc6` ; les threads #1/#2 ont expiré). Sur `fix/thesis-gate-guard`, NON poussé.
+
+### Modifications (5 commits, tous gated APPROVE)
+- **D.5d-1b (`d42d1a5`)** : extraction byte-inert du corps pipeline → `runFullAnalysisPipeline(deal,dealId,onProgress,init)` ; `runFullAnalysis` = bootstrap + délégation. Frontière try/catch FAILED intégralement déplacée. Déplacement net.
+- **D.5d-1c (`e9a75a0`)** : wrapper stepwise « 1 step englobante » (Modèle B). `full-analysis-driver.ts` `runTerminalStepwiseDriver({stepRunner,stepwise,pipeline,loadPersistedResults})` à dépendances injectées (testable sans DB). OFF (InlineStepRunner défaut) byte-inert = liveResult exact ; ON → step durable ; au replay reconstruction depuis enveloppe + `results` relu via `loadResults`. Bridge : `buildTerminalEnvelope` (EXCLUT `results`=allResults, cap 4 MB Inngest) + `reviveTerminalEnvelope` (ravive `earlyWarnings[].timestamp` seul ; analysisDelta string-only). `AnalysisOptions.stepRunner`. Golden driver (E1 Inline===Fake===liveResult ; OFF byte-inert sans relecture ; E2 durabilité = corps NON rejoué + dents Date + results réinjectés ; results manquants→{}). +9 tests.
+- **D.5d-1d (`173c3e1`)** : inngest ON. `dealAnalysisFunction` OFF inchangé (runAnalysis dans `step.run('run-analysis')`) ; ON = runAnalysis HORS step externe + `new InngestStepRunner(step)` (cast Jsonify<T>≡T documenté) + `stepwise:true` + `dispatchEventId`. `route.ts` ajoute `dispatchEventId` à event.data. `initializeFullAnalysisRun` threade `dispatchEventId` → `createAnalysis`. +4 tests inngest.
+- **D.5d-1d fix gate Codex P0 (`494f6d6`)** : (a) **createAnalysis get-or-create TOUT STATUT** (suppr. `status:"RUNNING"`, +`orderBy createdAt asc`) — Inngest ré-invoque la fonction après le step → le bootstrap (hors step) re-tourne quand l'analyse est déjà COMPLETED → matcher RUNNING créait un run zombie + loadResults sur mauvais id. +test reuse-COMPLETED. (b) **mode stepwise STICKY** : décidé au dispatch (`event.data.stepwise`, route.ts), le handler le lit (plus `process.env`) → graphe de steps IMMUABLE par run (flip du flag = nouveaux dispatches seulement).
+
+### Design split d-2..k VERROUILLÉ + APPROVE (Codex, 3 tours design-gate)
+Blueprint ON v2 : OFF strict (`runFullAnalysisPipeline` direct) ; unités `tier0-facts`(step frère, DTO wire de TOUTE la mutation tier0)→`tier0-thesis`(1er snapshot)→early-returns IDs dédiés→`post-tier1-glue`(Tier1 entier transitoire mesuré, `tier1Findings` porté)→`tier3-pre`→`tier2-sector`→`tier3-post`→terminal-final durable. 5 locks : `stepwiseGraphVersion` EXACT par graphe ; tier0-facts = step de sortie (pas snapshot, pas de readLatestStepwiseSnapshot au memo hit) ; DTO tier0-facts = toute la mutation runTier0Step ; `tier1Findings` DTO v3 + reviver createdAt (findings ids crypto.randomUUID NON re-dérivables, réutilisés consensus Tier2) ; `runTerminalStepwiseDriver(stepId)` paramétrable. Rehydrate UNIQUE. Détail complet dans `PLAN-DEEPDIVE-DURABILITY.md` §5-D.
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, appel séparé, AVANT chaque commit) ; vitest unit **4205 passés / 2 skipped (292 fichiers)** ; orchestrateur+orchestration **242**.
+
+### Reste
+**d-2a** (additif : DTO v3 + stepId paramétrable + stepwiseGraphVersion) puis **d-2b..d-7** (split byte-critique 1 frontière/commit), **D.6** (activation version preview→prod + go/no-go FactEvent réel), **F** (watchdog), **G** (unification resume).
+
+---
+## 2026-06-01 — Durabilité Deep Dive D.5c + design D.5d + D.5d-1a (harness infra + fondations driver)
+
+### Contexte
+Suite de D.5b. **D.5c** : infrastructure du golden harness. **Design D.5d** verrouillé avec Codex (4 tours). **D.5d-1a** : fondations du driver. Tout ADDITIF/byte-inert (driver pas encore câblé). Gate Codex par micro-étape (thread #2 `019e8433-…`).
+
+### Modifications (sur `fix/thesis-gate-guard`, NON poussé, gated APPROVE)
+- **D.5c (`5735e3a`)** : `step-runner.ts` — `StepRunner` interface + `InlineStepRunner` (OFF, run=fn()) + `InngestStepRunner` (délègue step.run) + `FakeStepRunner` (mémoïse JSON + round-trip wire à chaque run + kill/resume via startPass/FakeStepKill + forgetStep/executedIds/memoHits) + `runStepwiseUntilDone`. 10 tests : E1 (Inline===Fake), E2 (kill/resume), négatif à dents (pipeline Date-dependent diverge), intégration bridge build→wire→rehydrate→restore.
+- **Design D.5d v4** (Codex, 4 REQUEST_CHANGES→APPROVE) : **modèle B** (rehydrate seulement au replay `!bodyRan` → E1 structurel) ; driver UNIFIÉ (Inline OFF byte-inert / Inngest ON hors `step.run('run-analysis')` externe) ; bootstrap toujours-exécuté non mémoïsé (stateMachine.start() dedans) ; unités durables `tier0-facts`→`tier0-thesis`→tier1-a/b/c/d→post-tier1-glue→tier3-pre→tier2-sector→tier3-post ; `terminalResult` wire pour early-returns ; `transitionCount` cumulatif (summary `transitions` E2===E1) ; persistStateTransition = télémétrie hors invariant (doublons replay = résiduel D.6). Golden d-1 scopé au niveau DRIVER (helpers stubés ; E1 full-pipeline réel = go/no-go preview D.6).
+- **D.5d-1a (`b3d3129`)** : DTO `full-analysis-step-state.ts` +`tier0-facts` (FullAnalysisUnit, isole le `createFactEventsBatch` non idempotent) +`terminalResult: Record|null` +`transitionCount: number` (validation bornée). Bridge : build/rehydrate portent les 2 nouveaux champs. State machine `state-machine.ts` : `restoredTransitionBase`, `getTransitionCount()` = base+length (CUMULATIF), `getSummary().transitions` via le getter, `restoreFromStepState` pose la base + reset transitions ; `UNIT_TO_STATE['tier0-facts']=INITIALIZING`. 13 nouveaux tests.
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, séparé, avant chaque commit) ; vitest orchestration+orchestrateur **233 passés**.
+
+### Reste
+**D.5d-1** (extraction byte-inert du corps pipeline + wrapper stepwise UNE step + inngest ON + golden driver), **d-2..k** (split 1 frontière/commit), **D.6** (activation + go/no-go FactEvent/E1-réel), **F** (watchdog), **G** (resume unification).
+
+---
+## 2026-06-01 — Durabilité Deep Dive D.5b : contrat d'état complet (DTO v2 + pont live↔wire + restore)
+
+### Contexte
+Suite de D.5a. **D.5b** construit le contrat d'état porté entre steps durables : le DTO `FullAnalysisStepState` v2 (contexte complet), `buildStepState` (live→wire), `rehydrateContext` (wire→live, revive Date) et `AnalysisStateMachine.restoreFromStepState`. ADDITIF/byte-inert (rien câblé dans `runFullAnalysis` ; câblage = D.5c golden harness + D.5d). Audit exhaustif des champs (sous-agents) + **design gaté Codex à part** (1 REQUEST_CHANGES→APPROVE). Stratégie **CARRY > REBUILD** : tout ce qui finit dans un prompt ou dépend du wall-clock/DB mutable est PORTÉ (vérifié `evidenceLedger.generatedAt = new Date()` wall-clock → rebuild driverait les bytes de prompt). 4 commits, chacun gated Codex APPROVE :
+
+### Modifications (sur `fix/thesis-gate-guard`, NON poussé)
+- **b-1 (`9bcabb0`)** : `full-analysis-step-state.ts` v1→v2 (`version` 2). ~20 champs wire ajoutés (deal snapshot, scopedDocuments, evidenceContext, evidenceTodayIso, factStore, thesis, contextEngine, evidenceLedger(+Formatted), extractedData, deckCoherenceReport, baPreferences, dealTerms, dealStructure, conditionsAnalystMode, founderResponses, previousAnalysisQuestions, analysisBinding, collectedWarnings, startTimeMs). Validation rendue **table-driven** (REQUIRED/NULLABLE × OBJECT/ARRAY + scalaires + NULLABLE_STRING). 52 tests.
+- **b-2 (`e9c0ffb`)** : nouveau `full-analysis-step-state-bridge.ts` — `buildStepState(live→DTO)` via **normalizer STRICT** `normalizeToWire` (Date→ISO ; **LÈVE** sur NaN/Infinity/Map/Set/instance-de-classe/function/symbol/bigint avec chemin fautif). Gate Codex (1er REQUEST_CHANGES) : un `JSON.parse(JSON.stringify())` aveugle convertissait NaN→null et Map/Set→{} silencieusement. 15 tests.
+- **b-3 (`0ec00b4`)** : `rehydrateContext(DTO→live)` — revivers Date stricts (rejet `Invalid Date`) pour deal (createdAt/updatedAt/founders/**documents** — gate Codex : la relation `documents` portée par `{...deal}` dans `buildCanonicalRuntimeDeal`), scopedDocuments, factStore+eventHistory, evidenceContext (profond), collectedWarnings, evidenceToday. N'appelle PAS `attachEvidenceLedger` (evidenceLedger CARRY). Test clé : **build∘rehydrate∘build === build** (wire stable + revive complet). 22 tests.
+- **b-4 (`b801e06`)** : `AnalysisStateMachine.restoreFromStepState(state, opts?)` — `UNIT_TO_STATE` (init→INITIALIZING … tier2-sector/tier3-post→SYNTHESIZING pour que `complete()` reste une transition valide) ; dérive completed/failed/results/findings/pending/startTime du **set recordable** (config.agents ∪ sectorExpert), calqué sur `recordAgentComplete`/`recordAgentFailed`. 7 tests.
+
+### Vérif
+`tsc --noEmit` exit 0 (relu, appel séparé, avant chaque commit) ; vitest orchestration+orchestrateur **220 passés**.
+
+### Reste
+**D.5c** (golden harness : `StepRunner`/`InngestStepRunner`/`FakeStepRunner` + byte-equivalence single-pass vs stepwise + kill/resume + négatif), **D.5d..** (conversion par unité + câblage write/rehydrate), **D.6** (activation), **F** (watchdog), **G** (resume unification).
+
+---
+## 2026-06-01 — Durabilité Deep Dive D.5a : driver stepwise fondation (flag + conditionnement checkpoint)
+
+### Contexte
+Suite du chantier durabilité Deep Dive (`PLAN-DEEPDIVE-DURABILITY.md`). Après la couche préconditions idempotence (D.1→D.4c, gatées Codex APPROVE), **D.5a** pose la FONDATION du driver stepwise : le flag `DEEP_DIVE_STEPWISE` + le conditionnement D.4c-3b qui garantit qu'en mode stepwise **aucun checkpoint legacy n'est émis** (les snapshots durables `STEPWISE:*` ne sont câblés qu'en D.5d). Gate Codex MCP read-only `xhigh` par micro-étape — thread #1 `019e82e8-…` expiré → rouvert thread #2 `019e8433-…` (`.codex-gate-thread`).
+
+### Modifications (1 commit code `1fa3dbf` sur `fix/thesis-gate-guard`, NON poussé, gated APPROVE 1er tour)
+- **`src/agents/orchestrator/types.ts`** : champ `stepwise?: boolean` sur `AnalysisOptions` + `AdvancedAnalysisOptions`.
+- **`src/agents/orchestrator/index.ts`** : threading **explicite** de `stepwise` (orchestrateur singleton + concurrency 3 → pas d'état d'instance, sinon course) de `AnalysisOptions` → `advancedOptions` → `initializeFullAnalysisRun` → `FullAnalysisRunInit` → `runFullAnalysis` → 3 helpers (`runPostTier1Aggregation`, `runTier3PreTier2Batch`, `runTier2ConsensusReflexionStep`) + `persistTierCheckpoint` + `runFinalCompletion`. Param `stepwise` **REQUIS** → `tsc=0` prouve que tous les call-sites le passent. Conditionnement des 3 sources de checkpoint legacy : (a) state machine `enableCheckpointing: !stepwise` (coupe périodique + transition + flush, ET le checkpoint FAILED via `stateMachine.fail()`), (b) `persistTierCheckpoint` early-return `if (stepwise) return;` (4 frontières ANALYZING), (c) `runFinalCompletion` met le `saveCheckpoint("COMPLETED")` sous `if (!stepwise)` — `completeAnalysis` (complétion canonique) conservée hors garde.
+- **`src/lib/inngest.ts`** : `dealAnalysisFunction` lit `runStepwise = process.env.DEEP_DIVE_STEPWISE === "1" && type === "full_analysis"`. OFF (défaut) → spread `...{}` (l'objet passé à `runAnalysis` reste `{dealId,type,enableTrace}` runtime-identique). ON → ajoute `stepwise:true` (stub single-pass ; le découpage N-steps vient en D.5d). Structure `step.run`/try-catch/compensate/refund inchangée.
+- **`src/agents/orchestrator/__tests__/full-analysis-stepwise.test.ts`** (nouveau, 4 tests, pattern `cache-behavior`) : `persistTierCheckpoint` no-op si stepwise / écrit ANALYZING sinon ; `runFinalCompletion` sans `saveCheckpoint("COMPLETED")` si stepwise (mais `completeAnalysis` appelé) / avec sinon.
+
+### Vérif
+`tsc --noEmit` **exit 0** (lu en appel séparé avant commit) ; vitest orchestrateur **90/90** (86 baseline + 4) ; suite unit complète **4138 passés / 2 skipped**. Invariant « zéro checkpoint legacy en stepwise » validé Codex sur chemins succès ET échec ; byte-inertness OFF confirmée empiriquement (86 tests existants verts inchangés).
+
+### Reste
+**D.5b** (audit des champs lus → DTO `FullAnalysisStepState` v2 + build/rehydrate + `restoreFromStepState`), **D.5c** (golden harness `FakeStepRunner` — c'est là que `StepRunner`, différé en D.5a, arrive), **D.5d..** (conversion par agent/unit + `writeStepwiseSnapshot`, byte-equiv re-vérifiée), **D.6** (activation preview→prod + go/no-go FactEvent).
+
+---
+## 2026-06-01 — Durabilité Deep Dive Phase 1 : extraction byte-inert C.3g→C.3m + dette doc
+
+### Contexte
+Suite du chantier durabilité Deep Dive (split `runFullAnalysis` en unités durables, voir `PLAN-DEEPDIVE-DURABILITY.md`). Objectif Phase 1 : finir de transformer `runFullAnalysis` (orchestrator/index.ts, ~5300 l.) en **pur séquenceur** de helpers, par extractions byte-inert (flag absent = comportement identique), avant le câblage Inngest stepwise (phases ultérieures). Boucle autonome avec **gate Codex MCP read-only par micro-étape** (thread persistant `019e82e8-…`, `.codex-gate-thread`).
+
+### Modifications (7 commits code byte-inert sur `fix/thesis-gate-guard`, NON poussé)
+Chaque commit : 1 helper extrait + bloc inline remplacé par l'appel, `tsc --noEmit` = 0 (lu avant commit, appel séparé) + `vitest src/agents/orchestrator` 75/75 + audit Codex `APPROVE`.
+- **C.3g** `runRedFlagConsolidationStep` (STEP 4.6 consolidation red-flags) — `1051981`
+- **C.3h** `runSynthesisSetupStep` (STEP 5 setup synthèse, retourne `{ tier3AgentMap }`) — `1e6264f`
+- **C.3i** `runTier3PreTier2Batch` (cost-check + batch Tier3 pré-Tier2 + checkpoint) — `bddc0be`
+- **C.3j** `runTier2SectorStep` (STEP 6 expert sectoriel Tier 2) — `39b9c69`
+- **C.3k** `runTier2ConsensusReflexionStep` (STEP 6.5 consensus+reflexion Tier 2 + checkpoint) — `b62880e`
+- **C.3l** `runTier3PostTier2Batch` (STEP 7 synthèse finale Tier 3 + persist thesis-reconciler) — `3ba1b3f`
+- **C.3m** `runFinalCompletion` (complétion terminale ; `catch` final reste inline dans `runFullAnalysis`) — `e274d24`
+
+### Doc (commit docs-only séparé, jamais mêlé au refactor)
+`PLAN-DEEPDIVE-DURABILITY.md` : statut C.1→C.3m FAIT + 4 nits P2 du 1er audit Codex corrigés (§66 `saveCheckpoint`/`loadLatestCheckpoint` → réels `writeStepwiseSnapshot`/`readLatestStepwiseSnapshot` via `analysisCheckpoint.create/findFirst` direct, qui évitent le merge `Analysis.results` de `saveCheckpoint` ; HEAD périmé ; ajout `runPostTier1Aggregation` à la liste ; mutations `previousResults` explicitées). Cette entrée changes-log.
+
+### Reste (hors Phase 1)
+Phase D = idempotence (skip agent avant side-effect ; upsert `persistDebateRecord` par `contradictionId` ; delete+insert `persistScoredFindings`) + câblage Inngest stepwise sous flag `DEEP_DIVE_STEPWISE` — comportemental, touche flag/Inngest → exige design + greenlight explicite. Caveat connu : branche `stopAfterThesis` reste inline dans `runFullAnalysis` (préexistante, hors chemin Deep Dive complet).
+
+---
 ## 2026-05-31 — Fix régression : deadlock dispatch après retrait du gate (guards.ts)
 
 ### Contexte

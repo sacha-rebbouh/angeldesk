@@ -1,4 +1,5 @@
 import type { AgentResult } from "../types";
+import type { StepRunner } from "./step-runner";
 
 // Base agents registry type
 export type BaseAgentName = "red-flag-detector" | "document-extractor" | "deal-scorer";
@@ -124,6 +125,39 @@ export interface AnalysisOptions {
    * end-to-end (comportement par defaut du lancement).
    */
   stopAfterThesis?: boolean;
+  /**
+   * D.5a — exécution durable « stepwise » du Deep Dive. Quand true, le pipeline
+   * full_analysis n'émet AUCUN checkpoint legacy (state machine enableCheckpointing:false,
+   * persistTierCheckpoint no-op, runFinalCompletion sans saveCheckpoint COMPLETED) ;
+   * l'état durable passe par les snapshots STEPWISE:* (cf. full-analysis-snapshot).
+   * Absent/false = comportement actuel exact. Posé par dealAnalysisFunction sous le flag
+   * DEEP_DIVE_STEPWISE. Ignoré hors full_analysis.
+   */
+  stepwise?: boolean;
+  /**
+   * D.5d-1c — Runner d'unité durable du driver stepwise (Modèle B). Objet IN-PROCESS
+   * (jamais sérialisé). Absent → InlineStepRunner (single-pass = chemin OFF byte-inert).
+   * dealAnalysisFunction passe un InngestStepRunner sous le flag DEEP_DIVE_STEPWISE
+   * (D.5d-1d). Ignoré hors full_analysis.
+   */
+  stepRunner?: StepRunner;
+  /**
+   * D.5d-1d — Clé d'idempotence de l'init durable (= id de l'event Inngest de dispatch,
+   * `analysis:deal.analyze:${dealId}:${analysisAttemptId}`). En mode stepwise le bootstrap
+   * tourne HORS step → re-tourne au replay Inngest ; createAnalysis (get-or-create par
+   * dispatchEventId, D.4b) réutilise alors l'Analysis RUNNING du même run → `analysis.id`
+   * STABLE (la reconstruction `loadResults(analysis.id)` lit le bon run, gate Codex 1c#4).
+   * Absent → createAnalysis crée comme avant (chemin OFF byte-inert).
+   */
+  dispatchEventId?: string;
+  /**
+   * d-2a — Version du graphe de steps stepwise, STICKY (stampée au dispatch, route.ts, =
+   * STEPWISE_GRAPH_VERSION). Lue par runFullAnalysis pour router EXACTEMENT sur l'implémentation
+   * de graphe correspondante : `undefined|1` → driver « 1 step englobante » (D.5d-1c) ; chaque
+   * version future aura sa branche (d-2b+). Threadée depuis dealAnalysisFunction en mode
+   * stepwise. Absent → routing `undefined` (driver 1-step). Ignoré hors full_analysis.
+   */
+  stepwiseGraphVersion?: number;
 }
 
 export interface AnalysisResult {
@@ -165,6 +199,12 @@ export interface AdvancedAnalysisOptions {
   isUpdate?: boolean;
   /** Re-extraction de these — passed-through from AnalysisOptions (stop apres thesis, mode thesis_only) */
   stopAfterThesis?: boolean;
+  /** D.5a — passe le mode stepwise depuis AnalysisOptions (cf. AnalysisOptions.stepwise). */
+  stepwise?: boolean;
+  /** D.5d-1d — clé d'idempotence init durable (cf. AnalysisOptions.dispatchEventId). */
+  dispatchEventId?: string;
+  /** d-2a — version du graphe de steps stepwise (cf. AnalysisOptions.stepwiseGraphVersion). */
+  stepwiseGraphVersion?: number;
 }
 
 // Tier 1 agent names (12 agents — exit-strategist retiré, doctrine anti-oraculaire pas de projection)

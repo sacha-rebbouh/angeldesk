@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import type { ScoredFinding } from "@/scoring/types";
 import type { AnalysisType } from "./types";
+import { STEPWISE_STATE_PREFIX } from "./full-analysis-snapshot";
 
 /**
  * Log a persistence error in ALL environments.
@@ -74,6 +75,12 @@ export async function createAnalysis(params: {
   documentIds?: string[];
   corpusSnapshotId?: string | null;
   extractionRunIds?: string[];
+  /**
+   * Phase D — id de l'événement Inngest dispatchant ce run. Quand fourni, rend la
+   * création idempotente (get-or-create) : un retry de l'unit `init` réutilise l'analyse
+   * RUNNING du même run. Non fourni (chemin actuel) ⇒ comportement inchangé (garde + create).
+   */
+  dispatchEventId?: string | null;
 }) {
   const docIds = params.documentIds ?? [];
   let corpusSnapshotId = params.corpusSnapshotId ?? null;
@@ -106,6 +113,27 @@ export async function createAnalysis(params: {
     await tx.$executeRawUnsafe(`SELECT pg_advisory_xact_lock(${hashForLock})`);
 
     if (params.type === "full_analysis") {
+      // Phase D — idempotence de l'unit `init` : si une analyse du MÊME run (même
+      // dispatchEventId) existe déjà, on la RÉUTILISE au lieu de buter sur la garde
+      // "1 full_analysis RUNNING / deal" ci-dessous OU de créer un doublon.
+      // D.5d-1d (gate Codex P0) : matcher TOUT STATUT, pas seulement RUNNING. En stepwise
+      // le bootstrap tourne HORS step → re-tourne à CHAQUE ré-invocation Inngest, y compris
+      // APRÈS que le body a COMPLÉTÉ l'analyse (status COMPLETED). Matcher seulement RUNNING
+      // créait un 2e run (zombie) + faisait lire `loadResults` sur le mauvais id au replay.
+      // dispatchEventId est unique par dispatch (id de l'event) → exactement une analyse à
+      // réutiliser (la plus ancienne par sécurité), quel que soit son statut → analysis.id
+      // stable, loadResults lit le bon run.
+      if (params.dispatchEventId) {
+        const sameRun = await tx.analysis.findFirst({
+          where: {
+            dealId: params.dealId,
+            dispatchEventId: params.dispatchEventId,
+          },
+          orderBy: { createdAt: "asc" },
+        });
+        if (sameRun) return sameRun;
+      }
+
       const runningAnalysis = await tx.analysis.findFirst({
         where: {
           dealId: params.dealId,
@@ -134,6 +162,7 @@ export async function createAnalysis(params: {
         completedAgents: 0,
         startedAt: new Date(),
         mode: params.mode,
+        dispatchEventId: params.dispatchEventId ?? null,
         corpusSnapshotId,
         documents: docIds.length > 0
           ? { create: docIds.map((documentId) => ({ documentId })) }
@@ -344,7 +373,16 @@ export async function persistScoredFindings(
       evidence: JSON.parse(JSON.stringify(finding.evidence ?? [])),
     }));
 
-    await prisma.scoredFinding.createMany({ data });
+    // Phase D — replay-safe : delete+insert transactionnel par (analysisId, agentName).
+    // ScoredFinding n'a AUCUNE contrainte unique → un createMany seul double-écrit sur le
+    // retry d'un step. Le deleteMany préalable (scopé à l'agent) rend l'opération idempotente :
+    // un replay produit le même set final sans doublon. Sur run neuf, le deleteMany ne
+    // supprime rien ⇒ équivalent à l'ancien createMany. Atomique via $transaction (pas de
+    // fenêtre "supprimé mais pas réinséré" en cas de crash entre les deux).
+    await prisma.$transaction([
+      prisma.scoredFinding.deleteMany({ where: { analysisId, agentName } }),
+      prisma.scoredFinding.createMany({ data }),
+    ]);
   } catch (error) {
     logPersistenceError("persistScoredFindings", error, {
       analysisId, agentName, findingsCount: findings.length,
@@ -375,24 +413,34 @@ export async function persistDebateRecord(
   }
 ): Promise<void> {
   try {
-    await prisma.debateRecord.create({
-      data: {
-        analysisId,
-        contradictionId: debateResult.contradiction.id,
-        topic: debateResult.contradiction.topic,
-        severity: debateResult.contradiction.severity,
-        participants: (debateResult.contradiction.claims as { agentName: string }[]).map(
-          (c) => c.agentName
-        ),
-        claims: debateResult.contradiction.claims as Prisma.InputJsonValue,
-        rounds: debateResult.rounds as Prisma.InputJsonValue,
-        status: debateResult.contradiction.status,
-        resolvedBy: debateResult.resolution.resolvedBy,
-        winner: debateResult.resolution.winner ?? null,
-        resolution: debateResult.resolution.resolution,
-        resolutionConfidence: debateResult.resolution.confidence.score,
-        resolvedAt: new Date(),
-      },
+    // Phase D — précondition replay-safety : create → upsert par contradictionId (@unique).
+    // Dédupe le re-persist du MÊME objet contradiction (retry de step, ou contradiction portée
+    // par le StepState snapshot — cf. blocker #1). NE neutralise PAS une re-détection à ids
+    // régénérés (consensus-engine.ts:922 / score-aggregator.ts:409 = crypto.randomUUID) : la
+    // réutilisation des mêmes ids au replay est garantie par le carry des contradictions dans
+    // le snapshot (étape D ultérieure), pas ici. Ids aléatoires non collisionnants ⇒ upsert ≡
+    // create sur run neuf (branche create à chaque fois).
+    const data: Prisma.DebateRecordUncheckedCreateInput = {
+      analysisId,
+      contradictionId: debateResult.contradiction.id,
+      topic: debateResult.contradiction.topic,
+      severity: debateResult.contradiction.severity,
+      participants: (debateResult.contradiction.claims as { agentName: string }[]).map(
+        (c) => c.agentName
+      ),
+      claims: debateResult.contradiction.claims as Prisma.InputJsonValue,
+      rounds: debateResult.rounds as Prisma.InputJsonValue,
+      status: debateResult.contradiction.status,
+      resolvedBy: debateResult.resolution.resolvedBy,
+      winner: debateResult.resolution.winner ?? null,
+      resolution: debateResult.resolution.resolution,
+      resolutionConfidence: debateResult.resolution.confidence.score,
+      resolvedAt: new Date(),
+    };
+    await prisma.debateRecord.upsert({
+      where: { contradictionId: debateResult.contradiction.id },
+      create: data,
+      update: data,
     });
   } catch (error) {
     logPersistenceError("persistDebateRecord", error, {
@@ -918,9 +966,13 @@ export async function loadLatestCheckpoint(
   analysisId: string
 ): Promise<CheckpointData | null> {
   try {
-    // Get latest checkpoint (even FAILED ones have valid completedAgents/results data)
+    // Get latest checkpoint (even FAILED ones have valid completedAgents/results data).
+    // Phase D — EXCLUT les checkpoints stepwise `STEPWISE:*` : leur `results` est un
+    // FullAnalysisStepState (pas un set de résultats d'agents) et leur `state` n'est pas
+    // un AnalysisState valide. Le resume legacy + restoreFromDb ne doivent JAMAIS les
+    // interpréter (le driver stepwise lit via readLatestStepwiseSnapshot, pas ici).
     const checkpoint = await prisma.analysisCheckpoint.findFirst({
-      where: { analysisId },
+      where: { analysisId, state: { not: { startsWith: STEPWISE_STATE_PREFIX } } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
 
@@ -984,9 +1036,13 @@ export async function findInterruptedAnalyses(userId?: string): Promise<
     // BATCH FETCH: Get latest checkpoints for all analyses in one query
     // Using raw query to get MAX(createdAt) grouped by analysisId
     const analysisIds = analyses.map(a => a.id);
+    // Phase D — exclut les checkpoints stepwise : `canResume` legacy (lastCheckpointAt
+    // != null) ne doit compter QUE des checkpoints legacy réels. Sinon une analyse
+    // n'ayant que des `STEPWISE:*` serait offerte au resume legacy puis échouerait
+    // (loadLatestCheckpoint les filtre → renvoie null).
     const latestCheckpoints = await prisma.analysisCheckpoint.groupBy({
       by: ["analysisId"],
-      where: { analysisId: { in: analysisIds } },
+      where: { analysisId: { in: analysisIds }, state: { not: { startsWith: STEPWISE_STATE_PREFIX } } },
       _max: { createdAt: true },
     });
 
@@ -1321,8 +1377,11 @@ export async function cleanupOldCheckpoints(
   keepCount: number = 5
 ): Promise<number> {
   try {
+    // Phase D — cleanup LEGACY-only : ne compte/prune QUE les checkpoints legacy. Les
+    // snapshots stepwise (STEPWISE:*) sont gérés séparément ; les mélanger ici prunerait
+    // des checkpoints legacy (ou stepwise) à tort quand les deux familles coexistent.
     const checkpoints = await prisma.analysisCheckpoint.findMany({
-      where: { analysisId },
+      where: { analysisId, state: { not: { startsWith: STEPWISE_STATE_PREFIX } } },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: { id: true },
     });

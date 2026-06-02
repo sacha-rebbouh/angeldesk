@@ -661,6 +661,12 @@ model Analysis {
   thesisDecisionAt DateTime?
   thesisBypass     Boolean   @default(false) // true si BA a force Continue malgre verdict fragile
 
+  // Phase D (stepwise durable) — id de l'evenement Inngest qui a dispatche ce run.
+  // Rend l'unit `init` (createAnalysis) idempotente : un retry de step reutilise l'analyse
+  // RUNNING du MEME run au lieu d'echouer sur la garde "1 full_analysis RUNNING / deal".
+  // Nullable + additif : analyses existantes / non-stepwise restent a null.
+  dispatchEventId String?
+
   // Relations to sub-models (cascade delete)
   scoredFindings     ScoredFinding[]
   reasoningTraces    ReasoningTrace[]
@@ -696,6 +702,18 @@ model Thesis {
 
   version  Int     @default(1)
   isLatest Boolean @default(true)
+
+  // Phase D — cle d'idempotence de l'extraction (valeur `thesis-extractor:${analysisId}`).
+  // Rend la creation de these idempotente au replay d'un step stepwise : si une these de ce
+  // run existe deja, thesisService.create la REUTILISE (pas de nouvelle version / nouveau
+  // thesisId). Nullable + @unique : theses existantes / hors-stepwise restent a null
+  // (Postgres autorise plusieurs NULL sous un index unique).
+  idempotencyKey String? @unique
+
+  // Phase D — coût LLM (USD) de l'extraction qui a produit cette thèse. Persisté pour que le
+  // court-circuit replay réinjecte le coût CANONIQUE dans totalCost (sans relancer le LLM),
+  // au lieu de 0 → totalCost reproductible. Nullable/additif : null sur theses pre-Phase-D.
+  extractionCost Float?
 
   // These reformulee — plusieurs champs pour eviter un bloc monolithique
   reformulated String  @db.Text // "Angel Desk parie que X en visant Y via Z"
@@ -2004,6 +2022,11 @@ model FactEvent {
   createdAt DateTime @default(now())
   createdBy String // 'system' | 'ba'
   reason    String?
+
+  // Fix C — H/D.6 : clé d'idempotence replay-safe pour le stepwise durable. Nullable :
+  // les FactEvents hors-analyse (BA, processing doc) restent à null (NULLs distincts en
+  // Postgres → non dédupés). Format : `fact-event:<analysisId>:<scope>:<eventType>:<ordinal>`.
+  idempotencyKey String? @unique
 
   @@unique([dealId, factKey, createdAt, eventType], name: "factEvent_natural_key")
   @@index([dealId])

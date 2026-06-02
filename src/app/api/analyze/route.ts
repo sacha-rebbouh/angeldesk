@@ -20,6 +20,8 @@ import { evaluateDealDocumentReadiness } from "@/services/documents/extraction-r
 import { claimFailedAnalysisResume, reserveFullAnalysisDispatch } from "@/services/analysis/guards";
 import { inngest } from "@/lib/inngest-client";
 import { logger } from "@/lib/logger";
+import { STEPWISE_STATE_PREFIX } from "@/agents/orchestrator/full-analysis-snapshot";
+import { STEPWISE_GRAPH_VERSION } from "@/agents/orchestrator/full-analysis-driver";
 
 // Vercel: Allow long-running analysis. Requires Pro plan (300s max).
 // Without this, the fire-and-forget promise may be killed after 10s.
@@ -161,6 +163,11 @@ export async function POST(request: NextRequest) {
           orderBy: { completedAgents: "desc" },
           include: {
             checkpoints: {
+              // Phase D — ne compter QUE les checkpoints legacy comme preuve de reprise.
+              // Un `STEPWISE:*` n'est pas reprenable par le resume legacy (loadLatestCheckpoint
+              // les filtre → _resumeAnalysisImpl throw). Les analyses stepwise reprennent via
+              // leur propre mécanisme (readLatestStepwiseSnapshot).
+              where: { state: { not: { startsWith: STEPWISE_STATE_PREFIX } } },
               orderBy: { createdAt: "desc" },
               take: 1,
             },
@@ -168,14 +175,26 @@ export async function POST(request: NextRequest) {
         })
       : null;
 
-    // Resume is possible if we have an analysis with results in DB (even without checkpoints,
-    // the resume logic merges DB results with checkpoint data)
+    // G (Fix C) — déprécation du resume legacy sous flag stepwise ON : quand le dispatch frais
+    // serait durable (`DEEP_DIVE_STEPWISE=1` + full_analysis), NE PAS reprendre un vieux FAILED
+    // legacy via `_resumeAnalysisImpl` (chemin « thin » : skippe consensus global/cross-val/
+    // red-flags/persistScoredFindings). On laisse plutôt partir un run stepwise FRAIS (complet +
+    // durable via replay Inngest). Évite qu'un FAILED legacy dans la fenêtre 6h détourne un
+    // nouveau Deep Dive vers le chemin dégradé après activation du flag.
+    const stepwiseDispatchActive =
+      process.env.DEEP_DIVE_STEPWISE === "1" && type === "full_analysis";
+
+    // Resume exige un checkpoint legacy réel : `_resumeAnalysisImpl` marque FAILED + throw
+    // s'il n'y a pas de checkpoint (loadAnalysisForRecovery → loadLatestCheckpoint, désormais
+    // filtré STEPWISE). On ne propose donc PAS un resume voué à l'échec sur `completedAgents > 0`
+    // seul. Les checkpoints stepwise sont déjà exclus de l'include ci-dessus.
     const canResume = Boolean(
       resumableAnalysis &&
       latestThesis?.id &&
       latestThesis.corpusSnapshotId &&
       resumableAnalysis.corpusSnapshotId === latestThesis.corpusSnapshotId &&
-      (resumableAnalysis.checkpoints.length > 0 || resumableAnalysis.completedAgents > 0)
+      resumableAnalysis.checkpoints.length > 0 &&
+      !stepwiseDispatchActive
     );
 
     const resumeCandidate = canResume ? resumableAnalysis : null;
@@ -370,6 +389,20 @@ export async function POST(request: NextRequest) {
           enableTrace,
           userId: user.id,
           dispatchRefundKey,
+          // D.5d-1d — clé d'idempotence init durable (= id de l'event ci-dessus). Lue par
+          // dealAnalysisFunction en mode stepwise → createAnalysis get-or-create (analysis.id
+          // stable au replay). Inerte hors stepwise.
+          dispatchEventId,
+          // D.5d-1d (gate Codex) — mode stepwise STICKY : décidé AU DISPATCH (pas au worker)
+          // pour qu'il soit IMMUABLE sur toute la durée du run (le flag est lu une fois ici).
+          // Un flip du flag n'affecte que les NOUVEAUX dispatches → pas de changement de
+          // graphe de steps en vol. Inerte hors full_analysis.
+          stepwise: process.env.DEEP_DIVE_STEPWISE === "1" && effectiveType === "full_analysis",
+          // d-2a — version du graphe de steps stepwise, STICKY (lock Codex #1). Capturée au
+          // dispatch = le graphe que ce build produit ; le handler route EXACTEMENT dessus au
+          // replay (jamais un graphe déployé après ce run). Consommée seulement en mode
+          // stepwise ; métadonnée inerte sinon.
+          stepwiseGraphVersion: STEPWISE_GRAPH_VERSION,
         },
       });
     } catch (sendErr) {

@@ -146,4 +146,61 @@ describe("reapStaleAnalyses — watchdog des analyses figées", () => {
     expect(res.reaped).toBe(0);
     expect(refundCredits).not.toHaveBeenCalled();
   });
+
+  // ===== F (Fix C) — watchdog × durabilité stepwise v3 =====
+  // En mode stepwise (DEEP_DIVE_STEPWISE=1), les checkpoints legacy sont SUPPRIMÉS
+  // (state machine enableCheckpointing:false, persistTierCheckpoint no-op) ; la vivacité
+  // vient des snapshots `writeStepwiseSnapshot` (AnalysisCheckpoint.create, state="STEPWISE:<unit>",
+  // createdAt FRAIS à chaque step). Le reaper lit `checkpoints[0].createdAt` SANS filtre de state
+  // → il voit ces snapshots comme signal de vivacité, exactement comme un checkpoint legacy.
+  it("F — stepwise vivant : dernier checkpoint = snapshot STEPWISE frais → NON reapé", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([
+      runningRow({ checkpoints: [{ createdAt: FRESH_AT, state: "STEPWISE:tier3-post" }] }),
+    ]);
+    mockedPrisma.analysis.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await reapStaleAnalyses(NOW);
+    expect(res.reaped).toBe(0);
+    expect(mockedPrisma.analysis.updateMany).not.toHaveBeenCalled();
+    expect(refundCredits).not.toHaveBeenCalled();
+  });
+
+  it("F — stepwise réellement figé : dernier snapshot STEPWISE périmé → reapé + refund une fois", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([
+      runningRow({ checkpoints: [{ createdAt: STALE_AT, state: "STEPWISE:tier1-phase-c" }] }),
+    ]);
+    mockedPrisma.analysis.updateMany.mockResolvedValue({ count: 1 });
+
+    const res = await reapStaleAnalyses(NOW);
+    expect(res.reaped).toBe(1);
+    expect(refundCredits).toHaveBeenCalledTimes(1);
+  });
+
+  it("F — le reaper lit les checkpoints SANS filtre de state (sinon il ignorerait les snapshots STEPWISE)", async () => {
+    // DENTS de l'invariant : la vivacité stepwise repose sur le fait que la sous-requête
+    // `checkpoints` n'a AUCUN `where` excluant `STEPWISE:*`. Les tests qui mockent le résultat
+    // ne le protègent pas (un filtre ajouté demain passerait quand même) → on assert la FORME
+    // de l'appel findMany : pas de `where`, orderBy createdAt desc, take 1, select createdAt.
+    mockedPrisma.analysis.findMany.mockResolvedValue([]);
+    await reapStaleAnalyses(NOW);
+
+    const arg = mockedPrisma.analysis.findMany.mock.calls[0][0] as {
+      select: { checkpoints: { where?: unknown; orderBy: unknown; take: number; select: unknown } };
+    };
+    const cp = arg.select.checkpoints;
+    expect(cp.where).toBeUndefined(); // STEPWISE:* inclus dans le signal de vivacité
+    expect(cp.orderBy).toEqual({ createdAt: "desc" });
+    expect(cp.take).toBe(1);
+    expect(cp.select).toEqual({ createdAt: true });
+  });
+
+  it("F — seuil reaper >> max wall-clock d'un step durable (route maxDuration 300s) + latence inter-step", () => {
+    // Invariant de dimensionnement : chaque step.run stepwise est plafonné à 300s
+    // (src/app/api/inngest/route.ts maxDuration=300, asserté par route-config.test.ts).
+    // Le seuil de reap doit DÉPASSER LARGEMENT le pire cas (un step plein + la latence de
+    // ré-invocation Inngest entre deux steps) pour ne JAMAIS tuer un run sain qui progresse
+    // step par step. 20 min = 4× le plafond d'un step → marge confortable.
+    const MAX_STEP_WALL_CLOCK_MS = 300_000;
+    expect(STALE_ANALYSIS_REAP_MS).toBeGreaterThan(MAX_STEP_WALL_CLOCK_MS * 2);
+  });
 });

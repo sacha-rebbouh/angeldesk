@@ -38,6 +38,7 @@ import { runTier1CrossValidation } from "../orchestration/tier1-cross-validation
 import { sanitizeResultForDownstream, sanitizeAgentNarratives } from "../orchestration/result-sanitizer";
 import { costMonitor } from "@/services/cost-monitor";
 import { querySimilarDeals, getValuationBenchmarks } from "@/services/funding-db";
+import { withHardWall } from "@/lib/hard-wall";
 import { setAnalysisContext, runWithLLMContext } from "@/services/openrouter/router";
 import { runJob } from "@/services/jobs";
 import { ensureCorpusSnapshot, type CorpusSnapshotMaterialization } from "@/services/corpus";
@@ -54,6 +55,16 @@ import { thesisExtractorAgent } from "@/agents/tier0/thesis-extractor";
 import type { ThesisExtractorOutput, ThesisReconcilerOutput } from "@/agents/thesis/types";
 import { thesisService } from "@/services/thesis";
 import { loadResults } from "@/services/analysis-results/load-results";
+import { InlineStepRunner, type StepRunner } from "./step-runner";
+import { runTerminalStepwiseDriver } from "./full-analysis-driver";
+import {
+  buildStepState,
+  rehydrateContext,
+  buildTier0FactsWire,
+  applyTier0FactsWire,
+} from "./full-analysis-step-state-bridge";
+import { writeStepwiseSnapshot, readLatestStepwiseSnapshot } from "./full-analysis-snapshot";
+import type { FullAnalysisUnit } from "./full-analysis-step-state";
 import {
   getCurrentFacts,
   formatFactStoreForAgents,
@@ -241,6 +252,39 @@ function attachEvidenceLedger(context: EnrichedAgentContext): EnrichedAgentConte
   };
 }
 
+interface FullAnalysisRunInit {
+  failFastOnCritical: AdvancedAnalysisOptions["failFastOnCritical"];
+  maxCostUsd: AdvancedAnalysisOptions["maxCostUsd"];
+  onEarlyWarning: AdvancedAnalysisOptions["onEarlyWarning"];
+  isUpdate: boolean;
+  enableTrace: boolean;
+  stopAfterThesis: boolean;
+  stepwise: boolean;
+  analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+  startTime: number;
+  collectedWarnings: EarlyWarning[];
+  initialCanonicalDeal: ReturnType<typeof buildCanonicalRuntimeDeal>;
+  sectorExpert: Awaited<ReturnType<typeof getTier2SectorExpert>>;
+  TOTAL_AGENTS: number;
+  corpusSnapshot: Awaited<ReturnType<AgentOrchestrator["materializeAnalysisCorpusSnapshot"]>>;
+  scopedDocuments: DealWithDocs["documents"];
+  analysis: Awaited<ReturnType<typeof createAnalysis>>;
+  stateMachine: AnalysisStateMachine;
+  allResults: Record<string, AgentResult>;
+  totalCost: number;
+  completedCount: number;
+  factStore: CurrentFact[];
+  factStoreFormatted: string;
+  founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+}
+
+/**
+ * H (Fix C) — mur dur sur la funding-DB de buildVerificationContext. Généreux : les 2 requêtes
+ * Neon (limit 20) saines sont <5s → le mur NE FIRE JAMAIS sur run sain (byte-equiv OFF/v3) ;
+ * borne un hang DB bien sous le plafond Vercel d'un step durable (300s) → pas de replay infini.
+ */
+const FUNDING_DB_WALL_MS = 30_000;
+
 export class AgentOrchestrator {
   /**
    * Run a complete analysis session
@@ -336,7 +380,10 @@ export class AgentOrchestrator {
           analysisModeOverride,
           isUpdate,
           stopAfterThesis: options.stopAfterThesis,
-        });
+          stepwise: options.stepwise,
+          dispatchEventId: options.dispatchEventId,
+          stepwiseGraphVersion: options.stepwiseGraphVersion,
+        }, options.stepRunner ?? new InlineStepRunner());
         break;
       case "tier3_synthesis":
         result = await this.runTier3Synthesis(
@@ -1405,12 +1452,18 @@ export class AgentOrchestrator {
    *
    * Includes consensus debates and reflexion engines for quality assurance.
    */
-  private async runFullAnalysis(
+  /**
+   * C.1 — Bootstrap de full_analysis extrait BYTE-INERT de runFullAnalysis (avant le try).
+   * Crée l'Analysis, le corpus snapshot, le costMonitor, la stateMachine (+onStateChange),
+   * setAnalysisContext, messageBus.clear ; renvoie tous les locals consommés ensuite.
+   * NE contient PAS stateMachine.start()/loadEvidenceContextSafe/baseContext/STEP 0
+   * (restent dans le try de runFullAnalysis — frontière try/catch inchangée).
+   */
+  private async initializeFullAnalysisRun(
     deal: DealWithDocs,
     dealId: string,
-    onProgress: AnalysisOptions["onProgress"],
     advancedOptions: AdvancedAnalysisOptions
-  ): Promise<AnalysisResult> {
+  ): Promise<FullAnalysisRunInit> {
     const {
       failFastOnCritical,
       maxCostUsd,
@@ -1418,6 +1471,8 @@ export class AgentOrchestrator {
       isUpdate = false,
       enableTrace = true,
       stopAfterThesis = false,
+      stepwise = false,
+      dispatchEventId,
       analysisModeOverride,
     } = advancedOptions;
     const startTime = Date.now();
@@ -1434,9 +1489,18 @@ export class AgentOrchestrator {
     const hasSectorExpert = sectorExpert !== null;
 
     // Pipeline complet : Tier 1 (12 agents) + Tier 3 (5 agents en autonomous,
-    // +1 thesis-reconciler en full_analysis) + extractor + fact-extractor + (0-1 sector expert)
+    // +1 thesis-reconciler en full_analysis) + document-extractor + fact-extractor
+    // + thesis-extractor (SAUF post_call_reanalysis qui réutilise la thèse canonique)
+    // + (0-1 sector expert).
+    // thesis-extractor (Tier 0.5) tourne et est compté dans completedCount par
+    // runThesisExtractionStep (`completedCount++` sur succès) hors post_call_reanalysis
+    // (`shouldReuseLatestThesis`). Il manquait à ce total → completedCount pouvait dépasser
+    // TOTAL_AGENTS d'1 (affichage X+1/X sur le chemin non-stepwise ; rejet buildStepState
+    // `completedCount > totalAgents` au snapshot tier3-post sur le chemin durable v3, d-6).
     const tier3AgentCount = FULL_ANALYSIS_TIER3_AGENT_NAMES.length;
-    const TOTAL_AGENTS = TIER1_AGENT_NAMES.length + tier3AgentCount + 1 + 1 + (hasSectorExpert ? 1 : 0);
+    const runsThesisExtractor = analysisModeOverride !== "post_call_reanalysis";
+    const TOTAL_AGENTS =
+      TIER1_AGENT_NAMES.length + tier3AgentCount + 1 + 1 + (runsThesisExtractor ? 1 : 0) + (hasSectorExpert ? 1 : 0);
 
     const corpusSnapshot = await this.materializeAnalysisCorpusSnapshot(dealId, deal.documents, {
       allowSupersededDocuments: analysisModeOverride === "post_call_reanalysis",
@@ -1459,6 +1523,10 @@ export class AgentOrchestrator {
       documentIds,
       corpusSnapshotId: corpusSnapshot?.id,
       extractionRunIds: corpusSnapshot?.extractionRunIds,
+      // D.5d-1d — idempotence init durable : en stepwise le bootstrap re-tourne au replay
+      // Inngest ; get-or-create par dispatchEventId (D.4b) → réutilise l'Analysis RUNNING du
+      // même run (analysis.id stable). null hors stepwise (OFF byte-inert : create classique).
+      dispatchEventId: dispatchEventId ?? null,
     });
 
     // Set analysis context for LLM logging
@@ -1478,7 +1546,10 @@ export class AgentOrchestrator {
       dealId,
       mode: "full_analysis",
       agents: ["document-extractor", ...TIER1_AGENT_NAMES, ...FULL_ANALYSIS_TIER3_AGENT_NAMES],
-      enableCheckpointing: true,
+      // D.5a — en mode stepwise la state machine n'émet AUCUN checkpoint (ni périodique,
+      // ni par transition, ni au flush) : c'est l'invariant « zéro checkpoint legacy en
+      // stepwise ». OFF (défaut) → !false = true = comportement actuel exact.
+      enableCheckpointing: !stepwise,
     });
 
     stateMachine.onStateChange(async (from, to, trigger) => {
@@ -1497,227 +1568,1527 @@ export class AgentOrchestrator {
     let factStoreFormatted = "";
     let founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }> = [];
 
+    return {
+      failFastOnCritical,
+      maxCostUsd,
+      onEarlyWarning,
+      isUpdate,
+      enableTrace,
+      stopAfterThesis,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      initialCanonicalDeal,
+      sectorExpert,
+      TOTAL_AGENTS,
+      corpusSnapshot,
+      scopedDocuments,
+      analysis,
+      stateMachine,
+      allResults,
+      totalCost,
+      completedCount,
+      factStore,
+      factStoreFormatted,
+      founderResponses,
+      stepwise,
+    };
+  }
+
+  /**
+   * C.1b — Construit le baseContext de full_analysis (evidence + AgentContext de base).
+   * Extrait de runFullAnalysis ; appelé DANS le try, APRÈS stateMachine.start() et
+   * AVANT STEP 0. loadEvidenceContextSafe est best-effort (déjà tolérant). Byte-inert.
+   */
+  private async buildBaseAnalysisContext(params: {
+    dealId: string;
+    initialCanonicalDeal: ReturnType<typeof buildCanonicalRuntimeDeal>;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    corpusSnapshot: Awaited<ReturnType<AgentOrchestrator["materializeAnalysisCorpusSnapshot"]>>;
+    scopedDocuments: DealWithDocs["documents"];
+  }): Promise<AgentContext> {
+    const { dealId, initialCanonicalDeal, analysis, analysisModeOverride, corpusSnapshot, scopedDocuments } = params;
+    // Phase 5.1 (Codex round 15 P1) — wire evidence into full_analysis path.
+    const { evidenceContext: fullEvidenceContext, evidenceToday: fullEvidenceToday } =
+      await loadEvidenceContextSafe(dealId);
+    const baseContext: AgentContext = {
+      dealId,
+      deal: initialCanonicalDeal,
+      canonicalDeal: initialCanonicalDeal,
+      analysis: {
+        id: analysis.id,
+        mode: analysis.mode ?? analysisModeOverride ?? "full_analysis",
+        thesisBypass: false,
+        thesisId: null,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
+      documents: scopedDocuments,
+      evidenceContext: fullEvidenceContext,
+      evidenceToday: fullEvidenceToday,
+      previousResults: {},
+    };
+
+    return baseContext;
+  }
+
+  /**
+   * C.2a — STEP 0 Tier 0 fact extraction, extrait BYTE-INERT de runFullAnalysis.
+   * Mute allResults["fact-extractor"] PAR RÉFÉRENCE (allResults passé en param) et
+   * renvoie les let mutés. N'extrait QUE STEP 0 (pas document-extractor/deck/context/thesis).
+   * Ordre et mutations strictement identiques à l'inline d'origine.
+   */
+  private async runTier0Step(params: {
+    deal: DealWithDocs;
+    scopedDocuments: DealWithDocs["documents"];
+    isUpdate: boolean;
+    onProgress: AnalysisOptions["onProgress"];
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+    analysisId: string;
+  }): Promise<{
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+  }> {
+    const { deal, scopedDocuments, isUpdate, onProgress, allResults, analysisId } = params;
+    let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = params;
+    if (scopedDocuments.length > 0) {
+      const tier0Result = await this.runTier0FactExtraction(
+        { ...deal, documents: scopedDocuments },
+        isUpdate,
+        onProgress,
+        analysisId
+      );
+      factStore = tier0Result.factStore;
+      factStoreFormatted = tier0Result.factStoreFormatted;
+      founderResponses = tier0Result.founderResponses;
+      totalCost += tier0Result.cost;
+      completedCount++;
+
+      if (tier0Result.extractionResult) {
+        allResults["fact-extractor"] = {
+          agentName: "fact-extractor",
+          success: true,
+          executionTimeMs: tier0Result.executionTimeMs,
+          cost: tier0Result.cost,
+          data: tier0Result.extractionResult,
+        } as AgentResult & { data: FactExtractorOutput };
+      }
+
+      console.log(`[Orchestrator:FullAnalysis] Tier 0 complete: ${factStore.length} facts in store`);
+    }
+    return { totalCost, completedCount, factStore, factStoreFormatted, founderResponses };
+  }
+
+  /**
+   * C.2b — STEP 1 document-extractor, extrait BYTE-INERT de runFullAnalysis.
+   * baseContext et allResults sont mutés PAR RÉFÉRENCE (passés en param), comme l'inline
+   * d'origine (baseContext.previousResults["document-extractor"], allResults[...]).
+   * Renvoie les let mutés (totalCost, completedCount, extractedData). N'inclut PAS la
+   * deck coherence (STEP 1.5), ni le context engine, ni la thèse.
+   */
+  private async runDocumentExtractorStep(params: {
+    baseContext: AgentContext;
+    scopedDocuments: DealWithDocs["documents"];
+    onProgress: AnalysisOptions["onProgress"];
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    stateMachine: AnalysisStateMachine;
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    completedCount: number;
+    TOTAL_AGENTS: number;
+  }): Promise<{
+    totalCost: number;
+    completedCount: number;
+    extractedData: ContextSeed;
+  }> {
+    const { baseContext, scopedDocuments, onProgress, analysis, stateMachine, allResults, TOTAL_AGENTS } = params;
+    let { totalCost, completedCount } = params;
+    // STEP 1: DOCUMENT EXTRACTION (must run first)
+    // We need extracted data (tagline, competitors, founders) for Context Engine
+    await stateMachine.startExtraction();
+
+    onProgress?.({
+      currentAgent: "document-extractor",
+      completedAgents: completedCount,
+      totalAgents: TOTAL_AGENTS,
+    });
+
+    // Extract data from documents first
+    let extractedData: ContextSeed = {};
+
+    if (scopedDocuments.length > 0) {
+      try {
+        const extractorResult = await BASE_AGENTS["document-extractor"].run(baseContext);
+        allResults["document-extractor"] = extractorResult;
+        totalCost += extractorResult.cost;
+        baseContext.previousResults!["document-extractor"] = extractorResult;
+        completedCount++;
+
+        stateMachine.recordAgentComplete(
+          "document-extractor",
+          extractorResult as AnalysisAgentResult
+        );
+        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+        // Extract data for Context Engine
+        if (extractorResult.success) {
+          extractedData = this.extractContextSeed(extractorResult);
+          console.log(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
+        }
+      } catch (error) {
+        const errorResult: AgentResult = {
+          agentName: "document-extractor",
+          success: false,
+          executionTimeMs: 0,
+          cost: 0,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+        allResults["document-extractor"] = errorResult;
+        stateMachine.recordAgentFailed("document-extractor", errorResult.error ?? "Unknown");
+        completedCount++;
+      }
+    }
+    return { totalCost, completedCount, extractedData };
+  }
+
+  /**
+   * C.2c — STEP 1.5 deck coherence check, extrait BYTE-INERT de runFullAnalysis.
+   * allResults muté PAR RÉFÉRENCE (param) comme l'inline (allResults["deck-coherence-checker"]).
+   * Renvoie les mutés (totalCost, deckCoherenceReport). N'inclut PAS le context engine
+   * (STEP 2), la thèse, ni Tier1.
+   */
+  private async runDeckCoherenceStep(params: {
+    deal: DealWithDocs;
+    scopedDocuments: DealWithDocs["documents"];
+    extractedData: ContextSeed;
+    onProgress: AnalysisOptions["onProgress"];
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+  }): Promise<{
+    totalCost: number;
+    deckCoherenceReport: DeckCoherenceReport | null;
+  }> {
+    const { deal, scopedDocuments, extractedData, onProgress, allResults } = params;
+    let { totalCost } = params;
+    // STEP 1.5: DECK COHERENCE CHECK (Tier 0.5)
+    // Verifies data consistency before Tier 1 agents analyze
+    let deckCoherenceReport: DeckCoherenceReport | null = null;
+    if (scopedDocuments.length > 0 && allResults["document-extractor"]?.success) {
+      const coherenceResult = await this.runDeckCoherenceCheck(
+        { ...deal, documents: scopedDocuments },
+        extractedData as Record<string, unknown> | undefined,
+        onProgress
+      );
+      deckCoherenceReport = coherenceResult.report;
+      totalCost += coherenceResult.cost;
+
+      if (deckCoherenceReport) {
+        allResults["deck-coherence-checker"] = {
+          agentName: "deck-coherence-checker",
+          success: true,
+          executionTimeMs: coherenceResult.executionTimeMs,
+          cost: coherenceResult.cost,
+          data: deckCoherenceReport,
+        } as AgentResult & { data: DeckCoherenceReport };
+      }
+
+      console.log(`[Orchestrator:FullAnalysis] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
+    }
+    return { totalCost, deckCoherenceReport };
+  }
+
+  /**
+   * C.2d — STEP 2 Context Engine, extrait BYTE-INERT de runFullAnalysis.
+   * Enrichit le factStore (enrichContext + mergeContextEngineFacts), filtre pour Tier 1,
+   * charge les questions précédentes, construit l'enrichedContext (attachEvidenceLedger).
+   * Renvoie factStore/factStoreFormatted réassignés + enrichedContext. N'inclut PAS la
+   * thèse (STEP 2.5) ni Tier1.
+   */
+  private async runContextEngineStep(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    baseContext: AgentContext;
+    stateMachine: AnalysisStateMachine;
+    extractedData: ContextSeed;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    corpusSnapshot: Awaited<ReturnType<AgentOrchestrator["materializeAnalysisCorpusSnapshot"]>>;
+    deckCoherenceReport: DeckCoherenceReport | null;
+    founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }>;
+    onProgress: AnalysisOptions["onProgress"];
+    completedCount: number;
+    TOTAL_AGENTS: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+  }): Promise<{
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    enrichedContext: EnrichedAgentContext;
+  }> {
+    const { deal, dealId, baseContext, stateMachine, extractedData, analysis, corpusSnapshot, deckCoherenceReport, founderResponses, onProgress, completedCount, TOTAL_AGENTS } = params;
+    let { factStore, factStoreFormatted } = params;
+    // STEP 2: CONTEXT ENGINE (runs AFTER extraction to use extracted data)
+    await stateMachine.startGathering();
+
+    onProgress?.({
+      currentAgent: "context-engine",
+      completedAgents: completedCount,
+      totalAgents: TOTAL_AGENTS,
+    });
+
+    const contextEngineData = await this.enrichContext(deal, extractedData, factStore);
+    const mergedContextFacts = await this.mergeContextEngineFacts(
+      dealId,
+      contextEngineData,
+      factStore,
+      corpusSnapshot?.id ?? null
+    );
+    factStore = mergedContextFacts.factStore;
+    factStoreFormatted = mergedContextFacts.factStoreFormatted;
+
+    const filteredFactStore = replaceUnreliableWithPlaceholders(factStore);
+    const filteredFactStoreFormatted = factStore.length > 0
+      ? formatFactsForScoringAgents(factStore)
+      : factStoreFormatted;
+
+    // Load questions from previous analysis for cross-run persistence
+    const prevQuestions = await loadPreviousAnalysisQuestions(dealId);
+    const previousAnalysisQuestions = prevQuestions.questions.map((q) => ({
+      ...q,
+      answered: prevQuestions.answeredQuestionTexts.some(
+        (a) => a.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) ===
+          q.question.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40)
+      ),
+    }));
+    if (previousAnalysisQuestions.length > 0) {
+      console.log(`[Orchestrator:FullAnalysis] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
+    }
+
+    // Build enriched context with Fact Store for all agents
+    const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
+      ...baseContext,
+      contextEngine: contextEngineData,
+      factStore: filteredFactStore,
+      factStoreFormatted: filteredFactStoreFormatted,
+      extractedData: this.toExtractedContextData(extractedData),
+      analysis: {
+        id: analysis.id,
+        thesisBypass: false,
+        thesisId: null,
+        corpusSnapshotId: corpusSnapshot?.id ?? null,
+      },
+      deckCoherenceReport: deckCoherenceReport ?? undefined,
+      founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
+      previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
+    });
+    return { factStore, factStoreFormatted, enrichedContext };
+  }
+
+  /**
+   * C.2e — STEP 2.5 thesis extraction, extrait BYTE-INERT de runFullAnalysis.
+   * Branche post_call_reanalysis (reuse latest thesis + rehydrate + prisma.analysis.update)
+   * ou branche normale (runThesisExtraction). enrichedContext et allResults sont mutés PAR
+   * RÉFÉRENCE (params), comme l'inline (enrichedContext.analysis, allResults["thesis-extractor"]).
+   * Renvoie totalCost, completedCount, thesisOutput. N'inclut PAS STEP 2.6 stop-after-thesis
+   * ni Tier1.
+   */
+  private async runThesisExtractionStep(params: {
+    dealId: string;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    enrichedContext: EnrichedAgentContext;
+    corpusSnapshot: Awaited<ReturnType<AgentOrchestrator["materializeAnalysisCorpusSnapshot"]>>;
+    allResults: Record<string, AgentResult>;
+    enableTrace: boolean;
+    totalCost: number;
+    completedCount: number;
+  }): Promise<{
+    totalCost: number;
+    completedCount: number;
+    thesisOutput: ThesisExtractorOutput | null;
+  }> {
+    const { dealId, analysisModeOverride, analysis, enrichedContext, corpusSnapshot, allResults, enableTrace } = params;
+    let { totalCost, completedCount } = params;
+    // STEP 2.5: THESIS EXTRACTION (Tier 0.5) — thesis-first architecture
+    // Extrait la these d'investissement, la teste contre 3 frameworks (YC/Thiel/AD),
+    // persiste en DB, injecte dans enrichedContext pour que Tier 1/2/3 l'utilisent.
+    const shouldReuseLatestThesis = analysisModeOverride === "post_call_reanalysis";
+    let thesisOutput: ThesisExtractorOutput | null = null;
+
+    if (shouldReuseLatestThesis) {
+      const latestThesis = await thesisService.getLatest(dealId);
+      if (!latestThesis) {
+        throw new Error("Cannot run post-call reanalysis without a canonical latest thesis");
+      }
+
+      await this.rehydrateResumeThesis(analysis.id, latestThesis.id, enrichedContext);
+      enrichedContext.analysis = {
+        ...(enrichedContext.analysis ?? { id: analysis.id }),
+        mode: enrichedContext.analysis?.mode ?? analysis.mode ?? analysisModeOverride ?? "full_analysis",
+        thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
+        thesisId: latestThesis.id,
+        corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
+      };
+
+      await prisma.analysis.update({
+        where: { id: analysis.id },
+        data: { thesisId: latestThesis.id },
+      });
+
+      console.log(
+        `[Orchestrator:FullAnalysis] Reusing canonical latest thesis for post-call reanalysis ` +
+        `(analysisId=${analysis.id}, thesisId=${latestThesis.id})`
+      );
+    } else {
+      thesisOutput = await this.runThesisExtraction(
+        enrichedContext,
+        analysis.id,
+        dealId,
+        allResults,
+        enableTrace,
+        corpusSnapshot,
+      );
+      // Compter sur le SUCCÈS, pas sur le coût : un thesis-extractor réutilisé au replay
+      // (Phase D) reste un agent complété → pas de divergence de completedCount vs un run sain.
+      // totalCost += cost = coût CANONIQUE du 1er run (réinjecté via Thesis.extractionCost au
+      // reuse) ; pas de double-charge car le reuse n'arrive que si le step n'a pas été retourné.
+      const thesisAgentResult = allResults["thesis-extractor"];
+      if (thesisAgentResult?.success) {
+        totalCost += thesisAgentResult.cost;
+        completedCount++;
+      }
+    }
+    return { totalCost, completedCount, thesisOutput };
+  }
+
+  /**
+   * C.3b — Agrégation post-Tier1 (avant FAIL-FAST), extraite BYTE-INERT de runFullAnalysis.
+   * Lance runTier1Phases, rebuild verificationContext, publie les findings sur le messageBus,
+   * persiste les findings tier1-aggregate + le checkpoint, log le récap Tier1.
+   * allResults muté PAR RÉFÉRENCE (param) ; renvoie les locals réassignés + allFindings/
+   * lowConfidenceAgents. N'inclut PAS le FAIL-FAST, le consensus global, le cost-limit,
+   * la cross-validation, la consolidation red-flags, ni Tier2/Tier3.
+   */
+  private async runPostTier1Aggregation(params: {
+    stepwise: boolean;
+    enrichedContext: EnrichedAgentContext;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    allResults: Record<string, AgentResult>;
+    extractedData: ContextSeed;
+    startTime: number;
+    phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>>;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+  }): Promise<{
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    verificationContext: VerificationContext;
+    allFindings: ScoredFinding[];
+    lowConfidenceAgents: string[];
+  }> {
+    const { stepwise, enrichedContext, analysis, allResults, extractedData, startTime, phasesResult } = params;
+    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+
+    const { allFindings, lowConfidenceAgents } = phasesResult;
+    totalCost += phasesResult.costIncurred;
+    completedCount += phasesResult.completedInPhases;
+    factStore = phasesResult.updatedFactStore;
+    factStoreFormatted = phasesResult.updatedFactStoreFormatted;
+
+    // Rebuild verificationContext for global consensus and downstream use
+    const verificationContext = await this.buildVerificationContext(
+      enrichedContext,
+      extractedData,
+      factStoreFormatted,
+      enrichedContext.deal,
+    );
+
+    // Publish all findings to message bus
+    for (const finding of allFindings) {
+      await messageBus.publish(createFindingMessage(finding.agentName, "*", finding));
+    }
+
+    // Persist all findings
+    if (allFindings.length > 0) {
+      await persistScoredFindings(analysis.id, "tier1-aggregate", allFindings);
+    }
+
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
+
+    // Diagnostic log: show tier1 success/failure breakdown
+    const tier1SuccessCount = TIER1_AGENT_NAMES.filter(n => allResults[n]?.success).length;
+    const tier1FailCount = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success).length;
+    const tier1FailedNames = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success);
+    console.log(
+      `[Orchestrator] Tier 1 results: ${tier1SuccessCount}/${TIER1_AGENT_NAMES.length} succeeded, ${tier1FailCount} failed. ` +
+      `Extracted ${allFindings.length} findings. ` +
+      `Low confidence: ${lowConfidenceAgents.join(", ") || "none"}` +
+      (tier1FailedNames.length > 0 ? `. Failed: ${tier1FailedNames.join(", ")}` : "")
+    );
+    return { totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings, lowConfidenceAgents };
+  }
+
+  /**
+   * C.3c — FAIL-FAST post-Tier1, extrait BYTE-INERT de runFullAnalysis.
+   * Si des warnings critiques existent, termine l'analyse tôt (stateMachine.complete +
+   * completeAnalysis + costMonitor.endAnalysis) et renvoie { done: true, result }.
+   * Sinon { done: false } et le pipeline continue. N'inclut PAS le consensus global,
+   * le cost-limit, la cross-validation, les red-flags, ni Tier2/Tier3.
+   */
+  private async runPostTier1FailFast(params: {
+    failFastOnCritical: boolean;
+    collectedWarnings: EarlyWarning[];
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    startTime: number;
+  }): Promise<{ done: true; result: AnalysisResult } | { done: false }> {
+    const { failFastOnCritical, collectedWarnings, stateMachine, analysis, dealId, analysisModeOverride, allResults, totalCost, startTime } = params;
+    // FAIL-FAST: Check for critical warnings after Tier 1
+    if (failFastOnCritical) {
+      const criticalWarnings = collectedWarnings.filter(w => w.severity === "critical");
+      if (criticalWarnings.length > 0) {
+        console.log(`[Orchestrator] FAIL-FAST: ${criticalWarnings.length} critical warning(s) detected`);
+        await stateMachine.complete();
+
+        const summary = `**CRITICAL WARNINGS DETECTED - Analysis stopped early**\n\n${criticalWarnings.map(w => `- ${w.title}: ${w.description}`).join("\n")}`;
+        const totalTimeMs = Date.now() - startTime;
+
+        await completeAnalysis({
+          analysisId: analysis.id,
+          success: true,
+          totalCost,
+          totalTimeMs,
+          summary,
+          results: allResults,
+          mode: analysisModeOverride ?? "full_analysis",
+        });
+
+        await costMonitor.endAnalysis({
+          persistAnalysisSummary: false,
+        });
+
+        return { done: true, result: this.addWarningsToResult({
+          sessionId: analysis.id,
+          dealId,
+          type: "full_analysis",
+          success: true,
+          results: allResults,
+          totalCost,
+          totalTimeMs,
+          summary,
+          tiersExecuted: [...TIERS_EXECUTED],
+        }, collectedWarnings) };
+      }
+    }
+    return { done: false };
+  }
+
+  /**
+   * C.3d — STEP 4 global consensus (contradictions cross-phase), extrait BYTE-INERT
+   * de runFullAnalysis. allFindings/verificationContext/enrichedContext passés en params
+   * sans mutation de forme. Renvoie totalCost. N'inclut PAS le cost-limit, la
+   * cross-validation, les red-flags, ni Tier2/Tier3.
+   */
+  private async runGlobalConsensusStep(params: {
+    allFindings: ScoredFinding[];
+    verificationContext: VerificationContext;
+    enrichedContext: EnrichedAgentContext;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    onProgress: AnalysisOptions["onProgress"];
+    completedCount: number;
+    TOTAL_AGENTS: number;
+    totalCost: number;
+  }): Promise<{ totalCost: number }> {
+    const { allFindings, verificationContext, enrichedContext, stateMachine, analysis, onProgress, completedCount, TOTAL_AGENTS } = params;
+    let { totalCost } = params;
+    // STEP 4: GLOBAL CONSENSUS - Cross-phase contradiction detection
+    // (Phases already ran intra-phase consensus, this catches cross-phase contradictions)
+    if (allFindings.length > 1) {
+      await stateMachine.startDebate();
+
+      onProgress?.({
+        currentAgent: "consensus-engine (global cross-phase contradictions)",
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+        estimatedCostSoFar: totalCost,
+      });
+
+      const debateStats = await this.runConsensusDebate(analysis.id, allFindings, verificationContext, enrichedContext);
+      totalCost += debateStats.totalTokens * 0.00001;
+      console.log(`[ConsensusEngine] Global: ${debateStats.debateCount} debates completed`);
+    }
+    return { totalCost };
+  }
+
+  /**
+   * C.3e — Cost-limit post-consensus (avant synthèse), extrait BYTE-INERT de runFullAnalysis.
+   * Si le budget est atteint, termine l'analyse tôt (stateMachine.complete + completeAnalysis
+   * + costMonitor.endAnalysis) et renvoie { done: true, result }. Sinon { done: false }.
+   * N'inclut PAS STEP 4.5 cross-validation, STEP 4.6 red-flags, ni Tier2/Tier3.
+   */
+  private async runPostConsensusCostLimit(params: {
+    maxCostUsd?: number;
+    totalCost: number;
+    stateMachine: AnalysisStateMachine;
+    allResults: Record<string, AgentResult>;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    dealId: string;
+    collectedWarnings: EarlyWarning[];
+    startTime: number;
+  }): Promise<{ done: true; result: AnalysisResult } | { done: false }> {
+    const { maxCostUsd, totalCost, stateMachine, allResults, analysis, analysisModeOverride, dealId, collectedWarnings, startTime } = params;
+    // Check cost limit before synthesis phase
+    if (maxCostUsd && totalCost >= maxCostUsd) {
+      console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), skipping remaining phases`);
+      await stateMachine.complete();
+
+      const summary = generateFullAnalysisSummary(allResults);
+      const totalTimeMs = Date.now() - startTime;
+
+      await completeAnalysis({
+        analysisId: analysis.id,
+        success: true,
+        totalCost,
+        totalTimeMs,
+        summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
+        results: allResults,
+        mode: analysisModeOverride ?? "full_analysis",
+      });
+
+      await costMonitor.endAnalysis({
+        persistAnalysisSummary: false,
+      });
+
+      return { done: true, result: this.addWarningsToResult({
+        sessionId: analysis.id,
+        dealId,
+        type: "full_analysis",
+        success: true,
+        results: allResults,
+        totalCost,
+        totalTimeMs,
+        summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
+        tiersExecuted: [...TIERS_EXECUTED],
+      }, collectedWarnings) };
+    }
+    return { done: false };
+  }
+
+  /**
+   * C.3f — STEP 4.5 Tier 1 cross-validation (déterministe, no LLM), extrait BYTE-INERT
+   * de runFullAnalysis. Mute les scores/grades/meta.limitations dans allResults (par
+   * référence) et injecte le résultat dans enrichedContext.tier1CrossValidation comme
+   * aujourd'hui. Retourne crossValidation pour disponibilité downstream. N'inclut PAS
+   * STEP 4.6 red-flags ni Tier2/Tier3.
+   */
+  private runTier1CrossValidationStep(params: {
+    allResults: Record<string, AgentResult>;
+    enrichedContext: EnrichedAgentContext;
+  }): ReturnType<typeof runTier1CrossValidation> {
+    const { allResults, enrichedContext } = params;
+    // STEP 4.5: TIER 1 CROSS-VALIDATION (deterministic, no LLM) (F34/F39)
+    const crossValidation = runTier1CrossValidation(allResults);
+    if (crossValidation.validations.length > 0 || crossValidation.warnings.length > 0) {
+      console.log(
+        `[Orchestrator] Tier 1 cross-validation: ${crossValidation.validations.length} divergences, ${crossValidation.adjustments.length} adjustments, ${crossValidation.warnings.length} warnings`
+      );
+
+      // Apply score adjustments
+      for (const adj of crossValidation.adjustments) {
+        const result = allResults[adj.agentName];
+        if (result?.success && "data" in result) {
+          const data = (result as { data?: Record<string, unknown> }).data;
+          const scoreObj = data?.score as { value?: number } | undefined;
+          if (scoreObj && typeof scoreObj.value === "number") {
+            scoreObj.value = adj.after;
+            (scoreObj as { grade?: string }).grade = gradeFromScore(adj.after);
+            const meta = data?.meta as { limitations?: string[] } | undefined;
+            if (meta) {
+              meta.limitations = [
+                ...(Array.isArray(meta.limitations) ? meta.limitations : []),
+                `Tier 1 cross-validation adjustment ${adj.crossValidationId}: ${adj.reason}`,
+              ];
+            }
+          }
+        }
+      }
+
+      // Inject into context for Tier 3 agents
+      enrichedContext.tier1CrossValidation = crossValidation;
+    }
+    return crossValidation;
+  }
+
+  private async runRedFlagConsolidationStep(params: {
+    allResults: Record<string, AgentResult>;
+    enrichedContext: EnrichedAgentContext;
+  }): Promise<void> {
+    const { allResults, enrichedContext } = params;
+    // STEP 4.6: CONSOLIDATE RED FLAGS (F77 - unified taxonomy)
+    try {
+      const { consolidateRedFlags } = await import("../red-flag-taxonomy");
+      const agentRedFlagMap: Record<string, { redFlags?: Array<{ id: string; category: string; severity: string; [key: string]: unknown }> }> = {};
+      for (const [agentName, result] of Object.entries(allResults)) {
+        if (result.success && "data" in result) {
+          const data = (result as { data?: Record<string, unknown> }).data;
+          if (data?.redFlags && Array.isArray(data.redFlags)) {
+            agentRedFlagMap[agentName] = { redFlags: data.redFlags as Array<{ id: string; category: string; severity: string }> };
+          }
+        }
+      }
+      const consolidatedFlags = consolidateRedFlags(agentRedFlagMap);
+      if (consolidatedFlags.length > 0) {
+        enrichedContext.consolidatedRedFlags = consolidatedFlags;
+        console.log(`[Orchestrator] F77: Consolidated ${consolidatedFlags.length} red flags from ${Object.keys(agentRedFlagMap).length} agents`);
+      }
+    } catch (err) {
+      console.error("[Orchestrator] Red flag consolidation failed:", err);
+    }
+  }
+
+  private async runSynthesisSetupStep(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    stateMachine: AnalysisStateMachine;
+    enrichedContext: EnrichedAgentContext;
+  }): Promise<{ tier3AgentMap: Awaited<ReturnType<typeof getTier3Agents>> }> {
+    const { deal, dealId, stateMachine, enrichedContext } = params;
+    // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
+    // Run conditions-analyst, contradiction-detector, devils-advocate in PARALLEL
+    // (scenario-modeler retiré du pipeline — doctrine anti-oraculaire)
+    await stateMachine.startSynthesis();
+
+    const tier3AgentMap = await getTier3Agents();
+
+    // Load BA preferences for Tier 3 personalization (does NOT affect Tier 1/2)
+    const baPreferences = await this.loadBAPreferences(deal.userId);
+    enrichedContext.baPreferences = baPreferences;
+
+    // Load DealTerms + DealStructure for conditions-analyst (Tier 3)
+    const [rawDealTerms, rawDealStructure] = await Promise.all([
+      prisma.dealTerms.findUnique({ where: { dealId } }),
+      prisma.dealStructure.findUnique({
+        where: { dealId },
+        include: { tranches: { orderBy: { orderIndex: "asc" } } },
+      }),
+    ]);
+    if (rawDealTerms) {
+      enrichedContext.dealTerms = {
+        valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
+        amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
+        dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
+        instrumentType: rawDealTerms.instrumentType,
+        instrumentDetails: rawDealTerms.instrumentDetails,
+        liquidationPref: rawDealTerms.liquidationPref,
+        antiDilution: rawDealTerms.antiDilution,
+        proRataRights: rawDealTerms.proRataRights,
+        informationRights: rawDealTerms.informationRights,
+        boardSeat: rawDealTerms.boardSeat,
+        founderVesting: rawDealTerms.founderVesting,
+        vestingDurationMonths: rawDealTerms.vestingDurationMonths,
+        vestingCliffMonths: rawDealTerms.vestingCliffMonths,
+        esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
+        dragAlong: rawDealTerms.dragAlong,
+        tagAlong: rawDealTerms.tagAlong,
+        ratchet: rawDealTerms.ratchet,
+        payToPlay: rawDealTerms.payToPlay,
+        milestoneTranches: rawDealTerms.milestoneTranches,
+        nonCompete: rawDealTerms.nonCompete,
+        customConditions: rawDealTerms.customConditions,
+        notes: rawDealTerms.notes,
+      };
+    }
+    if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
+      enrichedContext.dealStructure = {
+        mode: "STRUCTURED",
+        totalInvestment: rawDealStructure.tranches.reduce(
+          (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
+        ),
+        tranches: rawDealStructure.tranches.map(t => ({
+          label: t.label || "Tranche",
+          trancheType: t.trancheType,
+          amount: t.amount != null ? Number(t.amount) : null,
+          valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
+          equityPct: t.equityPct != null ? Number(t.equityPct) : null,
+          triggerType: t.triggerType,
+          triggerDetails: t.triggerDetails,
+          status: t.status,
+        })),
+      };
+    }
+    enrichedContext.conditionsAnalystMode = "pipeline";
+    return { tier3AgentMap };
+  }
+
+  private async runTier3PreTier2Batch(params: {
+    stepwise: boolean;
+    maxCostUsd?: number;
+    totalCost: number;
+    completedCount: number;
+    tier3AgentMap: Awaited<ReturnType<typeof getTier3Agents>>;
+    enrichedContext: EnrichedAgentContext;
+    allResults: Record<string, AgentResult>;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    startTime: number;
+    onProgress: AnalysisOptions["onProgress"];
+    TOTAL_AGENTS: number;
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { stepwise, maxCostUsd, tier3AgentMap, enrichedContext, allResults, stateMachine, analysis, dealId, startTime, onProgress, TOTAL_AGENTS } = params;
+    let { totalCost, completedCount } = params;
+    // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
+    if (!(maxCostUsd && totalCost >= maxCostUsd)) {
+      const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0];
+
+      onProgress?.({
+        currentAgent: `tier3-parallel (${tier3BeforeAgents.join(", ")})`,
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+        estimatedCostSoFar: totalCost,
+      });
+
+      const batchResults = await Promise.all(
+        tier3BeforeAgents.map(async (agentName) => {
+          const agent = tier3AgentMap[agentName];
+          try {
+            const result = await agent.run(enrichedContext);
+            return { agentName, result };
+          } catch (error) {
+            return {
+              agentName,
+              result: {
+                agentName,
+                success: false,
+                executionTimeMs: 0,
+                cost: 0,
+                error: error instanceof Error ? error.message : "Unknown error",
+              } as AgentResult,
+            };
+          }
+        })
+      );
+
+      // Auto-retry failed agents (1 retry each, sequential to avoid overload)
+      for (let i = 0; i < batchResults.length; i++) {
+        if (!batchResults[i].result.success) {
+          const { agentName } = batchResults[i];
+          console.log(`[Orchestrator] Retrying failed agent: ${agentName}`);
+          const agent = tier3AgentMap[agentName];
+          try {
+            const retryResult = await agent.run(enrichedContext);
+            batchResults[i] = { agentName, result: retryResult };
+            console.log(`[Orchestrator] Retry succeeded for ${agentName}`);
+          } catch (retryError) {
+            console.log(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
+          }
+        }
+      }
+
+      // Collect batch results
+      for (const { agentName, result } of batchResults) {
+        // Sanitize narrative fields for prescriptive language (Rule #1)
+        if (result.success && "data" in result) {
+          const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+          if (totalViolations > 0) {
+            console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+            (result as { data: unknown }).data = sanitized;
+          }
+        }
+        allResults[agentName] = result;
+        totalCost += result.cost;
+        completedCount++;
+        // F97: Tier 3 results stored unsanitized (they contain synthesis/evaluations needed by later Tier 3 agents)
+        enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result, { skipSanitization: true });
+
+        if (result.success) {
+          stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
+        } else {
+          stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
+        }
+
+        await processAgentResult(dealId, agentName, result);
+      }
+
+      await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+      onProgress?.({
+        currentAgent: `tier3-parallel completed`,
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+        estimatedCostSoFar: totalCost,
+      });
+      // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé, doctrine anti-oraculaire).
+    } else {
+      console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
+    }
+
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
+    return { totalCost, completedCount };
+  }
+
+  private async runTier2SectorStep(params: {
+    sectorExpert: Awaited<ReturnType<typeof getTier2SectorExpert>>;
+    totalCost: number;
+    completedCount: number;
+    enrichedContext: EnrichedAgentContext;
+    allResults: Record<string, AgentResult>;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    TOTAL_AGENTS: number;
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { sectorExpert, enrichedContext, allResults, stateMachine, analysis, dealId, onProgress, TOTAL_AGENTS } = params;
+    let { totalCost, completedCount } = params;
+    // STEP 6: SECTOR EXPERT PHASE - Tier 2 (active si secteur détecté)
+    if (sectorExpert) {
+      onProgress?.({
+        currentAgent: `tier2-${sectorExpert.name}`,
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+      });
+
+      try {
+        const sectorResult = await sectorExpert.run(enrichedContext);
+        allResults[sectorExpert.name] = sectorResult;
+        totalCost += sectorResult.cost;
+        completedCount++;
+        enrichedContext.previousResults![sectorExpert.name] = sectorResult;
+
+        if (sectorResult.success) {
+          stateMachine.recordAgentComplete(
+            sectorExpert.name,
+            sectorResult as unknown as AnalysisAgentResult
+          );
+        } else {
+          stateMachine.recordAgentFailed(sectorExpert.name, sectorResult.error ?? "Unknown");
+        }
+
+        await processAgentResult(dealId, sectorExpert.name, sectorResult);
+        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+        onProgress?.({
+          currentAgent: sectorExpert.name,
+          completedAgents: completedCount,
+          totalAgents: TOTAL_AGENTS,
+          latestResult: sectorResult,
+        });
+      } catch (error) {
+        const errorResult: AgentResult = {
+          agentName: sectorExpert.name,
+          success: false,
+          executionTimeMs: 0,
+          cost: 0,
+          error: error instanceof Error ? error.message : "Unknown error",
+        };
+        allResults[sectorExpert.name] = errorResult;
+        stateMachine.recordAgentFailed(sectorExpert.name, errorResult.error ?? "Unknown");
+        completedCount++;
+      }
+    }
+    return { totalCost, completedCount };
+  }
+
+  private async runTier2ConsensusReflexionStep(params: {
+    stepwise: boolean;
+    sectorExpert: Awaited<ReturnType<typeof getTier2SectorExpert>>;
+    allResults: Record<string, AgentResult>;
+    allFindings: ScoredFinding[];
+    verificationContext: VerificationContext;
+    enrichedContext: EnrichedAgentContext;
+    totalCost: number;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    startTime: number;
+  }): Promise<{ totalCost: number }> {
+    const { stepwise, sectorExpert, allResults, allFindings, verificationContext, enrichedContext, analysis, startTime } = params;
+    let { totalCost } = params;
+    // STEP 6.5: CONSENSUS + REFLEXION for Tier 2 sector expert
+    if (sectorExpert) {
+      const sectorResult = allResults[sectorExpert.name];
+      if (sectorResult?.success) {
+        const sectorFindings = extractAllFindings({ [sectorExpert.name]: sectorResult }).allFindings;
+
+        // Consensus: check if sector expert contradicts Tier 1 findings
+        if (sectorFindings.length > 0) {
+          const allFindingsWithSector = [...allFindings, ...sectorFindings];
+          console.log(`[Orchestrator] Running post-Tier 2 consensus (${sectorFindings.length} new findings from sector expert)`);
+          const postTier2Debate = await this.runConsensusDebate(
+            analysis.id, allFindingsWithSector, verificationContext, enrichedContext
+          );
+          totalCost += postTier2Debate.totalTokens * 0.00001;
+        }
+
+        // Reflexion: auto-critique if confidence < 60%
+        if (reflexionEngine.needsReflexion(sectorResult as AnalysisAgentResult, sectorFindings, 2)) {
+          console.log(`[Orchestrator] Tier 2 sector expert needs reflexion`);
+          await this.applyReflexion(
+            analysis.id,
+            sectorExpert.name,
+            sectorResult as AnalysisAgentResult,
+            sectorFindings,
+            `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
+            2,
+            verificationContext,
+            allResults,
+            enrichedContext
+          );
+        }
+      }
+    }
+
+    await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
+    return { totalCost };
+  }
+
+  private async runTier3PostTier2Batch(params: {
+    maxCostUsd?: number;
+    totalCost: number;
+    completedCount: number;
+    tier3AgentMap: Awaited<ReturnType<typeof getTier3Agents>>;
+    enrichedContext: EnrichedAgentContext;
+    allResults: Record<string, AgentResult>;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    TOTAL_AGENTS: number;
+    /**
+     * d-6 — sous-liste de batches à exécuter. Défaut = TIER3_BATCHES_AFTER_TIER2 (single-pass,
+     * byte-identique). Le driver stepwise v3 passe UN batch par step (`tier3-post-{i}` per-agent)
+     * pour borner chaque step < 300s (gate Codex #11). Le restore previousResults + le cost-check
+     * break restent idempotents par batch (gate Codex #11).
+     */
+    batches?: readonly (readonly string[])[];
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { maxCostUsd, tier3AgentMap, enrichedContext, allResults, stateMachine, analysis, dealId, onProgress, TOTAL_AGENTS } = params;
+    let { totalCost, completedCount } = params;
+    // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
+    // Restore full (unsanitized) results for final synthesis agents.
+    // Sanitization (F52) was needed between Tier 1 agents to prevent confirmation bias.
+    // Final synthesis agents (synthesis-deal-scorer, memo-generator) NEED scores/verdicts
+    // to produce the global deal score and investment memo.
+    for (const [agentName, result] of Object.entries(allResults)) {
+      enrichedContext.previousResults![agentName] = result;
+    }
+
+    // Crédits-only : pipeline complet pour tous (synthesis-deal-scorer + memo-generator).
+    // d-6 : sous-liste optionnelle (v3 per-agent) ; défaut = tous les batches (single-pass).
+    const finalSynthesisBatches = params.batches ?? TIER3_BATCHES_AFTER_TIER2;
+
+    for (const batch of finalSynthesisBatches) {
+      // REAL-TIME COST CHECK: Before each batch
+      if (maxCostUsd && totalCost >= maxCostUsd) {
+        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
+        break;
+      }
+
+      // These are single-agent batches, run sequentially
+      const agentName = batch[0];
+      const agent = tier3AgentMap[agentName];
+
+      onProgress?.({
+        currentAgent: agentName,
+        completedAgents: completedCount,
+        totalAgents: TOTAL_AGENTS,
+        estimatedCostSoFar: totalCost,
+      });
+
+      let agentResult: AgentResult | null = null;
+
+      // Try up to 2 attempts (initial + 1 retry)
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const result = await agent.run(enrichedContext);
+          agentResult = result;
+          break; // Success, exit retry loop
+        } catch (error) {
+          const errMsg = error instanceof Error ? error.message : "Unknown error";
+          if (attempt === 1) {
+            console.log(`[Orchestrator] ${agentName} failed (attempt ${attempt}), retrying... Error: ${errMsg}`);
+          } else {
+            console.log(`[Orchestrator] ${agentName} failed after ${attempt} attempts: ${errMsg}`);
+            agentResult = {
+              agentName,
+              success: false,
+              executionTimeMs: 0,
+              cost: 0,
+              error: errMsg,
+            };
+          }
+        }
+      }
+
+      if (agentResult) {
+        allResults[agentName] = agentResult;
+        totalCost += agentResult.cost;
+        completedCount++;
+        enrichedContext.previousResults![agentName] = agentResult;
+
+        if (agentResult.success) {
+          stateMachine.recordAgentComplete(agentName, agentResult as AnalysisAgentResult);
+        } else {
+          stateMachine.recordAgentFailed(agentName, agentResult.error ?? "Unknown");
+        }
+        await processAgentResult(dealId, agentName, agentResult);
+        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+
+        // Thesis-first — apres thesis-reconciler, persister la reconciliation sur
+        // la these initiale (maj verdict + confidence + reconciliationJson + notes)
+        if (
+          agentName === "thesis-reconciler" &&
+          enrichedContext.analysis?.mode !== "post_call_reanalysis"
+        ) {
+          await this.applyThesisReconciliation(enrichedContext, agentResult);
+        }
+
+        onProgress?.({
+          currentAgent: agentName,
+          completedAgents: completedCount,
+          totalAgents: TOTAL_AGENTS,
+          latestResult: agentResult,
+          estimatedCostSoFar: totalCost,
+        });
+      }
+    }
+    return { totalCost, completedCount };
+  }
+
+  private async runFinalCompletion(params: {
+    stepwise: boolean;
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    stateMachine: AnalysisStateMachine;
+    analysis: Awaited<ReturnType<typeof createAnalysis>>;
+    dealId: string;
+    startTime: number;
+    analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+    isUpdate: boolean;
+    collectedWarnings: EarlyWarning[];
+  }): Promise<AnalysisResult> {
+    const { stepwise, allResults, totalCost, stateMachine, analysis, dealId, startTime, analysisModeOverride, isUpdate, collectedWarnings } = params;
+    // COMPLETE
+    await stateMachine.complete();
+    // DEBUG log removed for production - uncomment for debugging:
+    // console.log("[Orchestrator:DEBUG] State machine completed, generating summary...");
+
+    const summary = generateFullAnalysisSummary(allResults);
+    const totalTimeMs = Date.now() - startTime;
+    const failedAgents = Object.entries(allResults).filter(([, r]) => !r.success).map(([k, r]) => `${k}: ${r.error ?? "no error msg"}`);
+    if (failedAgents.length > 0) {
+      console.log(`[Orchestrator] Failed agents in allResults: ${failedAgents.join(", ")}`);
+    }
+    const allSuccess = Object.values(allResults).every((r) => r.success);
+    const orchestrationSummary = stateMachine.getSummary();
+
+    // D.5a — en mode stepwise, pas de checkpoint legacy COMPLETED : la complétion
+    // canonique passe par completeAnalysis ci-dessous ; l'état durable via STEPWISE:*.
+    if (!stepwise) {
+      await saveCheckpoint(analysis.id, {
+        state: "COMPLETED",
+        completedAgents: Object.keys(allResults),
+        pendingAgents: [],
+        failedAgents: Object.entries(allResults)
+          .filter(([, result]) => !result.success)
+          .map(([agent, result]) => ({
+            agent,
+            error: result.error ?? "no error msg",
+            retries: 1,
+          })),
+        findings: extractAllFindings(allResults).allFindings,
+        results: allResults,
+        totalCost,
+        startTime: new Date(startTime).toISOString(),
+      });
+    }
+
+    await completeAnalysis({
+      analysisId: analysis.id,
+      success: allSuccess,
+      totalCost,
+      totalTimeMs,
+      summary: `${summary}\n\n**Orchestration**: ${orchestrationSummary.transitions} state transitions, ${orchestrationSummary.totalFindings} findings`,
+      results: allResults,
+      mode: analysisModeOverride ?? "full_analysis",
+    });
+    // End cost monitoring after final results are persisted so `_costReport`
+    // is merged into the canonical completed payload instead of being overwritten.
+    const costReport = await costMonitor.endAnalysis({
+      persistAnalysisSummary: false,
+    });
+    if (costReport) {
+      console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
+    }
+    // DEBUG log removed for production - uncomment for debugging:
+    // console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
+
+    await updateDealStatus(dealId, "IN_DD");
+
+    // F40: Calculate analysis delta for re-analyses
+    let analysisDelta;
+    if (isUpdate) {
+      try {
+        const { calculateAnalysisDelta } = await import("@/services/analysis-delta");
+        const previousAnalysis = await prisma.analysis.findFirst({
+          where: { dealId, id: { not: analysis.id }, completedAt: { not: null } },
+          orderBy: { completedAt: "desc" },
+          select: { id: true },
+        });
+        if (previousAnalysis) {
+          analysisDelta = await calculateAnalysisDelta(analysis.id, previousAnalysis.id);
+          if (analysisDelta) {
+            console.log(`[Orchestrator] F40: Delta vs previous analysis: ${analysisDelta.scoreDelta.overall.delta >= 0 ? "+" : ""}${analysisDelta.scoreDelta.overall.delta} points`);
+          }
+        }
+      } catch (err) {
+        console.error("[Orchestrator] Analysis delta failed:", err);
+      }
+    }
+
+    return this.addWarningsToResult({
+      sessionId: analysis.id,
+      dealId,
+      type: "full_analysis",
+      success: allSuccess,
+      results: allResults,
+      totalCost,
+      totalTimeMs,
+      summary,
+      tiersExecuted: [...TIERS_EXECUTED],
+      analysisDelta: analysisDelta ?? undefined,
+    }, collectedWarnings);
+  }
+
+  private async runFullAnalysis(
+    deal: DealWithDocs,
+    dealId: string,
+    onProgress: AnalysisOptions["onProgress"],
+    advancedOptions: AdvancedAnalysisOptions,
+    stepRunner: StepRunner = new InlineStepRunner()
+  ): Promise<AnalysisResult> {
+    const init = await this.initializeFullAnalysisRun(deal, dealId, advancedOptions);
+
+    // d-2b — OFF STRICT : flag stepwise OFF → chemin single-pass EXACT (zéro driver/snapshot),
+    // BYTE-INERT en prod (DEEP_DIVE_STEPWISE=0). === comportement d'avant le câblage stepwise
+    // (runTerminalStepwiseDriver avec stepwise=false retournait déjà le liveResult exact).
+    if (!init.stepwise) {
+      return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
+    }
+
+    // ON — Routing EXACT par version de graphe stepwise (lock Codex #1). La version est STICKY
+    // (stampée au dispatch, route.ts) → un run en vol reprend TOUJOURS sur SON graphe, jamais
+    // sur un graphe déployé après lui. Littéraux (PAS STEPWISE_GRAPH_VERSION qui bumpe) :
+    //   - `undefined|1` (d-2a) → driver « 1 step englobante » (D.5d-1c) : runs dispatchés AVANT
+    //     d-2b (graphVersion 1) reprennent sur ce graphe.
+    //   - `2` (d-2b) → graphe multi-unités durable (runFullAnalysisStepwise).
+    //   - `3` (d-3) → graphe v3 FIN : Tier1 per-phase + post-tier1-glue (runFullAnalysisStepwiseV3).
+    // Version inconnue (worker obsolète vs dispatch plus récent) → LÈVE plutôt que mauvais graphe.
+    const graphVersion = advancedOptions.stepwiseGraphVersion;
+    if (graphVersion === undefined || graphVersion === 1) {
+      return runTerminalStepwiseDriver({
+        stepRunner,
+        stepwise: true,
+        pipeline: () => this.runFullAnalysisPipeline(deal, dealId, onProgress, init),
+        loadPersistedResults: async () =>
+          (await loadResults(init.analysis.id)) as AnalysisResult["results"] | null,
+      });
+    }
+    if (graphVersion === 2) {
+      // INVARIANT : le graphe v2 ne voit JAMAIS stopAfterThesis. Une re-extraction (stopAfterThesis)
+      // est courte (Tier 0 + thèse, 1 step) → aucun besoin de durabilité Tier1+, et le snapshot v2
+      // ne porte PAS thesisOutput (lu uniquement par le bloc stopAfterThesis ; null au rehydrate).
+      // On la route donc en single-pass → matérialise l'invariant (cf. gate Codex d-2b-4).
+      if (init.stopAfterThesis) {
+        return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
+      }
+      return this.runFullAnalysisStepwise(deal, dealId, onProgress, init, stepRunner);
+    }
+    if (graphVersion === 3) {
+      // INVARIANT v3 ∌ stopAfterThesis (comme v2) : re-extraction courte (Tier 0 + thèse) → single-pass
+      // (le snapshot v3 ne porte pas thesisOutput ; même matérialisation que v2, gate Codex d-2b-4).
+      if (init.stopAfterThesis) {
+        return this.runFullAnalysisPipeline(deal, dealId, onProgress, init);
+      }
+      return this.runFullAnalysisStepwiseV3(deal, dealId, onProgress, init, stepRunner);
+    }
+    throw new Error(
+      `[stepwise] version de graphe ${graphVersion} non supportée par ce worker (dispatch plus récent que le code déployé)`
+    );
+  }
+
+  /**
+   * D.5d-1b — Corps pipeline de full_analysis (stateMachine.start() → returns), extrait
+   * BYTE-INERT de runFullAnalysis. Sépare le bootstrap (initializeFullAnalysisRun, hors de
+   * ce corps, crée la state machine non-sérialisable) du séquenceur durable — pré-requis du
+   * wrapper stepwise D.5d-1c (Modèle B). La frontière try/catch (transition FAILED +
+   * completeAnalysis + endAnalysis) reste intégralement ici. Aucun changement de logique ni
+   * d'ordre d'effet : déplacement net du bloc destructure + try/catch.
+   */
+  private async runFullAnalysisPipeline(
+    deal: DealWithDocs,
+    dealId: string,
+    onProgress: AnalysisOptions["onProgress"],
+    init: FullAnalysisRunInit
+  ): Promise<AnalysisResult> {
+    const {
+      isUpdate,
+      enableTrace,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      initialCanonicalDeal,
+      TOTAL_AGENTS,
+      corpusSnapshot,
+      scopedDocuments,
+      analysis,
+      stateMachine,
+      allResults,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
+
     try {
       await stateMachine.start();
 
-      // Phase 5.1 (Codex round 15 P1) — wire evidence into full_analysis path.
-      const { evidenceContext: fullEvidenceContext, evidenceToday: fullEvidenceToday } =
-        await loadEvidenceContextSafe(dealId);
-      const baseContext: AgentContext = {
+      const baseContext = await this.buildBaseAnalysisContext({
         dealId,
-        deal: initialCanonicalDeal,
-        canonicalDeal: initialCanonicalDeal,
-        analysis: {
-          id: analysis.id,
-          mode: analysis.mode ?? analysisModeOverride ?? "full_analysis",
-          thesisBypass: false,
-          thesisId: null,
-          corpusSnapshotId: corpusSnapshot?.id ?? null,
-        },
-        documents: scopedDocuments,
-        evidenceContext: fullEvidenceContext,
-        evidenceToday: fullEvidenceToday,
-        previousResults: {},
-      };
+        initialCanonicalDeal,
+        analysis,
+        analysisModeOverride,
+        corpusSnapshot,
+        scopedDocuments,
+      });
 
       // STEP 0: TIER 0 FACT EXTRACTION (runs BEFORE everything)
       // Extracts structured facts that will be available to all agents
-      if (scopedDocuments.length > 0) {
-        const tier0Result = await this.runTier0FactExtraction(
-          { ...deal, documents: scopedDocuments },
-          isUpdate,
-          onProgress
-        );
-        factStore = tier0Result.factStore;
-        factStoreFormatted = tier0Result.factStoreFormatted;
-        founderResponses = tier0Result.founderResponses;
-        totalCost += tier0Result.cost;
-        completedCount++;
-
-        if (tier0Result.extractionResult) {
-          allResults["fact-extractor"] = {
-            agentName: "fact-extractor",
-            success: true,
-            executionTimeMs: tier0Result.executionTimeMs,
-            cost: tier0Result.cost,
-            data: tier0Result.extractionResult,
-          } as AgentResult & { data: FactExtractorOutput };
-        }
-
-        console.log(`[Orchestrator:FullAnalysis] Tier 0 complete: ${factStore.length} facts in store`);
-      }
-
-      // STEP 1: DOCUMENT EXTRACTION (must run first)
-      // We need extracted data (tagline, competitors, founders) for Context Engine
-      await stateMachine.startExtraction();
-
-      onProgress?.({
-        currentAgent: "document-extractor",
-        completedAgents: completedCount,
-        totalAgents: TOTAL_AGENTS,
-      });
-
-      // Extract data from documents first
-      let extractedData: ContextSeed = {};
-
-      if (scopedDocuments.length > 0) {
-        try {
-          const extractorResult = await BASE_AGENTS["document-extractor"].run(baseContext);
-          allResults["document-extractor"] = extractorResult;
-          totalCost += extractorResult.cost;
-          baseContext.previousResults!["document-extractor"] = extractorResult;
-          completedCount++;
-
-          stateMachine.recordAgentComplete(
-            "document-extractor",
-            extractorResult as AnalysisAgentResult
-          );
-          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-          // Extract data for Context Engine
-          if (extractorResult.success) {
-            extractedData = this.extractContextSeed(extractorResult);
-            console.log(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
-          }
-        } catch (error) {
-          const errorResult: AgentResult = {
-            agentName: "document-extractor",
-            success: false,
-            executionTimeMs: 0,
-            cost: 0,
-            error: error instanceof Error ? error.message : "Unknown error",
-          };
-          allResults["document-extractor"] = errorResult;
-          stateMachine.recordAgentFailed("document-extractor", errorResult.error ?? "Unknown");
-          completedCount++;
-        }
-      }
-
-      // STEP 1.5: DECK COHERENCE CHECK (Tier 0.5)
-      // Verifies data consistency before Tier 1 agents analyze
-      let deckCoherenceReport: DeckCoherenceReport | null = null;
-      if (scopedDocuments.length > 0 && allResults["document-extractor"]?.success) {
-        const coherenceResult = await this.runDeckCoherenceCheck(
-          { ...deal, documents: scopedDocuments },
-          extractedData as Record<string, unknown> | undefined,
-          onProgress
-        );
-        deckCoherenceReport = coherenceResult.report;
-        totalCost += coherenceResult.cost;
-
-        if (deckCoherenceReport) {
-          allResults["deck-coherence-checker"] = {
-            agentName: "deck-coherence-checker",
-            success: true,
-            executionTimeMs: coherenceResult.executionTimeMs,
-            cost: coherenceResult.cost,
-            data: deckCoherenceReport,
-          } as AgentResult & { data: DeckCoherenceReport };
-        }
-
-        console.log(`[Orchestrator:FullAnalysis] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
-      }
-
-      // STEP 2: CONTEXT ENGINE (runs AFTER extraction to use extracted data)
-      await stateMachine.startGathering();
-
-      onProgress?.({
-        currentAgent: "context-engine",
-        completedAgents: completedCount,
-        totalAgents: TOTAL_AGENTS,
-      });
-
-      const contextEngineData = await this.enrichContext(deal, extractedData, factStore);
-      const mergedContextFacts = await this.mergeContextEngineFacts(
-        dealId,
-        contextEngineData,
+      ({
+        totalCost,
+        completedCount,
         factStore,
-        corpusSnapshot?.id ?? null
-      );
-      factStore = mergedContextFacts.factStore;
-      factStoreFormatted = mergedContextFacts.factStoreFormatted;
-
-      const filteredFactStore = replaceUnreliableWithPlaceholders(factStore);
-      const filteredFactStoreFormatted = factStore.length > 0
-        ? formatFactsForScoringAgents(factStore)
-        : factStoreFormatted;
-
-      // Load questions from previous analysis for cross-run persistence
-      const prevQuestions = await loadPreviousAnalysisQuestions(dealId);
-      const previousAnalysisQuestions = prevQuestions.questions.map((q) => ({
-        ...q,
-        answered: prevQuestions.answeredQuestionTexts.some(
-          (a) => a.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40) ===
-            q.question.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 40)
-        ),
+        factStoreFormatted,
+        founderResponses,
+      } = await this.runTier0Step({
+        deal,
+        scopedDocuments,
+        isUpdate,
+        onProgress,
+        allResults,
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+        founderResponses,
+        analysisId: analysis.id,
       }));
-      if (previousAnalysisQuestions.length > 0) {
-        console.log(`[Orchestrator:FullAnalysis] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
-      }
 
-      // Build enriched context with Fact Store for all agents
-      const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
-        ...baseContext,
-        contextEngine: contextEngineData,
-        factStore: filteredFactStore,
-        factStoreFormatted: filteredFactStoreFormatted,
-        extractedData: this.toExtractedContextData(extractedData),
-        analysis: {
-          id: analysis.id,
-          thesisBypass: false,
-          thesisId: null,
-          corpusSnapshotId: corpusSnapshot?.id ?? null,
-        },
-        deckCoherenceReport: deckCoherenceReport ?? undefined,
-        founderResponses: founderResponses.length > 0 ? founderResponses : undefined,
-        previousAnalysisQuestions: previousAnalysisQuestions.length > 0 ? previousAnalysisQuestions : undefined,
+      let extractedData: ContextSeed;
+      ({ totalCost, completedCount, extractedData } = await this.runDocumentExtractorStep({
+        baseContext,
+        scopedDocuments,
+        onProgress,
+        analysis,
+        stateMachine,
+        allResults,
+        totalCost,
+        completedCount,
+        TOTAL_AGENTS,
+      }));
+
+      let deckCoherenceReport: DeckCoherenceReport | null;
+      ({ totalCost, deckCoherenceReport } = await this.runDeckCoherenceStep({
+        deal,
+        scopedDocuments,
+        extractedData,
+        onProgress,
+        allResults,
+        totalCost,
+      }));
+
+      let enrichedContext: EnrichedAgentContext;
+      ({ factStore, factStoreFormatted, enrichedContext } = await this.runContextEngineStep({
+        deal,
+        dealId,
+        baseContext,
+        stateMachine,
+        extractedData,
+        analysis,
+        corpusSnapshot,
+        deckCoherenceReport,
+        founderResponses,
+        onProgress,
+        completedCount,
+        TOTAL_AGENTS,
+        factStore,
+        factStoreFormatted,
+      }));
+
+      let thesisOutput: ThesisExtractorOutput | null;
+      ({ totalCost, completedCount, thesisOutput } = await this.runThesisExtractionStep({
+        dealId,
+        analysisModeOverride,
+        analysis,
+        enrichedContext,
+        corpusSnapshot,
+        allResults,
+        enableTrace,
+        totalCost,
+        completedCount,
+      }));
+
+      return await this.runFullAnalysisPostThesis({
+        deal,
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        extractedData,
+        thesisOutput,
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+        // d-2b-1 (gate Codex) — remonte le coût courant du tail dans CE scope pour que le
+        // catch terminal ci-dessous reste byte-équivalent sur un échec post-thèse.
+        reportTotalCost: (c: number) => { totalCost = c; },
       });
+    } catch (error) {
+      return await this.failFullAnalysis(error, {
+        stateMachine,
+        analysis,
+        dealId,
+        totalCost,
+        allResults,
+        analysisModeOverride,
+        startTime,
+        collectedWarnings,
+      });
+    }
+  }
 
-      // STEP 2.5: THESIS EXTRACTION (Tier 0.5) — thesis-first architecture
-      // Extrait la these d'investissement, la teste contre 3 frameworks (YC/Thiel/AD),
-      // persiste en DB, injecte dans enrichedContext pour que Tier 1/2/3 l'utilisent.
-      const shouldReuseLatestThesis = analysisModeOverride === "post_call_reanalysis";
-      let thesisOutput: ThesisExtractorOutput | null = null;
+  /**
+   * d-2b-3 — Gestion d'échec terminale de full_analysis (transition FAILED best-effort +
+   * completeAnalysis + endAnalysis + addWarningsToResult), extraite BYTE-INERT du catch de
+   * runFullAnalysisPipeline. PARTAGÉE par runFullAnalysisPipeline ET runFullAnalysisStepwise
+   * (même handler d'échec, pas de drift). Reçoit le `totalCost` courant (déjà remonté par
+   * reportTotalCost depuis le tail) → coût d'échec identique à avant l'extraction.
+   */
+  private async failFullAnalysis(
+    error: unknown,
+    ctx: {
+      stateMachine: AnalysisStateMachine;
+      analysis: Awaited<ReturnType<typeof createAnalysis>>;
+      dealId: string;
+      totalCost: number;
+      allResults: Record<string, AgentResult>;
+      analysisModeOverride: AdvancedAnalysisOptions["analysisModeOverride"];
+      startTime: number;
+      collectedWarnings: EarlyWarning[];
+    }
+  ): Promise<AnalysisResult> {
+    const { stateMachine, analysis, dealId, totalCost, allResults, analysisModeOverride, startTime, collectedWarnings } = ctx;
+    // DEBUG log removed for production - uncomment for debugging:
+    // console.error("[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
+    // DEBUG log removed for production - uncomment for debugging:
+    // console.error("[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
+    // Only transition to FAILED if not already completed
+    const currentState = stateMachine.getState();
+    if (currentState !== "COMPLETED" && currentState !== "FAILED") {
+      await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
+    }
 
-      if (shouldReuseLatestThesis) {
-        const latestThesis = await thesisService.getLatest(dealId);
-        if (!latestThesis) {
-          throw new Error("Cannot run post-call reanalysis without a canonical latest thesis");
-        }
+    const totalTimeMs = Date.now() - startTime;
 
-        await this.rehydrateResumeThesis(analysis.id, latestThesis.id, enrichedContext);
-        enrichedContext.analysis = {
-          ...(enrichedContext.analysis ?? { id: analysis.id }),
-          mode: enrichedContext.analysis?.mode ?? analysis.mode ?? analysisModeOverride ?? "full_analysis",
-          thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
-          thesisId: latestThesis.id,
-          corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
-        };
+    await completeAnalysis({
+      analysisId: analysis.id,
+      success: false,
+      totalCost,
+      totalTimeMs,
+      summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      results: allResults,
+      mode: analysisModeOverride ?? "full_analysis",
+      statusOverride: "FAILED",
+    });
 
-        await prisma.analysis.update({
-          where: { id: analysis.id },
-          data: { thesisId: latestThesis.id },
-        });
+    // End cost monitoring after final results are persisted so `_costReport`
+    // survives the failed completion payload as well.
+    await costMonitor.endAnalysis({
+      persistAnalysisSummary: false,
+    });
 
-        console.log(
-          `[Orchestrator:FullAnalysis] Reusing canonical latest thesis for post-call reanalysis ` +
-          `(analysisId=${analysis.id}, thesisId=${latestThesis.id})`
-        );
-      } else {
-        thesisOutput = await this.runThesisExtraction(
-          enrichedContext,
-          analysis.id,
-          dealId,
-          allResults,
-          enableTrace,
-          corpusSnapshot,
-        );
-        if (allResults["thesis-extractor"]?.cost) {
-          totalCost += allResults["thesis-extractor"].cost;
-          completedCount++;
-        }
-      }
+    return this.addWarningsToResult({
+      sessionId: analysis.id,
+      dealId,
+      type: "full_analysis",
+      success: false,
+      results: allResults,
+      totalCost,
+      totalTimeMs,
+      summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+      tiersExecuted: [...TIERS_EXECUTED],
+    }, collectedWarnings);
+  }
 
+
+  /**
+   * d-2b — Tail post-thèse de full_analysis (STEP 2.6 stop-after-thesis -> Tier 1/2/3 ->
+   * complétion finale), extrait BYTE-INERT de runFullAnalysisPipeline. Séquence PARTAGÉE
+   * par le chemin single-pass (runFullAnalysisPipeline) ET le chemin durable
+   * (runFullAnalysisStepwise, unité « rest » à venir) -> aucun drift de séquence. Reçoit
+   * l'état VIVANT au boundary post-thèse (enrichedContext + locals mutés) + l'init statique.
+   * Le try/catch terminal reste chez l'appelant (frontière inchangée). Retourne l'AnalysisResult
+   * terminal (succès, early-return failFast/cost-limit, ou stop-after-thesis).
+   */
+  private async runFullAnalysisPostThesis(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    extractedData: ContextSeed;
+    thesisOutput: ThesisExtractorOutput | null;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    /** Remonte le totalCost courant du tail au scope appelant (catch terminal de
+     *  runFullAnalysisPipeline) : byte-équivalence du coût sur le chemin d'échec post-thèse. */
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<AnalysisResult> {
+    const { deal, dealId, onProgress, init, enrichedContext, extractedData, thesisOutput, reportTotalCost } = params;
+    const {
+      failFastOnCritical,
+      maxCostUsd,
+      onEarlyWarning,
+      isUpdate,
+      stopAfterThesis,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      sectorExpert,
+      TOTAL_AGENTS,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    try {
       // STEP 2.6: STOP-AFTER-THESIS — re-extraction de these (upload doc / admin backfill).
       // Pas de gate, pas de decision : on s'arrete apres la these et on COMPLETE l'analyse
       // en mode thesis_only (meme compute qu'avant — seuls Tier 0 + these tournent, 1 cr).
@@ -1783,6 +3154,8 @@ export class AgentOrchestrator {
         };
       }
 
+      await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
+
       // STEP 3: ANALYSIS PHASE - Tier 1 Agents in 4 Sequential Phases
       // Phase A: deck-forensics → validates deck claims
       // Phase B: financial-auditor → validates financial metrics
@@ -1810,630 +3183,1252 @@ export class AgentOrchestrator {
         stateMachine,
       });
 
-      const { allFindings, lowConfidenceAgents } = phasesResult;
-      totalCost += phasesResult.costIncurred;
-      completedCount += phasesResult.completedInPhases;
-      factStore = phasesResult.updatedFactStore;
-      factStoreFormatted = phasesResult.updatedFactStoreFormatted;
-
-      // Rebuild verificationContext for global consensus and downstream use
-      const verificationContext = await this.buildVerificationContext(
+      // d-3 (R1) — tail post-Tier1 (aggregation → complétion finale) extrait BYTE-INERT vers
+      // runFullAnalysisPostTier1, PARTAGÉ par ce chemin (single-pass/v2) ET le driver stepwise v3
+      // (qui exécute Tier1 per-phase puis appelle ce tail en terminal). reportTotalCost remonte le
+      // coût courant du tail dans CE scope (try/finally inchangé) → byte-équivalence sur tous les
+      // chemins de sortie (succès, early-return failFast/cost-limit, exception).
+      return await this.runFullAnalysisPostTier1({
+        deal,
+        dealId,
+        onProgress,
+        init,
         enrichedContext,
         extractedData,
+        phasesResult,
+        totalCost,
+        completedCount,
+        factStore,
         factStoreFormatted,
-        enrichedContext.deal,
-      );
+        reportTotalCost: (c: number) => {
+          totalCost = c;
+        },
+      });
+    } finally {
+      // d-2b-1 (gate Codex) — coût courant remonté sur TOUS les chemins de sortie (succès,
+      // early-return, exception) → le catch terminal de runFullAnalysisPipeline voit le même
+      // totalCost qu'avant l'extraction.
+      reportTotalCost(totalCost);
+    }
+  }
 
-      // Publish all findings to message bus
-      for (const finding of allFindings) {
-        await messageBus.publish(createFindingMessage(finding.agentName, "*", finding));
-      }
+  /**
+   * d-3 (R1) — Tail post-Tier1 de full_analysis (STEP 4 aggregation → fail-fast → consensus
+   * global → cost-limit → cross-val → red-flags → synthèse → Tier3-pre → Tier2-sector →
+   * Tier2-consensus/reflexion → Tier3-post → complétion finale), extrait BYTE-INERT de
+   * runFullAnalysisPostThesis. Séquence PARTAGÉE par le chemin single-pass (runFullAnalysisPostThesis,
+   * APRÈS runTier1Phases) ET le chemin durable v3 (runFullAnalysisStepwiseV3, APRÈS la boucle Tier1
+   * stepwise + finalizeTier1Phases) → aucun drift de séquence. Reçoit le `phasesResult` (réel en
+   * single-pass ; shim coût-neutre `costIncurred:0`/`completedInPhases:0` en v3 où totalCost/
+   * completedCount sont DÉJÀ globaux) + l'état VIVANT au boundary post-Tier1. Le try/finally
+   * remonte le totalCost courant au scope appelant (reportTotalCost) sur tous les chemins de sortie.
+   */
+  private async runFullAnalysisPostTier1(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    extractedData: ContextSeed;
+    phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>>;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    /** Remonte le totalCost courant du tail au scope appelant : byte-équivalence du coût. */
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<AnalysisResult> {
+    const { deal, dealId, onProgress, init, enrichedContext, extractedData, phasesResult, reportTotalCost } = params;
+    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    try {
+      const glue = await this.runPostTier1Glue({
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        extractedData,
+        phasesResult,
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+        reportTotalCost: (c) => {
+          totalCost = c;
+        },
+      });
+      if (glue.done) return glue.result;
+      completedCount = glue.completedCount;
 
-      // Persist all findings
-      if (allFindings.length > 0) {
-        await persistScoredFindings(analysis.id, "tier1-aggregate", allFindings);
-      }
+      return await this.runPostTier1Rest({
+        deal,
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        verificationContext: glue.verificationContext,
+        allFindings: glue.allFindings,
+        totalCost,
+        completedCount,
+        reportTotalCost: (c) => {
+          totalCost = c;
+        },
+      });
+    } finally {
+      reportTotalCost(totalCost);
+    }
+  }
 
-      // Diagnostic log: show tier1 success/failure breakdown
-      const tier1SuccessCount = TIER1_AGENT_NAMES.filter(n => allResults[n]?.success).length;
-      const tier1FailCount = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success).length;
-      const tier1FailedNames = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success);
-      console.log(
-        `[Orchestrator] Tier 1 results: ${tier1SuccessCount}/${TIER1_AGENT_NAMES.length} succeeded, ${tier1FailCount} failed. ` +
-        `Extracted ${allFindings.length} findings. ` +
-        `Low confidence: ${lowConfidenceAgents.join(", ") || "none"}` +
-        (tier1FailedNames.length > 0 ? `. Failed: ${tier1FailedNames.join(", ")}` : "")
-      );
+  /**
+   * d-3 (R3) — « GLUE » post-Tier1, extrait BYTE-INERT de runFullAnalysisPostTier1.
+   * Séquence aggregation → failFast (early-return) → consensus global → cost-limit (early-return)
+   * → cross-validation → red-flags. Mute allResults/enrichedContext par RÉFÉRENCE (cross-val :
+   * scores allResults + enrichedContext.tier1CrossValidation ; red-flags : consolidatedRedFlags)
+   * comme avant. PARTAGÉ par le chemin single-pass (runFullAnalysisPostTier1) ET le driver
+   * stepwise v3 (step durable `post-tier1-glue`, d-3-6). Le `finally` remonte le totalCost courant
+   * au scope appelant (reportTotalCost) sur TOUS les chemins de sortie (not-done, early-return,
+   * exception) — byte-équivalence du coût, pattern d-2b-1.
+   *
+   * NB byte-équivalence (gate Codex #10) : les early-returns failFast/cost-limit appellent
+   * `stateMachine.complete()` depuis ANALYZING/DEBATING (sans startSynthesis) → transition INVALIDE
+   * → `transition()` LÈVE (state-machine.ts:219). Le `return { done: true }` est donc INJOIGNABLE au
+   * runtime (préservé pour la forme, comme le code d'origine `if (failFastResult.done) return …`) ;
+   * une fois déclenchés (failFastOnCritical / maxCostUsd), ces chemins THROWENT → catch terminal →
+   * FAILED. Bug latent isolé hors chantier (corriger la transition changerait la sortie OFF).
+   */
+  private async runPostTier1Glue(params: {
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    extractedData: ContextSeed;
+    phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>>;
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    /** Remonte le totalCost courant du glue au scope appelant : byte-équivalence du coût. */
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<
+    | { done: true; result: AnalysisResult }
+    | { done: false; completedCount: number; verificationContext: VerificationContext; allFindings: ScoredFinding[] }
+  > {
+    const { dealId, onProgress, init, enrichedContext, extractedData, phasesResult, reportTotalCost } = params;
+    const {
+      failFastOnCritical,
+      maxCostUsd,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      TOTAL_AGENTS,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    try {
+      let verificationContext: VerificationContext;
+      let allFindings: ScoredFinding[];
+      // lowConfidenceAgents : retourné par aggregation mais DEAD en aval (log-only) → non propagé.
+      ({ totalCost, completedCount, factStore, factStoreFormatted, verificationContext, allFindings } = await this.runPostTier1Aggregation({
+        stepwise,
+        enrichedContext,
+        analysis,
+        allResults,
+        extractedData,
+        startTime,
+        phasesResult,
+        totalCost,
+        completedCount,
+        factStore,
+        factStoreFormatted,
+      }));
 
-      // FAIL-FAST: Check for critical warnings after Tier 1
-      if (failFastOnCritical) {
-        const criticalWarnings = collectedWarnings.filter(w => w.severity === "critical");
-        if (criticalWarnings.length > 0) {
-          console.log(`[Orchestrator] FAIL-FAST: ${criticalWarnings.length} critical warning(s) detected`);
-          await stateMachine.complete();
+      const failFastResult = await this.runPostTier1FailFast({
+        failFastOnCritical,
+        collectedWarnings,
+        stateMachine,
+        analysis,
+        dealId,
+        analysisModeOverride,
+        allResults,
+        totalCost,
+        startTime,
+      });
+      if (failFastResult.done) return failFastResult;
 
-          const summary = `**CRITICAL WARNINGS DETECTED - Analysis stopped early**\n\n${criticalWarnings.map(w => `- ${w.title}: ${w.description}`).join("\n")}`;
-          const totalTimeMs = Date.now() - startTime;
+      ({ totalCost } = await this.runGlobalConsensusStep({
+        allFindings,
+        verificationContext,
+        enrichedContext,
+        stateMachine,
+        analysis,
+        onProgress,
+        completedCount,
+        TOTAL_AGENTS,
+        totalCost,
+      }));
 
-          await completeAnalysis({
+      const costLimitResult = await this.runPostConsensusCostLimit({
+        maxCostUsd,
+        totalCost,
+        stateMachine,
+        allResults,
+        analysis,
+        analysisModeOverride,
+        dealId,
+        collectedWarnings,
+        startTime,
+      });
+      if (costLimitResult.done) return costLimitResult;
+
+      this.runTier1CrossValidationStep({ allResults, enrichedContext });
+
+      await this.runRedFlagConsolidationStep({ allResults, enrichedContext });
+
+      return { done: false, completedCount, verificationContext, allFindings };
+    } finally {
+      reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-3 (R3) / d-4 — « REST » post-Tier1. Délègue à deux sous-unités PARTAGÉES (single-pass ET
+   * driver stepwise v3) : `runPostTier1Tier3Pre` (synthesis-setup + batch Tier3 pré-Tier2) puis
+   * `runPostTier1RestAfterTier3Pre` (tier2-sector → tier2-consensus/reflexion → tier3-post →
+   * final-completion). Le split permet au driver v3 de peeler `tier3-pre` en step durable (d-4) tout
+   * en gardant runPostTier1Rest comme source d'ordre du chemin OFF (pas de drift de séquence). Le
+   * `finally` (chaîné avec celui de RestAfterTier3Pre, pattern d-2b-1) remonte le totalCost courant
+   * au scope appelant (reportTotalCost) sur tous les chemins de sortie — byte-équivalence du coût.
+   */
+  private async runPostTier1Rest(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    verificationContext: VerificationContext;
+    allFindings: ScoredFinding[];
+    totalCost: number;
+    completedCount: number;
+    /** Remonte le totalCost courant du rest au scope appelant : byte-équivalence du coût. */
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<AnalysisResult> {
+    const { deal, dealId, onProgress, init, enrichedContext, verificationContext, allFindings, reportTotalCost } = params;
+    let { totalCost, completedCount } = params;
+    try {
+      ({ totalCost, completedCount } = await this.runPostTier1Tier3Pre({
+        deal,
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        totalCost,
+        completedCount,
+      }));
+
+      return await this.runPostTier1RestAfterTier3Pre({
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        verificationContext,
+        allFindings,
+        totalCost,
+        completedCount,
+        reportTotalCost: (c) => {
+          totalCost = c;
+        },
+      });
+    } finally {
+      reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-4 — « TIER3-PRE » post-Tier1, extrait BYTE-INERT de runPostTier1Rest. Synthesis-setup
+   * (startSynthesis + getTier3Agents + DealTerms/Structure/BAPrefs dans enrichedContext) suivi du
+   * batch Tier3 pré-Tier2 (conditions-analyst, contradiction-detector, devils-advocate, parallèles
+   * + retry séquentiel). tier3AgentMap reste LOCAL (DynamicAgent = instances non-sérialisables) :
+   * re-dérivé via getTier3Agents() (pur + module-cached) dans runPostTier1RestAfterTier3Pre. PARTAGÉ
+   * par le chemin single-pass (runPostTier1Rest) ET le driver stepwise v3 (step durable `tier3-pre`,
+   * d-4). Pas d'early-return (cost-check de tier3-pré = SKIP-only).
+   */
+  private async runPostTier1Tier3Pre(params: {
+    deal: DealWithDocs;
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    totalCost: number;
+    completedCount: number;
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { deal, dealId, onProgress, init, enrichedContext } = params;
+    const { maxCostUsd, startTime, TOTAL_AGENTS, analysis, stateMachine, allResults, stepwise } = init;
+    let { totalCost, completedCount } = params;
+
+    const { tier3AgentMap } = await this.runSynthesisSetupStep({ deal, dealId, stateMachine, enrichedContext });
+
+    ({ totalCost, completedCount } = await this.runTier3PreTier2Batch({
+      stepwise,
+      maxCostUsd,
+      totalCost,
+      completedCount,
+      tier3AgentMap,
+      enrichedContext,
+      allResults,
+      stateMachine,
+      analysis,
+      dealId,
+      startTime,
+      onProgress,
+      TOTAL_AGENTS,
+    }));
+
+    return { totalCost, completedCount };
+  }
+
+  /**
+   * d-4 / d-5 — « REST APRÈS TIER3-PRE » post-Tier1. Délègue à deux sous-unités PARTAGÉES :
+   * `runPostTier1Tier2` (tier2-sector + tier2-consensus/reflexion) puis `runPostTier1RestAfterTier2Sector`
+   * (tier3-post + final-completion). Le split permet au driver v3 de peeler `tier2-sector` en step durable
+   * (d-5) tout en gardant la chaîne comme source d'ordre du chemin OFF (pas de drift). Le `finally`
+   * (chaîné avec celui de RestAfterTier2Sector, pattern d-2b-1) remonte le totalCost courant au scope
+   * appelant (reportTotalCost) sur tous les chemins de sortie — byte-équivalence du coût.
+   */
+  private async runPostTier1RestAfterTier3Pre(params: {
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    verificationContext: VerificationContext;
+    allFindings: ScoredFinding[];
+    totalCost: number;
+    completedCount: number;
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<AnalysisResult> {
+    const { dealId, onProgress, init, enrichedContext, verificationContext, allFindings, reportTotalCost } = params;
+    let { totalCost, completedCount } = params;
+    try {
+      ({ totalCost, completedCount } = await this.runPostTier1Tier2({
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        verificationContext,
+        allFindings,
+        totalCost,
+        completedCount,
+        reportTotalCost: (c) => {
+          totalCost = c;
+        },
+      }));
+
+      return await this.runPostTier1RestAfterTier2Sector({
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        totalCost,
+        completedCount,
+        reportTotalCost: (c) => {
+          totalCost = c;
+        },
+      });
+    } finally {
+      reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-5 — « TIER2 » post-Tier1, extrait BYTE-INERT de runPostTier1RestAfterTier3Pre. Sector expert
+   * (Tier 2) suivi du consensus/reflexion post-Tier2 FOLDÉS ensemble (~70s + reflexion conditionnelle
+   * < 300s — gate Codex #11, vs grouper consensus+post-batch ~400s). Mute allResults par RÉFÉRENCE
+   * (applyReflexion remplace le sector result). PARTAGÉ par le chemin single-pass
+   * (runPostTier1RestAfterTier3Pre) ET le driver stepwise v3 (step durable `tier2-sector`, d-5).
+   * DEUX leaves muteurs de coût SÉQUENTIELS (sector PUIS consensus) → `finally`/reportTotalCost
+   * OBLIGATOIRE (gate Codex #11) : si consensus throw APRÈS le succès de sector, le coût sectoriel
+   * doit remonter au scope appelant (sinon byte-divergence sur le chemin d'exception). Pattern d-2b-1.
+   */
+  private async runPostTier1Tier2(params: {
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    verificationContext: VerificationContext;
+    allFindings: ScoredFinding[];
+    totalCost: number;
+    completedCount: number;
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { dealId, onProgress, init, enrichedContext, verificationContext, allFindings, reportTotalCost } = params;
+    const { sectorExpert, TOTAL_AGENTS, analysis, stateMachine, allResults, stepwise, startTime } = init;
+    let { totalCost, completedCount } = params;
+    try {
+      ({ totalCost, completedCount } = await this.runTier2SectorStep({
+        sectorExpert,
+        totalCost,
+        completedCount,
+        enrichedContext,
+        allResults,
+        stateMachine,
+        analysis,
+        dealId,
+        onProgress,
+        TOTAL_AGENTS,
+      }));
+
+      ({ totalCost } = await this.runTier2ConsensusReflexionStep({
+        stepwise,
+        sectorExpert,
+        allResults,
+        allFindings,
+        verificationContext,
+        enrichedContext,
+        totalCost,
+        analysis,
+        startTime,
+      }));
+
+      return { totalCost, completedCount };
+    } finally {
+      reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-5 / d-6 — « REST APRÈS TIER2-SECTOR » post-Tier1. Délègue à `runPostTier1Tier3Post` (batch Tier3
+   * après Tier2, TOUS les batches en single-pass) puis `runFinalCompletion` (terminal). Le split permet
+   * au driver v3 de peeler `tier3-post` PER-AGENT (un step par batch, gate Codex #11) tout en gardant la
+   * chaîne comme source d'ordre du chemin OFF. Le `finally` remonte le totalCost — byte-équiv coût.
+   */
+  private async runPostTier1RestAfterTier2Sector(params: {
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    totalCost: number;
+    completedCount: number;
+    reportTotalCost: (totalCost: number) => void;
+  }): Promise<AnalysisResult> {
+    const { dealId, onProgress, init, enrichedContext, reportTotalCost } = params;
+    const {
+      isUpdate,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount } = params;
+    try {
+      ({ totalCost, completedCount } = await this.runPostTier1Tier3Post({
+        dealId,
+        onProgress,
+        init,
+        enrichedContext,
+        totalCost,
+        completedCount,
+        batches: TIER3_BATCHES_AFTER_TIER2,
+      }));
+
+      return await this.runFinalCompletion({
+        stepwise,
+        allResults,
+        totalCost,
+        stateMachine,
+        analysis,
+        dealId,
+        startTime,
+        analysisModeOverride,
+        isUpdate,
+        collectedWarnings,
+      });
+    } finally {
+      reportTotalCost(totalCost);
+    }
+  }
+
+  /**
+   * d-6 — « TIER3-POST » post-Tier1, extrait BYTE-INERT de runPostTier1RestAfterTier2Sector. Batch
+   * Tier3 après Tier2 (thesis-reconciler → synthesis-deal-scorer → memo-generator, SÉQUENTIELS).
+   * tier3AgentMap re-dérivé via getTier3Agents() (pur + module-cached → mêmes instances que tier3-pre ;
+   * byte-safe ; jamais porté entre steps). `batches` paramétrable : le driver stepwise v3 passe UN batch
+   * par step (`tier3-post-{i}` per-agent, gate Codex #11 — la somme séquentielle ~280-310s risquait
+   * > 300s). PARTAGÉ par le chemin single-pass (runPostTier1RestAfterTier2Sector, tous les batches) ET le
+   * driver stepwise v3 (un batch par step). Mute allResults/enrichedContext.previousResults par RÉFÉRENCE.
+   * Un seul leaf muteur de coût (runTier3PostTier2Batch) → pas de finally/reportTotalCost interne.
+   */
+  private async runPostTier1Tier3Post(params: {
+    dealId: string;
+    onProgress: AnalysisOptions["onProgress"];
+    init: FullAnalysisRunInit;
+    enrichedContext: EnrichedAgentContext;
+    totalCost: number;
+    completedCount: number;
+    batches: readonly (readonly string[])[];
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { dealId, onProgress, init, enrichedContext, totalCost, completedCount, batches } = params;
+    const { maxCostUsd, TOTAL_AGENTS, analysis, stateMachine, allResults } = init;
+
+    const tier3AgentMap = await getTier3Agents();
+
+    return await this.runTier3PostTier2Batch({
+      maxCostUsd,
+      totalCost,
+      completedCount,
+      tier3AgentMap,
+      enrichedContext,
+      allResults,
+      stateMachine,
+      analysis,
+      dealId,
+      onProgress,
+      TOTAL_AGENTS,
+      batches,
+    });
+  }
+
+  /**
+   * d-2b — Chemin DURABLE de full_analysis (graphe stepwise v2). Découpe l'exécution en
+   * unités step.run mémoïsées : tier0-facts (step de SORTIE, FactEvent isolé) -> tier0-thesis
+   * (1er SNAPSHOT) -> rest (terminal transitoire = le RESTE du pipeline ; vrai split d-3..d-7).
+   * MODÈLE B : sur run sain les unités tournent en séquence in-process (mutent l'état vivant),
+   * AUCUN rehydrate -> résultat === single-pass (E1 structurel). Au REPLAY (Inngest re-déroule
+   * du haut), les unités complétées sont mémoïsées ; le 1er step à snapshot (tier0-thesis)
+   * déclenche le REHYDRATE UNIQUE (état reconstruit depuis le snapshot durable). tier0-facts
+   * est un step de SORTIE (lock Codex #2) : au memo hit on APPLIQUE son DTO, on ne lit PAS le
+   * snapshot. Réutilise les MÊMES helpers que runFullAnalysisPipeline (runFullAnalysisPostThesis,
+   * failFullAnalysis) -> aucun drift de séquence. OFF (flag/version) ne passe JAMAIS ici (routing
+   * d-2b-5 : ce chemin n'est atteint qu'en stepwise + stepwiseGraphVersion===2).
+   */
+  private async runFullAnalysisStepwise(
+    deal: DealWithDocs,
+    dealId: string,
+    onProgress: AnalysisOptions["onProgress"],
+    init: FullAnalysisRunInit,
+    stepRunner: StepRunner
+  ): Promise<AnalysisResult> {
+    const {
+      isUpdate,
+      enableTrace,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      initialCanonicalDeal,
+      sectorExpert,
+      TOTAL_AGENTS,
+      corpusSnapshot,
+      scopedDocuments,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
+
+    // État vivant traversant les unités (construit en run sain, REHYDRATÉ au replay).
+    let enrichedContext: EnrichedAgentContext | undefined;
+    let extractedData: ContextSeed = {};
+    let thesisOutput: ThesisExtractorOutput | null = null;
+
+    try {
+      // Bootstrap-in-graph : stateMachine.start() tourne TOUJOURS (idempotent au replay ; la
+      // state machine est créée hors step, non sérialisable). Non mémoïsé.
+      await stateMachine.start();
+
+      // ===== UNITÉ 1 : tier0-facts (step de SORTIE — lock Codex #2/#3) =====
+      // FactEvent isolé dans sa propre unité durable. Au memo hit on APPLIQUE le DTO retourné
+      // (toute la mutation de runTier0Step), on NE lit PAS readLatestStepwiseSnapshot.
+      const tier0FactsWire = await stepRunner.run("tier0-facts", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          const r = await this.runTier0Step({
+            deal,
+            scopedDocuments,
+            isUpdate,
+            onProgress,
+            allResults,
+            totalCost,
+            completedCount,
+            factStore,
+            factStoreFormatted,
+            founderResponses,
             analysisId: analysis.id,
-            success: true,
-            totalCost,
-            totalTimeMs,
-            summary,
-            results: allResults,
-            mode: analysisModeOverride ?? "full_analysis",
           });
-
-          await costMonitor.endAnalysis({
-            persistAnalysisSummary: false,
+          return buildTier0FactsWire({
+            totalCost: r.totalCost,
+            completedCount: r.completedCount,
+            factStore: r.factStore,
+            factStoreFormatted: r.factStoreFormatted,
+            founderResponses: r.founderResponses,
+            factExtractorResult: allResults["fact-extractor"],
           });
+        })
+      );
+      {
+        const applied = applyTier0FactsWire(tier0FactsWire);
+        totalCost = applied.totalCost;
+        completedCount = applied.completedCount;
+        factStore = applied.factStore as CurrentFact[];
+        factStoreFormatted = applied.factStoreFormatted;
+        founderResponses = applied.founderResponses as typeof founderResponses;
+        if (applied.factExtractorResult !== null) {
+          allResults["fact-extractor"] = applied.factExtractorResult as unknown as AgentResult;
+        }
+      }
 
-          return this.addWarningsToResult({
-            sessionId: analysis.id,
+      // ===== UNITÉ 2 : tier0-thesis (doc-extractor + deck + context + thèse ; 1er SNAPSHOT) =====
+      let tier0ThesisBodyRan = false;
+      await stepRunner.run("tier0-thesis", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          tier0ThesisBodyRan = true;
+          const baseContext = await this.buildBaseAnalysisContext({
             dealId,
-            type: "full_analysis",
-            success: true,
-            results: allResults,
+            initialCanonicalDeal,
+            analysis,
+            analysisModeOverride,
+            corpusSnapshot,
+            scopedDocuments,
+          });
+          ({ totalCost, completedCount, extractedData } = await this.runDocumentExtractorStep({
+            baseContext,
+            scopedDocuments,
+            onProgress,
+            analysis,
+            stateMachine,
+            allResults,
             totalCost,
-            totalTimeMs,
-            summary,
-            tiersExecuted: [...TIERS_EXECUTED],
-          }, collectedWarnings);
+            completedCount,
+            TOTAL_AGENTS,
+          }));
+          let deckCoherenceReport: DeckCoherenceReport | null;
+          ({ totalCost, deckCoherenceReport } = await this.runDeckCoherenceStep({
+            deal,
+            scopedDocuments,
+            extractedData,
+            onProgress,
+            allResults,
+            totalCost,
+          }));
+          const ctxResult = await this.runContextEngineStep({
+            deal,
+            dealId,
+            baseContext,
+            stateMachine,
+            extractedData,
+            analysis,
+            corpusSnapshot,
+            deckCoherenceReport,
+            founderResponses,
+            onProgress,
+            completedCount,
+            TOTAL_AGENTS,
+            factStore,
+            factStoreFormatted,
+          });
+          factStore = ctxResult.factStore;
+          factStoreFormatted = ctxResult.factStoreFormatted;
+          const ec = ctxResult.enrichedContext;
+          enrichedContext = ec;
+          ({ totalCost, completedCount, thesisOutput } = await this.runThesisExtractionStep({
+            dealId,
+            analysisModeOverride,
+            analysis,
+            enrichedContext: ec,
+            corpusSnapshot,
+            allResults,
+            enableTrace,
+            totalCost,
+            completedCount,
+          }));
+          // 1er SNAPSHOT durable (frontière tier0-thesis) — capture l'état complet.
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id,
+              dealId,
+              analysisType: "full_analysis",
+              totalAgents: TOTAL_AGENTS,
+              completedCount,
+              totalCost,
+              startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(),
+              lastUnit: "tier0-thesis",
+              done: false,
+              enrichedContext: ec,
+              allResults,
+              verificationContext: null,
+              collectedWarnings,
+              tier1Findings: [],
+              allValidations: [],
+              needsReflect: [],
+            })
+          );
+          return { unit: "tier0-thesis" as const };
+        })
+      );
+
+      if (!tier0ThesisBodyRan) {
+        // memo hit sur tier0-thesis (1er step à snapshot) → REHYDRATE UNIQUE (lock Codex #2).
+        const snap = await readLatestStepwiseSnapshot(analysis.id);
+        if (!snap) {
+          throw new Error("[stepwise] tier0-thesis mémoïsé sans snapshot durable (état incohérent)");
+        }
+        const rh = rehydrateContext(snap);
+        enrichedContext = rh.enrichedContext;
+        // Remplace allResults EN PLACE (réf partagée, lue par runFullAnalysisPostThesis via init).
+        for (const k of Object.keys(allResults)) delete allResults[k];
+        Object.assign(allResults, rh.allResults);
+        totalCost = rh.totalCost;
+        completedCount = rh.completedCount;
+        factStore = (enrichedContext.factStore ?? []) as CurrentFact[];
+        factStoreFormatted = enrichedContext.factStoreFormatted ?? "";
+        founderResponses = (enrichedContext.founderResponses ?? []) as typeof founderResponses;
+        // extractedData : enrichedContext.extractedData EST le ContextSeed (toExtractedContextData
+        // = cast). undefined → {} (cas seed vide ; hasContextSeed-false-non-vide = résiduel D.6).
+        extractedData = (enrichedContext.extractedData ?? {}) as unknown as ContextSeed;
+        stateMachine.restoreFromStepState(snap, { sectorExpertName: sectorExpert?.name ?? null });
+      }
+
+      if (!enrichedContext) {
+        throw new Error("[stepwise] enrichedContext absent après tier0-thesis (état incohérent)");
+      }
+
+      // ===== UNITÉ 3 : rest (terminal transitoire, stepId dédié) =====
+      // Le RESTE du pipeline post-thèse dans une unité durable terminale (Modèle B : run sain →
+      // liveResult exact ; replay de 'rest' → reconstruction enveloppe + results relus). Le vrai
+      // split par unité (tier1 / tier3-pre / tier2 / tier3-post) vient d-3..d-7.
+      const restEnrichedContext = enrichedContext;
+      return await runTerminalStepwiseDriver({
+        stepRunner,
+        stepwise,
+        stepId: "rest",
+        pipeline: () =>
+          this.runFullAnalysisPostThesis({
+            deal,
+            dealId,
+            onProgress,
+            init,
+            enrichedContext: restEnrichedContext,
+            extractedData,
+            thesisOutput,
+            totalCost,
+            completedCount,
+            factStore,
+            factStoreFormatted,
+            reportTotalCost: (c: number) => {
+              totalCost = c;
+            },
+          }),
+        loadPersistedResults: async () =>
+          (await loadResults(analysis.id)) as AnalysisResult["results"] | null,
+      });
+    } catch (error) {
+      return await this.failFullAnalysis(error, {
+        stateMachine,
+        analysis,
+        dealId,
+        totalCost,
+        allResults,
+        analysisModeOverride,
+        startTime,
+        collectedWarnings,
+      });
+    }
+  }
+
+  /**
+   * d-3 (d-3-5) — Chemin DURABLE v3 de full_analysis (graphe stepwise v3). Étend v2 en découpant
+   * Tier1 PER-PHASE en steps durables (lock Codex Option 1, budget 300s) : prologue tier0-facts
+   * (step de SORTIE) -> tier0-thesis (1er SNAPSHOT) -> pour CHAQUE phase A/B/C/D : step
+   * `tier1-{ph}-agents` (snapshot) -> 1 step `tier1-{ph}-reflexion-{i}` par agent low-conf (snapshot)
+   * -> step `tier1-{ph}-finalize` (snapshot) -> tail finalizeTier1Phases -> step `post-tier1-glue`
+   * (d-3-6, runPostTier1Glue ; snapshot not-done ; early-return = throw -> FAILED) -> terminal
+   * transitoire `post-tier1` (runPostTier1Rest ; vrai split d-4..d-7).
+   *
+   * MODÈLE B : sur run sain les sous-steps tournent en séquence in-process via les MÊMES
+   * sous-méthodes partagées (runTier1PhaseAgents/Reflexion/Finalize) que le single-pass -> E1
+   * structurel. Au REPLAY, le 1er step à snapshot mémoïsé (tier0-thesis) déclenche le REHYDRATE
+   * UNIQUE (`ensureRehydrated`, lit le snapshot le PLUS RÉCENT — potentiellement tier1 profond) ;
+   * ensuite RÈGLE PAR STEP : bodyRan=true -> applique tous les champs du résultat ; bodyRan=false ->
+   * ensureRehydrated (no-op après le 1er) + transients de phase (needsReflect) depuis le wire
+   * mémoïsé, cumulatif depuis le snapshot rehydraté (jamais la valeur stale du wire). phaseFindings
+   * re-dérivé d'allFindings (byte-safe : 1 agent = 1 phase, reflexion ne mute pas allFindings).
+   *
+   * Corrections gate Codex #9 : (F1) vc initial construit SEULEMENT si `verificationContext == null`
+   * (le snapshot tier0-thesis porte vc=null -> rebuild au replay-après-tier0-thesis ; CARRY dès
+   * qu'un snapshot tier1 porte un vc non-null). (F2) `stateMachine.startAnalysis()` DANS le body
+   * frais de `tier1-a-agents` (mémoïsé-une-fois) -> jamais rejoué hors step au replay. (F3) totalCost/
+   * completedCount GLOBAUX threadés + `initialTotalCost=0` aux sous-méthodes (progress byte-identique)
+   * + shim phasesResult `costIncurred:0`/`completedInPhases:0` -> pas de double-add à l'aggregation.
+   *
+   * ROUTÉ depuis d-3 (STEPWISE_GRAPH_VERSION=3) ; byte-inert en prod (DEEP_DIVE_STEPWISE OFF →
+   * runFullAnalysisPipeline). d-4..d-7 raffinent le rest (terminal post-tier1) EN PLACE.
+   */
+  private async runFullAnalysisStepwiseV3(
+    deal: DealWithDocs,
+    dealId: string,
+    onProgress: AnalysisOptions["onProgress"],
+    init: FullAnalysisRunInit,
+    stepRunner: StepRunner
+  ): Promise<AnalysisResult> {
+    const {
+      isUpdate,
+      enableTrace,
+      analysisModeOverride,
+      startTime,
+      collectedWarnings,
+      initialCanonicalDeal,
+      sectorExpert,
+      TOTAL_AGENTS,
+      corpusSnapshot,
+      scopedDocuments,
+      analysis,
+      stateMachine,
+      allResults,
+      stepwise,
+    } = init;
+    let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
+
+    // État vivant traversant les unités (construit en run sain, REHYDRATÉ au replay).
+    let enrichedContext: EnrichedAgentContext | undefined;
+    let extractedData: ContextSeed = {};
+    let thesisOutput: ThesisExtractorOutput | null = null;
+    // Accumulateurs Tier1 (carry v4). null/[] avant Tier1 ; peuplés par ensureRehydrated au replay.
+    let verificationContext: VerificationContext | null = null;
+    let allFindings: ScoredFinding[] = [];
+    let allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[] = [];
+
+    // REHYDRATE UNIQUE (généralisé) — déclenché au 1er memo-hit d'un step à snapshot (tier0-thesis
+    // ou tier1-*). Lit le snapshot le PLUS RÉCENT et reconstruit TOUT le cumulatif. Idempotent.
+    let rehydrated = false;
+    const ensureRehydrated = async (): Promise<void> => {
+      if (rehydrated) return;
+      const snap = await readLatestStepwiseSnapshot(analysis.id);
+      if (!snap) {
+        throw new Error("[stepwise v3] step mémoïsé sans snapshot durable (état incohérent)");
+      }
+      const rh = rehydrateContext(snap);
+      enrichedContext = rh.enrichedContext;
+      // allResults remplacé EN PLACE (réf partagée, lue par runFullAnalysisPostTier1 via init).
+      for (const k of Object.keys(allResults)) delete allResults[k];
+      Object.assign(allResults, rh.allResults);
+      totalCost = rh.totalCost;
+      completedCount = rh.completedCount;
+      factStore = (enrichedContext.factStore ?? []) as CurrentFact[];
+      factStoreFormatted = enrichedContext.factStoreFormatted ?? "";
+      founderResponses = (enrichedContext.founderResponses ?? []) as typeof founderResponses;
+      extractedData = (enrichedContext.extractedData ?? {}) as unknown as ContextSeed;
+      verificationContext = rh.verificationContext as VerificationContext | null;
+      allFindings = rh.tier1Findings as ScoredFinding[];
+      allValidations = rh.allValidations as typeof allValidations;
+      // collectedWarnings muté EN PLACE (réf partagée via init, lue par le tail post-Tier1).
+      collectedWarnings.length = 0;
+      collectedWarnings.push(...(rh.collectedWarnings as EarlyWarning[]));
+      stateMachine.restoreFromStepState(snap, { sectorExpertName: sectorExpert?.name ?? null });
+      rehydrated = true;
+    };
+
+    try {
+      await stateMachine.start();
+
+      // ===== UNITÉ 1 : tier0-facts (step de SORTIE — identique v2) =====
+      const tier0FactsWire = await stepRunner.run("tier0-facts", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          const r = await this.runTier0Step({
+            deal, scopedDocuments, isUpdate, onProgress, allResults,
+            totalCost, completedCount, factStore, factStoreFormatted, founderResponses,
+            analysisId: analysis.id,
+          });
+          return buildTier0FactsWire({
+            totalCost: r.totalCost, completedCount: r.completedCount, factStore: r.factStore,
+            factStoreFormatted: r.factStoreFormatted, founderResponses: r.founderResponses,
+            factExtractorResult: allResults["fact-extractor"],
+          });
+        })
+      );
+      {
+        const applied = applyTier0FactsWire(tier0FactsWire);
+        totalCost = applied.totalCost;
+        completedCount = applied.completedCount;
+        factStore = applied.factStore as CurrentFact[];
+        factStoreFormatted = applied.factStoreFormatted;
+        founderResponses = applied.founderResponses as typeof founderResponses;
+        if (applied.factExtractorResult !== null) {
+          allResults["fact-extractor"] = applied.factExtractorResult as unknown as AgentResult;
         }
       }
 
-      // STEP 4: GLOBAL CONSENSUS - Cross-phase contradiction detection
-      // (Phases already ran intra-phase consensus, this catches cross-phase contradictions)
-      if (allFindings.length > 1) {
-        await stateMachine.startDebate();
-
-        onProgress?.({
-          currentAgent: "consensus-engine (global cross-phase contradictions)",
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-
-        const debateStats = await this.runConsensusDebate(analysis.id, allFindings, verificationContext, enrichedContext);
-        totalCost += debateStats.totalTokens * 0.00001;
-        console.log(`[ConsensusEngine] Global: ${debateStats.debateCount} debates completed`);
+      // ===== UNITÉ 2 : tier0-thesis (1er SNAPSHOT — identique v2 + ensureRehydrated généralisé) =====
+      let tier0ThesisBodyRan = false;
+      await stepRunner.run("tier0-thesis", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          tier0ThesisBodyRan = true;
+          const baseContext = await this.buildBaseAnalysisContext({
+            dealId, initialCanonicalDeal, analysis, analysisModeOverride, corpusSnapshot, scopedDocuments,
+          });
+          ({ totalCost, completedCount, extractedData } = await this.runDocumentExtractorStep({
+            baseContext, scopedDocuments, onProgress, analysis, stateMachine, allResults,
+            totalCost, completedCount, TOTAL_AGENTS,
+          }));
+          let deckCoherenceReport: DeckCoherenceReport | null;
+          ({ totalCost, deckCoherenceReport } = await this.runDeckCoherenceStep({
+            deal, scopedDocuments, extractedData, onProgress, allResults, totalCost,
+          }));
+          const ctxResult = await this.runContextEngineStep({
+            deal, dealId, baseContext, stateMachine, extractedData, analysis, corpusSnapshot,
+            deckCoherenceReport, founderResponses, onProgress, completedCount, TOTAL_AGENTS,
+            factStore, factStoreFormatted,
+          });
+          factStore = ctxResult.factStore;
+          factStoreFormatted = ctxResult.factStoreFormatted;
+          const ec = ctxResult.enrichedContext;
+          enrichedContext = ec;
+          ({ totalCost, completedCount, thesisOutput } = await this.runThesisExtractionStep({
+            dealId, analysisModeOverride, analysis, enrichedContext: ec, corpusSnapshot,
+            allResults, enableTrace, totalCost, completedCount,
+          }));
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+              completedCount, totalCost, startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier0-thesis", done: false,
+              enrichedContext: ec, allResults, verificationContext: null, collectedWarnings,
+              tier1Findings: [], allValidations: [], needsReflect: [],
+            })
+          );
+          return { unit: "tier0-thesis" as const };
+        })
+      );
+      if (!tier0ThesisBodyRan) {
+        await ensureRehydrated();
+      }
+      if (!enrichedContext) {
+        throw new Error("[stepwise v3] enrichedContext absent après tier0-thesis (état incohérent)");
       }
 
-      // Check cost limit before synthesis phase
-      if (maxCostUsd && totalCost >= maxCostUsd) {
-        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), skipping remaining phases`);
-        await stateMachine.complete();
-
-        const summary = generateFullAnalysisSummary(allResults);
-        const totalTimeMs = Date.now() - startTime;
-
-        await completeAnalysis({
-          analysisId: analysis.id,
-          success: true,
-          totalCost,
-          totalTimeMs,
-          summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
-          results: allResults,
-          mode: analysisModeOverride ?? "full_analysis",
-        });
-
-        await costMonitor.endAnalysis({
-          persistAnalysisSummary: false,
-        });
-
-        return this.addWarningsToResult({
-          sessionId: analysis.id,
-          dealId,
-          type: "full_analysis",
-          success: true,
-          results: allResults,
-          totalCost,
-          totalTimeMs,
-          summary: `${summary}\n\n**Note**: Analysis stopped early due to cost limit ($${maxCostUsd})`,
-          tiersExecuted: [...TIERS_EXECUTED],
-        }, collectedWarnings);
-      }
-
-      // STEP 4.5: TIER 1 CROSS-VALIDATION (deterministic, no LLM) (F34/F39)
-      const crossValidation = runTier1CrossValidation(allResults);
-      if (crossValidation.validations.length > 0 || crossValidation.warnings.length > 0) {
-        console.log(
-          `[Orchestrator] Tier 1 cross-validation: ${crossValidation.validations.length} divergences, ${crossValidation.adjustments.length} adjustments, ${crossValidation.warnings.length} warnings`
+      // ===== TIER1 STEPWISE (per-phase) =====
+      // vc initial : construit SEULEMENT si non porté (F1 — garde funding-DB drift).
+      if (verificationContext == null) {
+        verificationContext = await this.buildVerificationContext(
+          enrichedContext, extractedData, factStoreFormatted, enrichedContext.deal,
         );
+      }
 
-        // Apply score adjustments
-        for (const adj of crossValidation.adjustments) {
-          const result = allResults[adj.agentName];
-          if (result?.success && "data" in result) {
-            const data = (result as { data?: Record<string, unknown> }).data;
-            const scoreObj = data?.score as { value?: number } | undefined;
-            if (scoreObj && typeof scoreObj.value === "number") {
-              scoreObj.value = adj.after;
-              (scoreObj as { grade?: string }).grade = gradeFromScore(adj.after);
-              const meta = data?.meta as { limitations?: string[] } | undefined;
-              if (meta) {
-                meta.limitations = [
-                  ...(Array.isArray(meta.limitations) ? meta.limitations : []),
-                  `Tier 1 cross-validation adjustment ${adj.crossValidationId}: ${adj.reason}`,
-                ];
-              }
+      // getTier1Agents : inconditionnel (pur, sans transition) ; nécessaire aux steps agents frais.
+      const tier1AgentMap = await getTier1Agents();
+
+      const tier1Phases: Array<{ name: string; agents: readonly string[]; unit: FullAnalysisUnit; key: string; first: boolean }> = [
+        { name: "Phase A: deck-forensics", agents: TIER1_PHASE_A, unit: "tier1-phase-a", key: "a", first: true },
+        { name: "Phase B: financial-auditor", agents: TIER1_PHASE_B, unit: "tier1-phase-b", key: "b", first: false },
+        { name: "Phase C: team + competitive + market", agents: TIER1_PHASE_C, unit: "tier1-phase-c", key: "c", first: false },
+        { name: "Phase D: remaining agents", agents: TIER1_PHASE_D, unit: "tier1-phase-d", key: "d", first: false },
+      ];
+
+      for (const phase of tier1Phases) {
+        // --- STEP tier1-{ph}-agents (snapshot + step de SORTIE pour needsReflect) ---
+        let agentsBodyRan = false;
+        const agentsWire = await stepRunner.run(`tier1-${phase.key}-agents`, () =>
+          runWithLLMContext({ analysisId: analysis.id }, async () => {
+            agentsBodyRan = true;
+            // F2 : pré-effets Tier1 (no-op persistTierCheckpoint + transition startAnalysis) DANS le
+            // body frais de tier1-a-agents — mémoïsé-une-fois, jamais rejoué hors step au replay.
+            if (phase.first) {
+              await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
+              await stateMachine.startAnalysis();
             }
-          }
-        }
-
-        // Inject into context for Tier 3 agents
-        enrichedContext.tier1CrossValidation = crossValidation;
-      }
-
-      // STEP 4.6: CONSOLIDATE RED FLAGS (F77 - unified taxonomy)
-      try {
-        const { consolidateRedFlags } = await import("../red-flag-taxonomy");
-        const agentRedFlagMap: Record<string, { redFlags?: Array<{ id: string; category: string; severity: string; [key: string]: unknown }> }> = {};
-        for (const [agentName, result] of Object.entries(allResults)) {
-          if (result.success && "data" in result) {
-            const data = (result as { data?: Record<string, unknown> }).data;
-            if (data?.redFlags && Array.isArray(data.redFlags)) {
-              agentRedFlagMap[agentName] = { redFlags: data.redFlags as Array<{ id: string; category: string; severity: string }> };
-            }
-          }
-        }
-        const consolidatedFlags = consolidateRedFlags(agentRedFlagMap);
-        if (consolidatedFlags.length > 0) {
-          enrichedContext.consolidatedRedFlags = consolidatedFlags;
-          console.log(`[Orchestrator] F77: Consolidated ${consolidatedFlags.length} red flags from ${Object.keys(agentRedFlagMap).length} agents`);
-        }
-      } catch (err) {
-        console.error("[Orchestrator] Red flag consolidation failed:", err);
-      }
-
-      // STEP 5: SYNTHESIS PHASE - Tier 2 BEFORE Tier 3
-      // Run conditions-analyst, contradiction-detector, devils-advocate in PARALLEL
-      // (scenario-modeler retiré du pipeline — doctrine anti-oraculaire)
-      await stateMachine.startSynthesis();
-
-      const tier3AgentMap = await getTier3Agents();
-
-      // Load BA preferences for Tier 3 personalization (does NOT affect Tier 1/2)
-      const baPreferences = await this.loadBAPreferences(deal.userId);
-      enrichedContext.baPreferences = baPreferences;
-
-      // Load DealTerms + DealStructure for conditions-analyst (Tier 3)
-      const [rawDealTerms, rawDealStructure] = await Promise.all([
-        prisma.dealTerms.findUnique({ where: { dealId } }),
-        prisma.dealStructure.findUnique({
-          where: { dealId },
-          include: { tranches: { orderBy: { orderIndex: "asc" } } },
-        }),
-      ]);
-      if (rawDealTerms) {
-        enrichedContext.dealTerms = {
-          valuationPre: rawDealTerms.valuationPre != null ? Number(rawDealTerms.valuationPre) : null,
-          amountRaised: rawDealTerms.amountRaised != null ? Number(rawDealTerms.amountRaised) : null,
-          dilutionPct: rawDealTerms.dilutionPct != null ? Number(rawDealTerms.dilutionPct) : null,
-          instrumentType: rawDealTerms.instrumentType,
-          instrumentDetails: rawDealTerms.instrumentDetails,
-          liquidationPref: rawDealTerms.liquidationPref,
-          antiDilution: rawDealTerms.antiDilution,
-          proRataRights: rawDealTerms.proRataRights,
-          informationRights: rawDealTerms.informationRights,
-          boardSeat: rawDealTerms.boardSeat,
-          founderVesting: rawDealTerms.founderVesting,
-          vestingDurationMonths: rawDealTerms.vestingDurationMonths,
-          vestingCliffMonths: rawDealTerms.vestingCliffMonths,
-          esopPct: rawDealTerms.esopPct != null ? Number(rawDealTerms.esopPct) : null,
-          dragAlong: rawDealTerms.dragAlong,
-          tagAlong: rawDealTerms.tagAlong,
-          ratchet: rawDealTerms.ratchet,
-          payToPlay: rawDealTerms.payToPlay,
-          milestoneTranches: rawDealTerms.milestoneTranches,
-          nonCompete: rawDealTerms.nonCompete,
-          customConditions: rawDealTerms.customConditions,
-          notes: rawDealTerms.notes,
-        };
-      }
-      if (rawDealStructure?.mode === "STRUCTURED" && rawDealStructure.tranches.length > 0) {
-        enrichedContext.dealStructure = {
-          mode: "STRUCTURED",
-          totalInvestment: rawDealStructure.tranches.reduce(
-            (s, t) => s + (t.amount != null ? Number(t.amount) : 0), 0
-          ),
-          tranches: rawDealStructure.tranches.map(t => ({
-            label: t.label || "Tranche",
-            trancheType: t.trancheType,
-            amount: t.amount != null ? Number(t.amount) : null,
-            valuationPre: t.valuationPre != null ? Number(t.valuationPre) : null,
-            equityPct: t.equityPct != null ? Number(t.equityPct) : null,
-            triggerType: t.triggerType,
-            triggerDetails: t.triggerDetails,
-            status: t.status,
-          })),
-        };
-      }
-      enrichedContext.conditionsAnalystMode = "pipeline";
-
-      // Cost check before Tier 3 (pre-Tier2 batch: conditions + contradiction + devil's advocate)
-      if (!(maxCostUsd && totalCost >= maxCostUsd)) {
-        const tier3BeforeAgents = TIER3_BATCHES_BEFORE_TIER2[0];
-
-        onProgress?.({
-          currentAgent: `tier3-parallel (${tier3BeforeAgents.join(", ")})`,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-
-        const batchResults = await Promise.all(
-          tier3BeforeAgents.map(async (agentName) => {
-            const agent = tier3AgentMap[agentName];
-            try {
-              const result = await agent.run(enrichedContext);
-              return { agentName, result };
-            } catch (error) {
-              return {
-                agentName,
-                result: {
-                  agentName,
-                  success: false,
-                  executionTimeMs: 0,
-                  cost: 0,
-                  error: error instanceof Error ? error.message : "Unknown error",
-                } as AgentResult,
-              };
-            }
+            const ec = enrichedContext!;
+            const r = await this.runTier1PhaseAgents(
+              phase,
+              {
+                enrichedContext: ec, tier1AgentMap, dealId, onProgress, totalAgents: TOTAL_AGENTS,
+                onEarlyWarning: init.onEarlyWarning, collectedWarnings, allResults, allFindings,
+                stateMachine, initialTotalCost: 0,
+              },
+              { totalCost, completedCount },
+            );
+            await writeStepwiseSnapshot(
+              buildStepState({
+                analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                transitionCount: stateMachine.getTransitionCount(), lastUnit: phase.unit, done: false,
+                enrichedContext: ec, allResults,
+                verificationContext: verificationContext as Record<string, unknown> | null,
+                collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: r.needsReflect,
+              })
+            );
+            return { totalCost: r.totalCost, completedCount: r.completedCount, needsReflect: r.needsReflect };
           })
         );
+        if (!agentsBodyRan) await ensureRehydrated();
+        const needsReflect = agentsWire.needsReflect;
+        if (agentsBodyRan) {
+          totalCost = agentsWire.totalCost;
+          completedCount = agentsWire.completedCount;
+        }
+        // phaseFindings re-dérivé d'allFindings (byte-safe ; === r.phaseFindings, mêmes objets Inline).
+        const phaseFindings = allFindings.filter((f) => phase.agents.includes(f.agentName));
 
-        // Auto-retry failed agents (1 retry each, sequential to avoid overload)
-        for (let i = 0; i < batchResults.length; i++) {
-          if (!batchResults[i].result.success) {
-            const { agentName } = batchResults[i];
-            console.log(`[Orchestrator] Retrying failed agent: ${agentName}`);
-            const agent = tier3AgentMap[agentName];
-            try {
-              const retryResult = await agent.run(enrichedContext);
-              batchResults[i] = { agentName, result: retryResult };
-              console.log(`[Orchestrator] Retry succeeded for ${agentName}`);
-            } catch (retryError) {
-              console.log(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
-            }
-          }
+        // --- STEPS tier1-{ph}-reflexion-{i} (1 par agent low-conf, snapshot) ---
+        for (let i = 0; i < needsReflect.length; i++) {
+          const agentName = needsReflect[i];
+          let reflexBodyRan = false;
+          const reflexWire = await stepRunner.run(`tier1-${phase.key}-reflexion-${i}`, () =>
+            runWithLLMContext({ analysisId: analysis.id }, async () => {
+              reflexBodyRan = true;
+              const ec = enrichedContext!;
+              const r = await this.runTier1PhaseReflexion(
+                [agentName],
+                { analysisId: analysis.id, enrichedContext: ec, allResults, allFindings, verificationContext: verificationContext! },
+                { totalCost },
+              );
+              await writeStepwiseSnapshot(
+                buildStepState({
+                  analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                  completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                  transitionCount: stateMachine.getTransitionCount(), lastUnit: phase.unit, done: false,
+                  enrichedContext: ec, allResults,
+                  verificationContext: verificationContext as Record<string, unknown> | null,
+                  collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect,
+                })
+              );
+              return { totalCost: r.totalCost };
+            })
+          );
+          if (!reflexBodyRan) await ensureRehydrated();
+          if (reflexBodyRan) totalCost = reflexWire.totalCost;
         }
 
-        // Collect batch results
-        for (const { agentName, result } of batchResults) {
-          // Sanitize narrative fields for prescriptive language (Rule #1)
-          if (result.success && "data" in result) {
-            const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
-            if (totalViolations > 0) {
-              console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
-              (result as { data: unknown }).data = sanitized;
-            }
-          }
-          allResults[agentName] = result;
-          totalCost += result.cost;
-          completedCount++;
-          // F97: Tier 3 results stored unsanitized (they contain synthesis/evaluations needed by later Tier 3 agents)
-          enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result, { skipSanitization: true });
-
-          if (result.success) {
-            stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-          } else {
-            stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
-          }
-
-          await processAgentResult(dealId, agentName, result);
-        }
-
-        await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-        onProgress?.({
-          currentAgent: `tier3-parallel completed`,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-        // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé, doctrine anti-oraculaire).
-      } else {
-        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
-      }
-
-      // STEP 6: SECTOR EXPERT PHASE - Tier 2 (active si secteur détecté)
-      if (sectorExpert) {
-        onProgress?.({
-          currentAgent: `tier2-${sectorExpert.name}`,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-        });
-
-        try {
-          const sectorResult = await sectorExpert.run(enrichedContext);
-          allResults[sectorExpert.name] = sectorResult;
-          totalCost += sectorResult.cost;
-          completedCount++;
-          enrichedContext.previousResults![sectorExpert.name] = sectorResult;
-
-          if (sectorResult.success) {
-            stateMachine.recordAgentComplete(
-              sectorExpert.name,
-              sectorResult as unknown as AnalysisAgentResult
+        // --- STEP tier1-{ph}-finalize (snapshot) ---
+        let finalizeBodyRan = false;
+        let capturedFactStore: CurrentFact[] | undefined;
+        let capturedFactStoreFormatted: string | undefined;
+        let capturedVc: VerificationContext | undefined;
+        const finalizeWire = await stepRunner.run(`tier1-${phase.key}-finalize`, () =>
+          runWithLLMContext({ analysisId: analysis.id }, async () => {
+            finalizeBodyRan = true;
+            const ec = enrichedContext!;
+            const r = await this.runTier1PhaseFinalize(
+              phase,
+              phaseFindings,
+              {
+                enrichedContext: ec, analysisId: analysis.id, extractedData, allResults, allValidations,
+                stateMachine, initialTotalCost: 0, completedCount,
+              },
+              { totalCost, factStore, factStoreFormatted, verificationContext: verificationContext! },
             );
-          } else {
-            stateMachine.recordAgentFailed(sectorExpert.name, sectorResult.error ?? "Unknown");
-          }
-
-          await processAgentResult(dealId, sectorExpert.name, sectorResult);
-          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-          onProgress?.({
-            currentAgent: sectorExpert.name,
-            completedAgents: completedCount,
-            totalAgents: TOTAL_AGENTS,
-            latestResult: sectorResult,
-          });
-        } catch (error) {
-          const errorResult: AgentResult = {
-            agentName: sectorExpert.name,
-            success: false,
-            executionTimeMs: 0,
-            cost: 0,
-            error: error instanceof Error ? error.message : "Unknown error",
-          };
-          allResults[sectorExpert.name] = errorResult;
-          stateMachine.recordAgentFailed(sectorExpert.name, errorResult.error ?? "Unknown");
-          completedCount++;
-        }
-      }
-
-      // STEP 6.5: CONSENSUS + REFLEXION for Tier 2 sector expert
-      if (sectorExpert) {
-        const sectorResult = allResults[sectorExpert.name];
-        if (sectorResult?.success) {
-          const sectorFindings = extractAllFindings({ [sectorExpert.name]: sectorResult }).allFindings;
-
-          // Consensus: check if sector expert contradicts Tier 1 findings
-          if (sectorFindings.length > 0) {
-            const allFindingsWithSector = [...allFindings, ...sectorFindings];
-            console.log(`[Orchestrator] Running post-Tier 2 consensus (${sectorFindings.length} new findings from sector expert)`);
-            const postTier2Debate = await this.runConsensusDebate(
-              analysis.id, allFindingsWithSector, verificationContext, enrichedContext
+            capturedFactStore = r.factStore;
+            capturedFactStoreFormatted = r.factStoreFormatted;
+            capturedVc = r.verificationContext;
+            await writeStepwiseSnapshot(
+              buildStepState({
+                analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                transitionCount: stateMachine.getTransitionCount(), lastUnit: phase.unit, done: false,
+                enrichedContext: ec, allResults,
+                verificationContext: r.verificationContext as Record<string, unknown> | null,
+                collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect,
+              })
             );
-            totalCost += postTier2Debate.totalTokens * 0.00001;
-          }
+            return { totalCost: r.totalCost };
+          })
+        );
+        if (!finalizeBodyRan) await ensureRehydrated();
+        if (finalizeBodyRan) {
+          totalCost = finalizeWire.totalCost;
+          factStore = capturedFactStore!;
+          factStoreFormatted = capturedFactStoreFormatted!;
+          verificationContext = capturedVc!;
+        }
+      }
 
-          // Reflexion: auto-critique if confidence < 60%
-          if (reflexionEngine.needsReflexion(sectorResult as AnalysisAgentResult, sectorFindings, 2)) {
-            console.log(`[Orchestrator] Tier 2 sector expert needs reflexion`);
-            await this.applyReflexion(
-              analysis.id,
-              sectorExpert.name,
-              sectorResult as AnalysisAgentResult,
-              sectorFindings,
-              `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
-              2,
-              verificationContext,
-              allResults,
-              enrichedContext
+      // ===== TIER1 TAIL (R2) + shim phasesResult (coût-neutre, F3) =====
+      const { agentConfidences, lowConfidenceAgents } = await this.finalizeTier1Phases({
+        dealId, analysisId: analysis.id, allValidations, allResults,
+      });
+      const phasesResult: Awaited<ReturnType<AgentOrchestrator["runTier1Phases"]>> = {
+        allFindings,
+        agentConfidences,
+        lowConfidenceAgents,
+        updatedFactStore: factStore,
+        updatedFactStoreFormatted: factStoreFormatted,
+        costIncurred: 0,
+        completedInPhases: 0,
+      };
+
+      // ===== UNITÉ post-tier1-glue (d-3-6) — glue durable (aggregation→failFast→consensus→cost-limit
+      // →cross-val→red-flags) en step propre. Run sain : mute l'état vivant (vc rebuild aggregation,
+      // allFindings, allResults cross-val, enrichedContext tier1CrossValidation/consolidatedRedFlags)
+      // + snapshot not-done → le terminal `post-tier1` rehydrate au replay-après-glue. done:true
+      // (early-return failFast/cost-limit) est INJOIGNABLE au runtime — `stateMachine.complete()`
+      // LÈVE depuis ANALYZING/DEBATING (gate Codex #10) → ces chemins THROWENT → catch terminal →
+      // FAILED (byte-équiv single-pass). Run sain done → glueLiveResult ; replay-done → guard loud. =====
+      let glueBodyRan = false;
+      let glueLiveResult: AnalysisResult | undefined;
+      const glueWire = await stepRunner.run("post-tier1-glue", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          glueBodyRan = true;
+          const ec = enrichedContext!;
+          const glue = await this.runPostTier1Glue({
+            dealId, onProgress, init, enrichedContext: ec, extractedData,
+            phasesResult, totalCost, completedCount, factStore, factStoreFormatted,
+            reportTotalCost: (c) => { totalCost = c; },
+          });
+          if (glue.done) {
+            glueLiveResult = glue.result;
+            return { done: true as const };
+          }
+          completedCount = glue.completedCount;
+          verificationContext = glue.verificationContext;
+          allFindings = glue.allFindings;
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+              completedCount, totalCost, startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(), lastUnit: "post-tier1-glue", done: false,
+              enrichedContext: ec, allResults,
+              verificationContext: verificationContext as Record<string, unknown> | null,
+              collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+            })
+          );
+          return { done: false as const };
+        })
+      );
+      if (glueWire.done) {
+        // Run sain : glueLiveResult posé. Replay-done IMPOSSIBLE (un step qui throw n'est jamais
+        // mémoïsé done:true). Guard loud si l'invariant casse (ex. transition complete() corrigée
+        // plus tard sans ajouter ici le traversal terminalResult — gate Codex #10).
+        if (!glueLiveResult) {
+          throw new Error("[stepwise v3] post-tier1-glue done:true au replay non supporté (early-return termine par throw aujourd'hui)");
+        }
+        return glueLiveResult;
+      }
+      if (!glueBodyRan) await ensureRehydrated();
+
+      // ===== UNITÉ tier3-pre (d-4) — synthesis-setup + batch Tier3 pré-Tier2 en step durable. Run
+      // sain : mute l'état vivant (enrichedContext BAPrefs/DealTerms/Structure + previousResults,
+      // allResults tier3-pré, startSynthesis DEBATING→SYNTHESIZING) + snapshot not-done → le terminal
+      // `post-tier1` rehydrate au replay-après-tier3-pre. Pas d'early-return (cost-check tier3-pré =
+      // SKIP-only). Modèle B : bodyRan → applique le wire ; sinon ensureRehydrated (no-op après le 1er). =====
+      let tier3PreBodyRan = false;
+      const tier3PreWire = await stepRunner.run("tier3-pre", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          tier3PreBodyRan = true;
+          const ec = enrichedContext!;
+          const r = await this.runPostTier1Tier3Pre({
+            deal, dealId, onProgress, init, enrichedContext: ec, totalCost, completedCount,
+          });
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+              completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier3-pre", done: false,
+              enrichedContext: ec, allResults,
+              verificationContext: verificationContext as Record<string, unknown> | null,
+              collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+            })
+          );
+          return { totalCost: r.totalCost, completedCount: r.completedCount };
+        })
+      );
+      if (!tier3PreBodyRan) await ensureRehydrated();
+      if (tier3PreBodyRan) {
+        totalCost = tier3PreWire.totalCost;
+        completedCount = tier3PreWire.completedCount;
+      }
+
+      // ===== UNITÉ tier2-sector (d-5) — sector expert + consensus/reflexion (FOLDÉS, gate Codex #11)
+      // en step durable. Run sain : mute allResults (applyReflexion remplace le sector result) +
+      // snapshot not-done → le terminal `post-tier1` rehydrate au replay-après-tier2-sector. Pas
+      // d'early-return. reportTotalCost remonte le coût sectoriel si consensus throw APRÈS sector
+      // (byte-équiv exception === single-pass, gate Codex #11). Modèle B : bodyRan → applique le wire ;
+      // sinon ensureRehydrated (no-op après le 1er). =====
+      let tier2SectorBodyRan = false;
+      const tier2SectorWire = await stepRunner.run("tier2-sector", () =>
+        runWithLLMContext({ analysisId: analysis.id }, async () => {
+          tier2SectorBodyRan = true;
+          const ec = enrichedContext!;
+          const r = await this.runPostTier1Tier2({
+            dealId, onProgress, init, enrichedContext: ec,
+            verificationContext: verificationContext!, allFindings,
+            totalCost, completedCount,
+            reportTotalCost: (c) => { totalCost = c; },
+          });
+          await writeStepwiseSnapshot(
+            buildStepState({
+              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+              completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+              transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier2-sector", done: false,
+              enrichedContext: ec, allResults,
+              verificationContext: verificationContext as Record<string, unknown> | null,
+              collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+            })
+          );
+          return { totalCost: r.totalCost, completedCount: r.completedCount };
+        })
+      );
+      if (!tier2SectorBodyRan) await ensureRehydrated();
+      if (tier2SectorBodyRan) {
+        totalCost = tier2SectorWire.totalCost;
+        completedCount = tier2SectorWire.completedCount;
+      }
+
+      // ===== UNITÉS tier3-post (d-6) — batch Tier3 après Tier2 PER-AGENT (1 step par batch, gate Codex
+      // #11 : somme séquentielle thesis-reconciler+synthesis-deal-scorer+memo-generator ~280-310s risquait
+      // > 300s). Chaque step exécute UN batch via runPostTier1Tier3Post([batch]) + snapshot not-done
+      // (lastUnit=tier3-post pour les 3, comme la reflexion Tier1 réutilisait phase.unit). Le cost-check
+      // break + le restore previousResults restent idempotents par batch (gate Codex #11). Modèle B :
+      // bodyRan → applique le wire ; sinon ensureRehydrated (no-op après le 1er). =====
+      for (let i = 0; i < TIER3_BATCHES_AFTER_TIER2.length; i++) {
+        const batch = TIER3_BATCHES_AFTER_TIER2[i];
+        let postBodyRan = false;
+        const postWire = await stepRunner.run(`tier3-post-${i}`, () =>
+          runWithLLMContext({ analysisId: analysis.id }, async () => {
+            postBodyRan = true;
+            const ec = enrichedContext!;
+            const r = await this.runPostTier1Tier3Post({
+              dealId, onProgress, init, enrichedContext: ec, totalCost, completedCount, batches: [batch],
+            });
+            await writeStepwiseSnapshot(
+              buildStepState({
+                analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier3-post", done: false,
+                enrichedContext: ec, allResults,
+                verificationContext: verificationContext as Record<string, unknown> | null,
+                collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+              })
             );
-          }
+            return { totalCost: r.totalCost, completedCount: r.completedCount };
+          })
+        );
+        if (!postBodyRan) await ensureRehydrated();
+        if (postBodyRan) {
+          totalCost = postWire.totalCost;
+          completedCount = postWire.completedCount;
         }
       }
 
-      // STEP 7: FINAL SYNTHESIS - Tier 3 AFTER Tier 2
-      // Restore full (unsanitized) results for final synthesis agents.
-      // Sanitization (F52) was needed between Tier 1 agents to prevent confirmation bias.
-      // Final synthesis agents (synthesis-deal-scorer, memo-generator) NEED scores/verdicts
-      // to produce the global deal score and investment memo.
-      for (const [agentName, result] of Object.entries(allResults)) {
-        enrichedContext.previousResults![agentName] = result;
-      }
-
-      // Crédits-only : pipeline complet pour tous (synthesis-deal-scorer + memo-generator)
-      const finalSynthesisBatches = TIER3_BATCHES_AFTER_TIER2;
-
-      for (const batch of finalSynthesisBatches) {
-        // REAL-TIME COST CHECK: Before each batch
-        if (maxCostUsd && totalCost >= maxCostUsd) {
-          console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
-          break;
-        }
-
-        // These are single-agent batches, run sequentially
-        const agentName = batch[0];
-        const agent = tier3AgentMap[agentName];
-
-        onProgress?.({
-          currentAgent: agentName,
-          completedAgents: completedCount,
-          totalAgents: TOTAL_AGENTS,
-          estimatedCostSoFar: totalCost,
-        });
-
-        let agentResult: AgentResult | null = null;
-
-        // Try up to 2 attempts (initial + 1 retry)
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          try {
-            const result = await agent.run(enrichedContext);
-            agentResult = result;
-            break; // Success, exit retry loop
-          } catch (error) {
-            const errMsg = error instanceof Error ? error.message : "Unknown error";
-            if (attempt === 1) {
-              console.log(`[Orchestrator] ${agentName} failed (attempt ${attempt}), retrying... Error: ${errMsg}`);
-            } else {
-              console.log(`[Orchestrator] ${agentName} failed after ${attempt} attempts: ${errMsg}`);
-              agentResult = {
-                agentName,
-                success: false,
-                executionTimeMs: 0,
-                cost: 0,
-                error: errMsg,
-              };
-            }
-          }
-        }
-
-        if (agentResult) {
-          allResults[agentName] = agentResult;
-          totalCost += agentResult.cost;
-          completedCount++;
-          enrichedContext.previousResults![agentName] = agentResult;
-
-          if (agentResult.success) {
-            stateMachine.recordAgentComplete(agentName, agentResult as AnalysisAgentResult);
-          } else {
-            stateMachine.recordAgentFailed(agentName, agentResult.error ?? "Unknown");
-          }
-          await processAgentResult(dealId, agentName, agentResult);
-          await updateAnalysisProgress(analysis.id, completedCount, totalCost);
-
-          // Thesis-first — apres thesis-reconciler, persister la reconciliation sur
-          // la these initiale (maj verdict + confidence + reconciliationJson + notes)
-          if (
-            agentName === "thesis-reconciler" &&
-            enrichedContext.analysis?.mode !== "post_call_reanalysis"
-          ) {
-            await this.applyThesisReconciliation(enrichedContext, agentResult);
-          }
-
-          onProgress?.({
-            currentAgent: agentName,
-            completedAgents: completedCount,
-            totalAgents: TOTAL_AGENTS,
-            latestResult: agentResult,
-            estimatedCostSoFar: totalCost,
-          });
-        }
-      }
-
-      // COMPLETE
-      await stateMachine.complete();
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.log("[Orchestrator:DEBUG] State machine completed, generating summary...");
-
-      const summary = generateFullAnalysisSummary(allResults);
-      const totalTimeMs = Date.now() - startTime;
-      const failedAgents = Object.entries(allResults).filter(([, r]) => !r.success).map(([k, r]) => `${k}: ${r.error ?? "no error msg"}`);
-      if (failedAgents.length > 0) {
-        console.log(`[Orchestrator] Failed agents in allResults: ${failedAgents.join(", ")}`);
-      }
-      const allSuccess = Object.values(allResults).every((r) => r.success);
-      const orchestrationSummary = stateMachine.getSummary();
-
-      await saveCheckpoint(analysis.id, {
-        state: "COMPLETED",
-        completedAgents: Object.keys(allResults),
-        pendingAgents: [],
-        failedAgents: Object.entries(allResults)
-          .filter(([, result]) => !result.success)
-          .map(([agent, result]) => ({
-            agent,
-            error: result.error ?? "no error msg",
-            retries: 1,
-          })),
-        findings: extractAllFindings(allResults).allFindings,
-        results: allResults,
-        totalCost,
-        startTime: new Date(startTime).toISOString(),
+      // ===== TERMINAL post-tier1 (d-7) — final-completion (complete + completeAnalysis + costMonitor +
+      // updateDealStatus + delta ; effets irréversibles → terminal driver, jamais snapshot unit, gate
+      // Codex #11). Le split post-Tier1 est COMPLET : tier3-pre → tier2-sector → tier3-post×N → final. =====
+      return await runTerminalStepwiseDriver({
+        stepRunner,
+        stepwise,
+        stepId: "post-tier1",
+        pipeline: () =>
+          this.runFinalCompletion({
+            stepwise, allResults, totalCost, stateMachine, analysis, dealId, startTime,
+            analysisModeOverride, isUpdate, collectedWarnings,
+          }),
+        loadPersistedResults: async () =>
+          (await loadResults(analysis.id)) as AnalysisResult["results"] | null,
       });
-
-      await completeAnalysis({
-        analysisId: analysis.id,
-        success: allSuccess,
-        totalCost,
-        totalTimeMs,
-        summary: `${summary}\n\n**Orchestration**: ${orchestrationSummary.transitions} state transitions, ${orchestrationSummary.totalFindings} findings`,
-        results: allResults,
-        mode: analysisModeOverride ?? "full_analysis",
-      });
-      // End cost monitoring after final results are persisted so `_costReport`
-      // is merged into the canonical completed payload instead of being overwritten.
-      const costReport = await costMonitor.endAnalysis({
-        persistAnalysisSummary: false,
-      });
-      if (costReport) {
-        console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
-      }
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
-
-      await updateDealStatus(dealId, "IN_DD");
-
-      // F40: Calculate analysis delta for re-analyses
-      let analysisDelta;
-      if (isUpdate) {
-        try {
-          const { calculateAnalysisDelta } = await import("@/services/analysis-delta");
-          const previousAnalysis = await prisma.analysis.findFirst({
-            where: { dealId, id: { not: analysis.id }, completedAt: { not: null } },
-            orderBy: { completedAt: "desc" },
-            select: { id: true },
-          });
-          if (previousAnalysis) {
-            analysisDelta = await calculateAnalysisDelta(analysis.id, previousAnalysis.id);
-            if (analysisDelta) {
-              console.log(`[Orchestrator] F40: Delta vs previous analysis: ${analysisDelta.scoreDelta.overall.delta >= 0 ? "+" : ""}${analysisDelta.scoreDelta.overall.delta} points`);
-            }
-          }
-        } catch (err) {
-          console.error("[Orchestrator] Analysis delta failed:", err);
-        }
-      }
-
-      return this.addWarningsToResult({
-        sessionId: analysis.id,
-        dealId,
-        type: "full_analysis",
-        success: allSuccess,
-        results: allResults,
-        totalCost,
-        totalTimeMs,
-        summary,
-        tiersExecuted: [...TIERS_EXECUTED],
-        analysisDelta: analysisDelta ?? undefined,
-      }, collectedWarnings);
     } catch (error) {
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.error("[Orchestrator:DEBUG] CAUGHT ERROR in runFullAnalysis: ${error instanceof Error ? error.message : String(error)}`);
-      // DEBUG log removed for production - uncomment for debugging:
-      // console.error("[Orchestrator:DEBUG] Error stack: ${error instanceof Error ? error.stack : "N/A"}`);
-      // Only transition to FAILED if not already completed
-      const currentState = stateMachine.getState();
-      if (currentState !== "COMPLETED" && currentState !== "FAILED") {
-        await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
-      }
-
-      const totalTimeMs = Date.now() - startTime;
-
-      await completeAnalysis({
-        analysisId: analysis.id,
-        success: false,
-        totalCost,
-        totalTimeMs,
-        summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        results: allResults,
-        mode: analysisModeOverride ?? "full_analysis",
-        statusOverride: "FAILED",
+      return await this.failFullAnalysis(error, {
+        stateMachine, analysis, dealId, totalCost, allResults, analysisModeOverride, startTime, collectedWarnings,
       });
-
-      // End cost monitoring after final results are persisted so `_costReport`
-      // survives the failed completion payload as well.
-      await costMonitor.endAnalysis({
-        persistAnalysisSummary: false,
-      });
-
-      return this.addWarningsToResult({
-        sessionId: analysis.id,
-        dealId,
-        type: "full_analysis",
-        success: false,
-        results: allResults,
-        totalCost,
-        totalTimeMs,
-        summary: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        tiersExecuted: [...TIERS_EXECUTED],
-      }, collectedWarnings);
     }
   }
 
@@ -2453,6 +4448,403 @@ export class AgentOrchestrator {
    *
    * Used by both runFullAnalysis() and runTier1Analysis().
    */
+  /**
+   * C.3a — Corps d'UNE itération de la boucle Tier 1 (phase A/B/C/D), extrait BYTE-INERT
+   * de runTier1Phases. Appelé par la boucle existante pour chaque phase.
+   * Mute PAR RÉFÉRENCE : allResults, allFindings, allValidations, collectedWarnings,
+   * enrichedContext (+ previousResults/factStore/...), stateMachine. Renvoie les locals
+   * réassignés (totalCost, completedCount, factStore, factStoreFormatted, verificationContext).
+   * Le throw Phase A (échec critique) se propage à la boucle appelante (comportement inchangé).
+   */
+  private async runTier1Phase(
+    phase: { name: string; agents: readonly string[] },
+    refs: {
+      enrichedContext: EnrichedAgentContext;
+      tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
+      analysisId: string;
+      dealId: string;
+      onProgress?: AnalysisOptions["onProgress"];
+      totalAgents: number;
+      onEarlyWarning?: OnEarlyWarning;
+      collectedWarnings: EarlyWarning[];
+      allResults: Record<string, AgentResult>;
+      allFindings: ScoredFinding[];
+      allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[];
+      extractedData: {
+        tagline?: string;
+        competitors?: string[];
+        founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+        productDescription?: string;
+        businessModel?: string;
+      };
+      stateMachine?: AnalysisStateMachine;
+      initialTotalCost: number;
+    },
+    state: {
+      totalCost: number;
+      completedCount: number;
+      factStore: CurrentFact[];
+      factStoreFormatted: string;
+      verificationContext: VerificationContext;
+    }
+  ): Promise<{
+    totalCost: number;
+    completedCount: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    verificationContext: VerificationContext;
+  }> {
+    const {
+      enrichedContext, tier1AgentMap, analysisId, dealId,
+      onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+      allResults, allFindings, allValidations, extractedData, stateMachine,
+      initialTotalCost,
+    } = refs;
+    let { totalCost, completedCount, factStore, factStoreFormatted, verificationContext } = state;
+    // Run this phase's agents in parallel, collect + sanitize results, extract findings,
+    // and materialize the ordered needsReflect list. Shared OFF/stepwise sub-method (d-3).
+    const agentsResult = await this.runTier1PhaseAgents(
+      phase,
+      {
+        enrichedContext, tier1AgentMap, dealId,
+        onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+        allResults, allFindings, stateMachine, initialTotalCost,
+      },
+      { totalCost, completedCount },
+    );
+    totalCost = agentsResult.totalCost;
+    completedCount = agentsResult.completedCount;
+    const { phaseFindings, needsReflect } = agentsResult;
+
+    const reflexed = await this.runTier1PhaseReflexion(
+      needsReflect,
+      { analysisId, enrichedContext, allResults, allFindings, verificationContext },
+      { totalCost },
+    );
+    totalCost = reflexed.totalCost;
+
+    // Finalize the phase: validated-claim fact-store updates, verificationContext
+    // rebuild (Phase B/C), intra-phase consensus, progress/checkpoint, fail-checks.
+    // Shared OFF/stepwise sub-method (d-3) — MÊME méthode = pas de drift.
+    const finalized = await this.runTier1PhaseFinalize(
+      phase,
+      phaseFindings,
+      {
+        enrichedContext, analysisId, extractedData,
+        allResults, allValidations, stateMachine,
+        initialTotalCost, completedCount,
+      },
+      { totalCost, factStore, factStoreFormatted, verificationContext },
+    );
+    return {
+      totalCost: finalized.totalCost,
+      completedCount,
+      factStore: finalized.factStore,
+      factStoreFormatted: finalized.factStoreFormatted,
+      verificationContext: finalized.verificationContext,
+    };
+  }
+
+  /**
+   * Run a Tier 1 phase's agents — shared sub-method (sequencer OFF/v2 in-process AND
+   * stepwise driver v3 call the SAME method = byte-équivalence, pas de drift).
+   *
+   * Pure extraction (d-3) of the agents segment of runTier1Phase: parallel agent run,
+   * narrative sanitize, collect into allResults (+cost/completedCount/previousResults/
+   * stateMachine record/early-warnings/processAgentResult), phase findings extraction
+   * (pushed onto allFindings), and materialization of the ORDERED `needsReflect` list
+   * (low-confidence successful agents, phase.agents order — carried to the stepwise
+   * snapshot, never re-derived at replay). Mutates allResults/allFindings/
+   * enrichedContext.previousResults/collectedWarnings/stateMachine by reference.
+   */
+  private async runTier1PhaseAgents(
+    phase: { name: string; agents: readonly string[] },
+    refs: {
+      enrichedContext: EnrichedAgentContext;
+      tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
+      dealId: string;
+      onProgress?: AnalysisOptions["onProgress"];
+      totalAgents: number;
+      onEarlyWarning?: OnEarlyWarning;
+      collectedWarnings: EarlyWarning[];
+      allResults: Record<string, AgentResult>;
+      allFindings: ScoredFinding[];
+      stateMachine?: AnalysisStateMachine;
+      initialTotalCost: number;
+    },
+    state: { totalCost: number; completedCount: number }
+  ): Promise<{
+    totalCost: number;
+    completedCount: number;
+    phaseFindings: ScoredFinding[];
+    needsReflect: string[];
+  }> {
+    const {
+      enrichedContext, tier1AgentMap, dealId,
+      onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+      allResults, allFindings, stateMachine, initialTotalCost,
+    } = refs;
+    let { totalCost, completedCount } = state;
+
+    onProgress?.({
+      currentAgent: `tier1 ${phase.name}`,
+      completedAgents: completedCount,
+      totalAgents,
+      estimatedCostSoFar: initialTotalCost + totalCost,
+    });
+
+    // Run agents in this phase (parallel within phase)
+    const phaseResults = await Promise.all(
+      phase.agents.map(async (agentName) => {
+        const agent = tier1AgentMap[agentName];
+        try {
+          const result = await agent.run(enrichedContext);
+          return { agentName, result };
+        } catch (error) {
+          return {
+            agentName,
+            result: {
+              agentName,
+              success: false,
+              executionTimeMs: 0,
+              cost: 0,
+              error: error instanceof Error ? error.message : "Unknown error",
+            } as AgentResult,
+          };
+        }
+      })
+    );
+
+    // Collect phase results
+    for (const { agentName, result } of phaseResults) {
+      // Sanitize narrative fields for prescriptive language (Rule #1)
+      if (result.success && "data" in result) {
+        const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+        if (totalViolations > 0) {
+          console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+          (result as { data: unknown }).data = sanitized;
+        }
+      }
+      allResults[agentName] = result;
+      totalCost += result.cost;
+      completedCount++;
+      // Sanitize to prevent confirmation bias in downstream agents (F52)
+      enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result);
+
+      if (stateMachine) {
+        if (result.success) {
+          stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
+        } else {
+          stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
+        }
+      }
+
+      this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
+      await processAgentResult(dealId, agentName, result);
+    }
+
+    // Extract findings for this phase
+    const phaseAgentResults: Record<string, AgentResult> = {};
+    for (const agentName of phase.agents) {
+      if (allResults[agentName]) {
+        phaseAgentResults[agentName] = allResults[agentName];
+      }
+    }
+    const { allFindings: phaseFindings, agentConfidences: phaseConfidences } =
+      extractAllFindings(phaseAgentResults);
+    allFindings.push(...phaseFindings);
+
+    // Determine inline-reflexion targets for this phase.
+    // Only apply if agent confidence < 50% (threshold set in ReflexionConfig)
+    // REMOVED: Phase A/B forced reflexion — was doubling cost for no measurable quality gain
+    // MATÉRIALISER la liste ORDONNÉE des agents low-conf à réfléchir (ordre phase.agents
+    // préservé via phaseResults) — portée telle quelle au snapshot stepwise (DTO needsReflect),
+    // jamais re-dérivée au replay (reflexion mute allResults).
+    const needsReflect = phaseResults
+      .filter(({ agentName, result }) => {
+        if (!result.success) return false;
+        const confidence = phaseConfidences.get(agentName);
+        return confidence !== undefined && confidence.score < 60;
+      })
+      .map(({ agentName }) => agentName);
+
+    return { totalCost, completedCount, phaseFindings, needsReflect };
+  }
+
+  /**
+   * Apply inline reflexion to a Tier 1 phase — shared sub-method (sequencer OFF/v2
+   * in-process AND stepwise driver v3 call the SAME method = byte-équivalence).
+   *
+   * Loops over the materialized ORDERED `needsReflect` list (low-confidence successful
+   * agents, phase.agents order). Each applyReflexion re-injects the revised result into
+   * allResults[name] + enrichedContext.previousResults[name] in place for downstream
+   * agents. Order is byte-significant. The input result is read from allResults[name] —
+   * identical to the original at this point because each agent is reflexion'd at most
+   * once (needsReflect has distinct names), so no prior iteration has mutated it.
+   */
+  private async runTier1PhaseReflexion(
+    needsReflect: readonly string[],
+    refs: {
+      analysisId: string;
+      enrichedContext: EnrichedAgentContext;
+      allResults: Record<string, AgentResult>;
+      allFindings: ScoredFinding[];
+      verificationContext: VerificationContext;
+    },
+    state: { totalCost: number }
+  ): Promise<{ totalCost: number }> {
+    const { analysisId, enrichedContext, allResults, allFindings, verificationContext } = refs;
+    let { totalCost } = state;
+
+    for (const agentName of needsReflect) {
+      const result = allResults[agentName];
+      if (!result?.success) continue;
+
+      const agentFindings = allFindings.filter(f => f.agentName === agentName);
+      const reflexionStats = await this.applyReflexion(
+        analysisId,
+        agentName,
+        result as AnalysisAgentResult,
+        agentFindings,
+        `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
+        1,
+        verificationContext,
+        allResults,
+        enrichedContext
+      );
+      totalCost += reflexionStats.tokensUsed * 0.00001;
+    }
+
+    return { totalCost };
+  }
+
+  /**
+   * Finalize a Tier 1 phase — shared sub-method (sequencer OFF/v2 in-process AND
+   * stepwise driver v3 call the SAME method = byte-équivalence, pas de drift).
+   *
+   * Extracted byte-inert from runTier1Phase (d-3, tail first like C.3): validated-
+   * claim fact-store updates, verificationContext rebuild after Phase B/C, intra-
+   * phase consensus over the SAME `phaseFindings` array (never re-extracted — finding
+   * ids are crypto.randomUUID and must be carried, not regenerated), progress
+   * persistence + checkpoint flush, and the phase fail-checks.
+   *
+   * fail-counts are RECOMPUTED from `phase.agents` + `allResults` (not `phaseResults`):
+   * byte-identical because reflexion only runs on success===true agents and preserves
+   * `success`/`error` by spreading the original result (applyReflexion:5055 ->
+   * reflexion.ts:597 `{ ...currentResult, data }`), and `phase.agents` preserves
+   * `phaseResults` order — so counts and failedNames are unchanged. This keeps finalize
+   * stepwise-ready WITHOUT carrying `phaseResults` across a step boundary.
+   */
+  private async runTier1PhaseFinalize(
+    phase: { name: string; agents: readonly string[] },
+    phaseFindings: ScoredFinding[],
+    refs: {
+      enrichedContext: EnrichedAgentContext;
+      analysisId: string;
+      extractedData: {
+        tagline?: string;
+        competitors?: string[];
+        founders?: Array<{ name: string; role?: string; linkedinUrl?: string }>;
+        productDescription?: string;
+        businessModel?: string;
+      };
+      allResults: Record<string, AgentResult>;
+      allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[];
+      stateMachine?: AnalysisStateMachine;
+      initialTotalCost: number;
+      completedCount: number;
+    },
+    state: {
+      totalCost: number;
+      factStore: CurrentFact[];
+      factStoreFormatted: string;
+      verificationContext: VerificationContext;
+    }
+  ): Promise<{
+    totalCost: number;
+    factStore: CurrentFact[];
+    factStoreFormatted: string;
+    verificationContext: VerificationContext;
+  }> {
+    const {
+      enrichedContext, analysisId, extractedData,
+      allResults, allValidations, stateMachine,
+      initialTotalCost, completedCount,
+    } = refs;
+    let { totalCost, factStore, factStoreFormatted, verificationContext } = state;
+
+    // Extract validated claims and update fact store in memory
+    for (const agentName of phase.agents) {
+      const result = allResults[agentName];
+      if (result?.success) {
+        const validations = extractValidatedClaims(result, agentName);
+        if (validations.length > 0) {
+          allValidations.push(...validations);
+          factStore = updateFactsInMemory(factStore, validations);
+          factStoreFormatted = reformatFactStoreWithValidations(factStore, allValidations);
+          enrichedContext.factStore = factStore;
+          enrichedContext.factStoreFormatted = factStoreFormatted;
+          enrichedContext.evidenceLedger = buildEvidenceLedgerFromContext(enrichedContext);
+          enrichedContext.evidenceLedgerFormatted = formatEvidenceLedgerForPrompt(enrichedContext.evidenceLedger);
+          console.log(`[Orchestrator:${phase.name}] ${agentName}: ${validations.length} fact validations applied`);
+        }
+      }
+    }
+
+    // Rebuild verificationContext after Phase B and Phase C (factStoreFormatted has changed)
+    if (phase.name.includes("Phase B") || phase.name.includes("Phase C")) {
+      verificationContext = await this.buildVerificationContext(
+        enrichedContext,
+        extractedData,
+        factStoreFormatted,
+        enrichedContext.deal,
+      );
+      console.log(`[Orchestrator] Rebuilt verificationContext after ${phase.name} with updated factStore`);
+    }
+
+    // Consensus within phase (if multiple agents in phase)
+    if (phase.agents.length > 1 && phaseFindings.length > 1) {
+      const debateStats = await this.runConsensusDebate(
+        analysisId, phaseFindings, verificationContext, enrichedContext
+      );
+      totalCost += debateStats.totalTokens * 0.00001;
+      console.log(`[Orchestrator:${phase.name}] Consensus: ${debateStats.debateCount} debates`);
+    }
+
+    await updateAnalysisProgress(analysisId, completedCount, initialTotalCost + totalCost);
+    await stateMachine?.flushCheckpoint();
+
+    const phaseSuccessCount = phase.agents.filter(
+      (agentName) => allResults[agentName]?.success
+    ).length;
+    const phaseFailCount = phase.agents.length - phaseSuccessCount;
+    console.log(
+      `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
+    );
+
+    if (phase.name.includes("Phase A") && phaseFailCount > 0) {
+      const failedNames = phase.agents
+        .filter((agentName) => !allResults[agentName]?.success)
+        .map((agentName) => `${agentName}: ${allResults[agentName]?.error ?? "unknown error"}`)
+        .join(", ");
+      console.error(
+        `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
+      );
+      throw new Error(`Critical Tier 1 phase failed: ${failedNames}`);
+    }
+
+    if (phase.name.includes("Phase B") && phaseFailCount > 0) {
+      const failedNames = phase.agents
+        .filter((agentName) => !allResults[agentName]?.success)
+        .map((agentName) => `${agentName}: ${allResults[agentName]?.error ?? "unknown error"}`)
+        .join(", ");
+      console.warn(
+        `[Orchestrator] Phase B agent(s) failed (non-fatal, continuing): ${failedNames}`
+      );
+    }
+    return { totalCost, factStore, factStoreFormatted, verificationContext };
+  }
+
   private async runTier1Phases(params: {
     enrichedContext: EnrichedAgentContext;
     tier1AgentMap: Record<string, { run: (ctx: EnrichedAgentContext) => Promise<AgentResult> }>;
@@ -2514,168 +4906,54 @@ export class AgentOrchestrator {
       ];
 
     for (const phase of tier1Phases) {
-      onProgress?.({
-        currentAgent: `tier1 ${phase.name}`,
-        completedAgents: completedCount,
-        totalAgents,
-        estimatedCostSoFar: params.initialTotalCost + totalCost,
-      });
-
-      // Run agents in this phase (parallel within phase)
-      const phaseResults = await Promise.all(
-        phase.agents.map(async (agentName) => {
-          const agent = tier1AgentMap[agentName];
-          try {
-            const result = await agent.run(enrichedContext);
-            return { agentName, result };
-          } catch (error) {
-            return {
-              agentName,
-              result: {
-                agentName,
-                success: false,
-                executionTimeMs: 0,
-                cost: 0,
-                error: error instanceof Error ? error.message : "Unknown error",
-              } as AgentResult,
-            };
-          }
-        })
-      );
-
-      // Collect phase results
-      for (const { agentName, result } of phaseResults) {
-        // Sanitize narrative fields for prescriptive language (Rule #1)
-        if (result.success && "data" in result) {
-          const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
-          if (totalViolations > 0) {
-            console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
-            (result as { data: unknown }).data = sanitized;
-          }
-        }
-        allResults[agentName] = result;
-        totalCost += result.cost;
-        completedCount++;
-        // Sanitize to prevent confirmation bias in downstream agents (F52)
-        enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result);
-
-        if (stateMachine) {
-          if (result.success) {
-            stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-          } else {
-            stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
-          }
-        }
-
-        this.checkAndEmitWarnings(agentName, result, collectedWarnings, onEarlyWarning);
-        await processAgentResult(dealId, agentName, result);
-      }
-
-      // Extract findings for this phase
-      const phaseAgentResults: Record<string, AgentResult> = {};
-      for (const agentName of phase.agents) {
-        if (allResults[agentName]) {
-          phaseAgentResults[agentName] = allResults[agentName];
-        }
-      }
-      const { allFindings: phaseFindings, agentConfidences: phaseConfidences } =
-        extractAllFindings(phaseAgentResults);
-      allFindings.push(...phaseFindings);
-
-      // Inline reflexion for this phase
-      // Only apply if agent confidence < 50% (threshold set in ReflexionConfig)
-      // REMOVED: Phase A/B forced reflexion — was doubling cost for no measurable quality gain
-      for (const { agentName, result } of phaseResults) {
-        if (!result.success) continue;
-
-        const confidence = phaseConfidences.get(agentName);
-        const needsReflect = confidence && confidence.score < 60;
-
-        if (needsReflect) {
-          const agentFindings = allFindings.filter(f => f.agentName === agentName);
-          const reflexionStats = await this.applyReflexion(
-            analysisId,
-            agentName,
-            result as AnalysisAgentResult,
-            agentFindings,
-            `Deal: ${enrichedContext.deal.name}, Sector: ${enrichedContext.deal.sector}`,
-            1,
-            verificationContext,
-            allResults,
-            enrichedContext
-          );
-          totalCost += reflexionStats.tokensUsed * 0.00001;
-        }
-      }
-
-      // Extract validated claims and update fact store in memory
-      for (const agentName of phase.agents) {
-        const result = allResults[agentName];
-        if (result?.success) {
-          const validations = extractValidatedClaims(result, agentName);
-          if (validations.length > 0) {
-            allValidations.push(...validations);
-            factStore = updateFactsInMemory(factStore, validations);
-            factStoreFormatted = reformatFactStoreWithValidations(factStore, allValidations);
-            enrichedContext.factStore = factStore;
-            enrichedContext.factStoreFormatted = factStoreFormatted;
-            enrichedContext.evidenceLedger = buildEvidenceLedgerFromContext(enrichedContext);
-            enrichedContext.evidenceLedgerFormatted = formatEvidenceLedgerForPrompt(enrichedContext.evidenceLedger);
-            console.log(`[Orchestrator:${phase.name}] ${agentName}: ${validations.length} fact validations applied`);
-          }
-        }
-      }
-
-      // Rebuild verificationContext after Phase B and Phase C (factStoreFormatted has changed)
-      if (phase.name.includes("Phase B") || phase.name.includes("Phase C")) {
-        verificationContext = await this.buildVerificationContext(
-          enrichedContext,
-          extractedData,
-          factStoreFormatted,
-          enrichedContext.deal,
-        );
-        console.log(`[Orchestrator] Rebuilt verificationContext after ${phase.name} with updated factStore`);
-      }
-
-      // Consensus within phase (if multiple agents in phase)
-      if (phase.agents.length > 1 && phaseFindings.length > 1) {
-        const debateStats = await this.runConsensusDebate(
-          analysisId, phaseFindings, verificationContext, enrichedContext
-        );
-        totalCost += debateStats.totalTokens * 0.00001;
-        console.log(`[Orchestrator:${phase.name}] Consensus: ${debateStats.debateCount} debates`);
-      }
-
-      await updateAnalysisProgress(analysisId, completedCount, params.initialTotalCost + totalCost);
-      await stateMachine?.flushCheckpoint();
-
-      const phaseSuccessCount = phaseResults.filter(r => r.result.success).length;
-      const phaseFailCount = phaseResults.length - phaseSuccessCount;
-      console.log(
-        `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
-      );
-
-      if (phase.name.includes("Phase A") && phaseFailCount > 0) {
-        const failedNames = phaseResults
-          .filter(r => !r.result.success)
-          .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
-          .join(", ");
-        console.error(
-          `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
-        );
-        throw new Error(`Critical Tier 1 phase failed: ${failedNames}`);
-      }
-
-      if (phase.name.includes("Phase B") && phaseFailCount > 0) {
-        const failedNames = phaseResults
-          .filter(r => !r.result.success)
-          .map(r => `${r.agentName}: ${r.result.error ?? "unknown error"}`)
-          .join(", ");
-        console.warn(
-          `[Orchestrator] Phase B agent(s) failed (non-fatal, continuing): ${failedNames}`
-        );
-      }
+      ({ totalCost, completedCount, factStore, factStoreFormatted, verificationContext } = await this.runTier1Phase(
+        phase,
+        {
+          enrichedContext, tier1AgentMap, analysisId, dealId,
+          onProgress, totalAgents, onEarlyWarning, collectedWarnings,
+          allResults, allFindings, allValidations, extractedData, stateMachine,
+          initialTotalCost: params.initialTotalCost,
+        },
+        { totalCost, completedCount, factStore, factStoreFormatted, verificationContext },
+      ));
     }
+
+    // d-3 (R2) — FactEvent persist (validations) + confidences globales, extrait BYTE-INERT vers
+    // finalizeTier1Phases, PARTAGÉ par ce chemin (single-pass/v2) ET le driver stepwise v3 (appelé
+    // APRÈS la boucle Tier1 stepwise pour bâtir le shim phasesResult coût-neutre). Même ordre
+    // d'effet : persist DB des validations puis extractAllFindings(allResults).
+    const { agentConfidences, lowConfidenceAgents } = await this.finalizeTier1Phases({
+      dealId,
+      analysisId,
+      allValidations,
+      allResults,
+    });
+
+    return {
+      allFindings,
+      agentConfidences,
+      lowConfidenceAgents,
+      updatedFactStore: factStore,
+      updatedFactStoreFormatted: factStoreFormatted,
+      costIncurred: totalCost,
+      completedInPhases: completedCount - params.initialCompletedCount,
+    };
+  }
+
+  /**
+   * d-3 (R2) — Tail de runTier1Phases extrait BYTE-INERT : persiste les FactEvent issus des
+   * validations Tier1 (event-sourcing ; idempotence FactEvent = résiduel D.6 assumé au replay)
+   * puis extrait les confidences globales via extractAllFindings(allResults). PARTAGÉ par
+   * runTier1Phases (single-pass/v2) ET runFullAnalysisStepwiseV3 (appelé APRÈS la boucle Tier1
+   * stepwise, AVANT le shim phasesResult coût-neutre). Aucun changement d'ordre d'effet.
+   */
+  private async finalizeTier1Phases(params: {
+    dealId: string;
+    analysisId: string;
+    allValidations: import("@/services/fact-store/current-facts").AgentFactValidation[];
+    allResults: Record<string, AgentResult>;
+  }): Promise<{ agentConfidences: Map<string, ConfidenceScore>; lowConfidenceAgents: string[] }> {
+    const { dealId, analysisId, allValidations, allResults } = params;
 
     // Persist validated facts to DB (event sourcing)
     // Only persist facts with actual corrected values (not just analysis notes)
@@ -2710,7 +4988,10 @@ export class AgentOrchestrator {
           };
         });
       if (factEvents.length > 0) {
-        const batchResult = await createFactEventsBatch(dealId, factEvents, 'RESOLVED', 'system');
+        const batchResult = await createFactEventsBatch(dealId, factEvents, 'RESOLVED', 'system', {
+          runId: analysisId,
+          scope: "tier1-finalize-resolved",
+        });
         if (!batchResult.success) {
           // La contrainte unique (dealId, factKey, createdAt, eventType) peut
           // rejeter un batch partiellement duplique sous concurrence Tier1/Tier2.
@@ -2727,16 +5008,7 @@ export class AgentOrchestrator {
 
     // Extract global confidences for downstream use
     const { agentConfidences, lowConfidenceAgents } = extractAllFindings(allResults);
-
-    return {
-      allFindings,
-      agentConfidences,
-      lowConfidenceAgents,
-      updatedFactStore: factStore,
-      updatedFactStoreFormatted: factStoreFormatted,
-      costIncurred: totalCost,
-      completedInPhases: completedCount - params.initialCompletedCount,
-    };
+    return { agentConfidences, lowConfidenceAgents };
   }
 
   // ============================================================================
@@ -2757,7 +5029,10 @@ export class AgentOrchestrator {
   private async runTier0FactExtraction(
     deal: DealWithDocs,
     isUpdate: boolean,
-    onProgress?: AnalysisOptions["onProgress"]
+    onProgress?: AnalysisOptions["onProgress"],
+    // Fix C — D.6 : analysisId du run full_analysis durable → arme l'idempotence des FactEvents
+    // CREATED (scope tier0-created). Absent (chemin tier1_complete non-stepwise) → pas d'idempotency.
+    analysisId?: string
   ): Promise<{
     factStore: CurrentFact[];
     factStoreFormatted: string;
@@ -2921,7 +5196,8 @@ export class AgentOrchestrator {
               reliability: fact.reliability,
             })),
             "CREATED", // eventType: new facts being created
-            "system"
+            "system",
+            analysisId ? { runId: analysisId, scope: "tier0-created" } : undefined
           );
           console.log(`[Orchestrator:Tier0] Persisted ${extractionData.facts.length} facts to database`);
         } catch (persistError) {
@@ -3150,6 +5426,40 @@ export class AgentOrchestrator {
     let thesisResultForDiagnostics: AgentResult | null = null;
 
     try {
+      // Phase D — court-circuit replay : si la thèse de CE run est déjà persistée
+      // (thesis-extractor:${analysisId}), la réutiliser SANS relancer le LLM. Downstream
+      // identique au 1er run ; résultat déterministe (coût = extractionCost CANONIQUE du 1er
+      // run réinjecté dans totalCost, executionTimeMs = 0 télémétrie résiduelle, aucune fuite
+      // volatile), pas de coût LLM gaspillé, pas de nouvelle version. Run neuf : null → flux normal.
+      const existingThesis = await thesisService.getByIdempotencyKey(`thesis-extractor:${analysisId}`);
+      if (existingThesis) {
+        const reusedOutput = this.thesisRecordToExtractorOutput(existingThesis);
+        const reusedResult: AgentResult & { data: ThesisExtractorOutput } = {
+          agentName: "thesis-extractor",
+          success: true,
+          executionTimeMs: 0,
+          // Coût CANONIQUE du 1er run (persisté sur la thèse) → totalCost reproductible au
+          // replay sans relancer le LLM. executionTimeMs=0 (télémétrie résiduelle, normalisée
+          // par le golden harness). Pas de double-charge : le reuse n'arrive que si le step
+          // n'a pas été mémoïsé terminé (Inngest ne repasse pas par un step déjà retourné).
+          cost: existingThesis.extractionCost ?? 0,
+          data: reusedOutput,
+        };
+        await this.linkAndInjectThesis(
+          enrichedContext,
+          allResults,
+          analysisId,
+          existingThesis.id,
+          reusedOutput,
+          reusedResult,
+          corpusSnapshot,
+        );
+        console.log(
+          `[Orchestrator:ThesisExtraction] Réutilisée (replay idempotent) thesisId=${existingThesis.id}`
+        );
+        return reusedOutput;
+      }
+
       const thesisResult = await thesisExtractorAgent.run(enrichedContext, { enableTrace });
       thesisResultForDiagnostics = thesisResult;
       allResults["thesis-extractor"] = thesisResult;
@@ -3161,51 +5471,48 @@ export class AgentOrchestrator {
 
       const thesisOutput = (thesisResult as AgentResult & { data: ThesisExtractorOutput }).data;
 
-      // Persist Thesis (cree une nouvelle version, marque l'ancienne isLatest=false)
+      // Persist Thesis. Idempotent (Phase D) : au replay du même run (même idempotencyKey),
+      // thesisService.create RÉUTILISE la version existante (pas de nouvelle version/thesisId).
       const persisted = await thesisService.create({
         dealId,
         extractorOutput: thesisOutput,
         corpusSnapshotId: corpusSnapshot?.id ?? enrichedContext.analysis?.corpusSnapshotId ?? null,
+        // Phase D — idempotence replay : même run (analysisId) ⇒ réutilise la thèse existante.
+        idempotencyKey: `thesis-extractor:${analysisId}`,
+        // Phase D — coût persisté pour le re-add canonique au replay (totalCost reproductible).
+        extractionCost: thesisResult.cost,
       });
 
-      // Link to Analysis
-      await prisma.analysis.update({
-        where: { id: analysisId },
-        data: { thesisId: persisted.id },
-      });
-
-      enrichedContext.analysis = {
-        ...(enrichedContext.analysis ?? { id: analysisId }),
-        thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
-        thesisId: persisted.id,
-        corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
+      // Phase D — le downstream consomme le contenu CANONIQUE persisté (la thèse réellement
+      // en base, réutilisée au replay), PAS la sortie LLM du run courant qui peut diverger au
+      // retry. Sur run neuf : identique à thesisOutput (schéma extractor = validation pure +
+      // stockage JSON fidèle). Garantit qu'un retry de step n'injecte pas une thèse divergente
+      // dans enrichedContext / previousResults / allResults malgré le même thesisId.
+      const canonicalOutput = this.thesisRecordToExtractorOutput(persisted);
+      const canonicalResult: AgentResult & { data: ThesisExtractorOutput } = {
+        ...thesisResult,
+        // Coût CANONIQUE persisté : si `create` a RÉUTILISÉ une thèse existante via son
+        // re-check intra-tx (cas de course : 2 exécutions du même run passent le pré-check
+        // avant que la thèse existe), `persisted.extractionCost` = coût du 1er run, pas le
+        // coût LLM volatile de CE run. Byte-inert run neuf (extractionCost == thesisResult.cost
+        // qu'on vient juste de persister).
+        cost: persisted.extractionCost ?? thesisResult.cost,
+        data: canonicalOutput,
       };
-
-      // Injection dans enrichedContext pour Tier 1/2/3
-      enrichedContext.thesis = {
-        id: persisted.id,
-        reformulated: thesisOutput.reformulated,
-        problem: thesisOutput.problem,
-        solution: thesisOutput.solution,
-        whyNow: thesisOutput.whyNow,
-        moat: thesisOutput.moat,
-        verdict: thesisOutput.verdict,
-        confidence: thesisOutput.confidence,
-        loadBearing: thesisOutput.loadBearing,
-        alertsCount: thesisOutput.alerts.length,
-        ycVerdict: thesisOutput.ycLens.verdict,
-        thielVerdict: thesisOutput.thielLens.verdict,
-        angelDeskVerdict: thesisOutput.angelDeskLens.verdict,
-      };
-      enrichedContext.previousResults = {
-        ...(enrichedContext.previousResults ?? {}),
-        "thesis-extractor": thesisResult,
-      };
+      await this.linkAndInjectThesis(
+        enrichedContext,
+        allResults,
+        analysisId,
+        persisted.id,
+        canonicalOutput,
+        canonicalResult,
+        corpusSnapshot,
+      );
 
       console.log(
-        `[Orchestrator:ThesisExtraction] verdict=${thesisOutput.verdict} confidence=${thesisOutput.confidence} alerts=${thesisOutput.alerts.length} (thesisId=${persisted.id})`
+        `[Orchestrator:ThesisExtraction] verdict=${canonicalOutput.verdict} confidence=${canonicalOutput.confidence} alerts=${canonicalOutput.alerts.length} (thesisId=${persisted.id})`
       );
-      return thesisOutput;
+      return canonicalOutput;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       allResults["thesis-extractor"] = thesisResultForDiagnostics
@@ -3224,6 +5531,83 @@ export class AgentOrchestrator {
       console.error(`[Orchestrator:ThesisExtraction] Crashed (non-fatal):`, err);
       return null;
     }
+  }
+
+  /**
+   * Phase D — reconstruit un ThesisExtractorOutput depuis la thèse PERSISTÉE (canonique).
+   * Inverse fidèle du mapping de thesisService.create : le schéma extractor est une validation
+   * pure (pas de transform) et les lentilles / loadBearing / alerts sont stockés en JSON tels
+   * quels, donc record→output est exact. Sert à faire consommer au downstream la thèse réelle
+   * (réutilisée au replay idempotent) plutôt que la sortie LLM volatile du run courant.
+   */
+  private thesisRecordToExtractorOutput(
+    t: Awaited<ReturnType<typeof thesisService.create>>
+  ): ThesisExtractorOutput {
+    return {
+      reformulated: t.reformulated,
+      problem: t.problem,
+      solution: t.solution,
+      whyNow: t.whyNow,
+      moat: t.moat,
+      verdict: t.verdict as ThesisExtractorOutput["verdict"],
+      confidence: t.confidence,
+      loadBearing: t.loadBearing as ThesisExtractorOutput["loadBearing"],
+      alerts: t.alerts as ThesisExtractorOutput["alerts"],
+      ycLens: t.ycLens as ThesisExtractorOutput["ycLens"],
+      thielLens: t.thielLens as ThesisExtractorOutput["thielLens"],
+      angelDeskLens: t.angelDeskLens as ThesisExtractorOutput["angelDeskLens"],
+      sourceDocumentIds: t.sourceDocumentIds,
+      sourceHash: t.sourceHash,
+    };
+  }
+
+  /**
+   * Phase D — link Analysis.thesisId + injection de la thèse dans enrichedContext
+   * (analysis / thesis / previousResults) + allResults["thesis-extractor"]. Partagé par le
+   * flux normal ET le court-circuit replay → hydratation downstream identique dans les deux cas.
+   */
+  private async linkAndInjectThesis(
+    enrichedContext: EnrichedAgentContext,
+    allResults: Record<string, AgentResult>,
+    analysisId: string,
+    thesisId: string,
+    output: ThesisExtractorOutput,
+    result: AgentResult,
+    corpusSnapshot?: CorpusSnapshotMaterialization | null,
+  ): Promise<void> {
+    allResults["thesis-extractor"] = result;
+
+    await prisma.analysis.update({
+      where: { id: analysisId },
+      data: { thesisId },
+    });
+
+    enrichedContext.analysis = {
+      ...(enrichedContext.analysis ?? { id: analysisId }),
+      thesisBypass: enrichedContext.analysis?.thesisBypass ?? false,
+      thesisId,
+      corpusSnapshotId: enrichedContext.analysis?.corpusSnapshotId ?? corpusSnapshot?.id ?? null,
+    };
+
+    enrichedContext.thesis = {
+      id: thesisId,
+      reformulated: output.reformulated,
+      problem: output.problem,
+      solution: output.solution,
+      whyNow: output.whyNow,
+      moat: output.moat,
+      verdict: output.verdict,
+      confidence: output.confidence,
+      loadBearing: output.loadBearing,
+      alertsCount: output.alerts.length,
+      ycVerdict: output.ycLens.verdict,
+      thielVerdict: output.thielLens.verdict,
+      angelDeskVerdict: output.angelDeskLens.verdict,
+    };
+    enrichedContext.previousResults = {
+      ...(enrichedContext.previousResults ?? {}),
+      "thesis-extractor": result,
+    };
   }
 
   /**
@@ -3851,22 +6235,32 @@ export class AgentOrchestrator {
         }
       : undefined;
 
-    // Funding DB data — fetch similar deals and valuation benchmarks
+    // Funding DB data — fetch similar deals and valuation benchmarks.
+    // H (Fix C) : hard wall sur les 2 requêtes Neon (le SEUL await non borné de la glue ; les
+    // agents/LLM sont déjà bornés par base-agent.withTimeout / le routeur OpenRouter). Sur
+    // timeout → throw → capté par le catch ci-dessous → `fundingDbData` reste undefined (MÊME
+    // dégradation gracieuse que sur erreur DB). Mur généreux (FUNDING_DB_WALL_MS) → ne fire
+    // jamais sur run sain (byte-equiv OFF/v3) ; borne un hang DB sous le plafond step 300s.
     let fundingDbData: Record<string, unknown> | undefined;
     try {
-      const [similarDeals, valuationBenchmarks] = await Promise.all([
-        querySimilarDeals({
-          sector: deal.sector ?? undefined,
-          stage: deal.stage ?? undefined,
-          region: deal.geography ?? undefined,
-          limit: 20,
-        }),
-        getValuationBenchmarks({
-          sector: deal.sector ?? undefined,
-          stage: deal.stage ?? undefined,
-          region: deal.geography ?? undefined,
-        }),
-      ]);
+      const [similarDeals, valuationBenchmarks] = await withHardWall(
+        "funding-db",
+        () =>
+          Promise.all([
+            querySimilarDeals({
+              sector: deal.sector ?? undefined,
+              stage: deal.stage ?? undefined,
+              region: deal.geography ?? undefined,
+              limit: 20,
+            }),
+            getValuationBenchmarks({
+              sector: deal.sector ?? undefined,
+              stage: deal.stage ?? undefined,
+              region: deal.geography ?? undefined,
+            }),
+          ]),
+        FUNDING_DB_WALL_MS
+      );
 
       if (similarDeals.length > 0 || valuationBenchmarks.count > 0) {
         fundingDbData = {
@@ -4046,6 +6440,48 @@ export class AgentOrchestrator {
    * 3. Continue from where it left off
    * 4. Skip already completed agents
    */
+  /**
+   * C2a — Checkpoint durable RUNNING a une frontiere de tier (runFullAnalysis).
+   * Rend une analyse tuee mid-pipeline (budget Vercel 300s) reprenable au lieu de
+   * rester RUNNING-sans-checkpoint (que resume marquait FAILED — locus du gel avekapeti).
+   * Additif + RUNNING-gated (saveCheckpoint n'update la ligne que si status RUNNING et
+   * merge monotone) => zero impact sur une analyse saine (le checkpoint COMPLETED terminal
+   * merge par-dessus). En pass-0 allResults n'ajoute que des agents (pas de regression
+   * succes->echec) => success-preserving par construction. Best-effort : un echec de
+   * checkpoint ne fait JAMAIS echouer l'analyse.
+   */
+  private async persistTierCheckpoint(
+    analysisId: string,
+    allResults: Record<string, AgentResult>,
+    totalCost: number,
+    startTimeMs: number,
+    stepwise: boolean,
+  ): Promise<void> {
+    // D.5a — en mode stepwise, AUCUN checkpoint legacy n'est émis : l'état durable
+    // passe par les snapshots STEPWISE:* (cf. full-analysis-snapshot). No-op ici.
+    if (stepwise) return;
+    try {
+      await saveCheckpoint(analysisId, {
+        state: "ANALYZING",
+        completedAgents: Object.keys(allResults),
+        pendingAgents: [],
+        failedAgents: Object.entries(allResults)
+          .filter(([, result]) => !result.success)
+          .map(([agent, result]) => ({
+            agent,
+            error: result.error ?? "no error msg",
+            retries: 1,
+          })),
+        findings: extractAllFindings(allResults).allFindings,
+        results: allResults,
+        totalCost,
+        startTime: new Date(startTimeMs).toISOString(),
+      });
+    } catch (err) {
+      console.warn("[Orchestrator] persistTierCheckpoint non-fatal:", err);
+    }
+  }
+
   async resumeAnalysis(
     analysisId: string,
     onProgress?: AnalysisOptions["onProgress"],
