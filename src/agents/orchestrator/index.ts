@@ -2402,30 +2402,19 @@ export class AgentOrchestrator {
         }
       }
 
-      // Collect batch results
+      // Collect batch results. L'écriture previousResults est DIFFÉRÉE après la boucle
+      // (applyDeferredPreTier2PreviousResults) : byte-inert ici (les 3 agents ont déjà tourné
+      // en parallèle ; collectPreTier2Result/processAgentResult/record/progress ne LISENT pas
+      // previousResults) et requise pour que le split stepwise per-agent (driver v4) lance chaque
+      // agent contre la BASELINE previousResults — devils lit previousResults["contradiction-detector"]
+      // via evidence-solidity (devils-advocate.ts), conditions via Object.keys().length.
       for (const { agentName, result } of batchResults) {
-        // Sanitize narrative fields for prescriptive language (Rule #1)
-        if (result.success && "data" in result) {
-          const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
-          if (totalViolations > 0) {
-            console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
-            (result as { data: unknown }).data = sanitized;
-          }
-        }
-        allResults[agentName] = result;
-        totalCost += result.cost;
-        completedCount++;
-        // F97: Tier 3 results stored unsanitized (they contain synthesis/evaluations needed by later Tier 3 agents)
-        enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(result, { skipSanitization: true });
-
-        if (result.success) {
-          stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
-        } else {
-          stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
-        }
-
-        await processAgentResult(dealId, agentName, result);
+        ({ totalCost, completedCount } = await this.collectPreTier2Result({
+          agentName, result, allResults, totalCost, completedCount, stateMachine, dealId,
+        }));
       }
+
+      this.applyDeferredPreTier2PreviousResults(enrichedContext, allResults);
 
       await updateAnalysisProgress(analysis.id, completedCount, totalCost);
 
@@ -2442,6 +2431,104 @@ export class AgentOrchestrator {
 
     await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
     return { totalCost, completedCount };
+  }
+
+  /**
+   * F3 — Collecte d'UN résultat d'agent pré-Tier2 (conditions/contradiction/devils), PARTAGÉE par
+   * le single-pass (boucle parallèle de runTier3PreTier2Batch) et le driver v4 (steps per-agent
+   * durables). narrative-sanitize + allResults + totalCost + completedCount + stateMachine.record* +
+   * processAgentResult. N'ÉCRIT PAS previousResults (différé : applyDeferredPreTier2PreviousResults,
+   * appelé une fois les 3 collectés) — sinon les agents suivants verraient leurs pairs et divergeraient
+   * du parallèle single-pass. processAgentResult/record ne LISENT pas previousResults.
+   */
+  private async collectPreTier2Result(params: {
+    agentName: string;
+    result: AgentResult;
+    allResults: Record<string, AgentResult>;
+    totalCost: number;
+    completedCount: number;
+    stateMachine: AnalysisStateMachine;
+    dealId: string;
+  }): Promise<{ totalCost: number; completedCount: number }> {
+    const { agentName, result, allResults, stateMachine, dealId } = params;
+    let { totalCost, completedCount } = params;
+    // Sanitize narrative fields for prescriptive language (Rule #1)
+    if (result.success && "data" in result) {
+      const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
+      if (totalViolations > 0) {
+        console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+        (result as { data: unknown }).data = sanitized;
+      }
+    }
+    allResults[agentName] = result;
+    totalCost += result.cost;
+    completedCount++;
+
+    if (result.success) {
+      stateMachine.recordAgentComplete(agentName, result as AnalysisAgentResult);
+    } else {
+      stateMachine.recordAgentFailed(agentName, result.error ?? "Unknown");
+    }
+
+    await processAgentResult(dealId, agentName, result);
+    return { totalCost, completedCount };
+  }
+
+  /**
+   * F3 — Écriture DIFFÉRÉE de previousResults pour le batch tier3-pré (ordre conditions →
+   * contradiction → devils, depuis allResults = les résultats déjà sanitizés/collectés). Appelée UNE
+   * fois les 3 agents collectés (après la boucle parallèle single-pass ; sur le step devils en v4),
+   * de sorte que CHAQUE agent ait tourné contre la BASELINE previousResults. F97 : stockés unsanitized
+   * (skipSanitization → renvoie la même référence) — synthèse/évaluations lues par les agents Tier 3
+   * suivants. Idempotente (ré-écrit les mêmes entrées au replay).
+   */
+  private applyDeferredPreTier2PreviousResults(
+    enrichedContext: EnrichedAgentContext,
+    allResults: Record<string, AgentResult>,
+  ): void {
+    for (const agentName of TIER3_BATCHES_BEFORE_TIER2[0]) {
+      enrichedContext.previousResults![agentName] = sanitizeResultForDownstream(
+        allResults[agentName], { skipSanitization: true }
+      );
+    }
+  }
+
+  /**
+   * F3 — Exécute UN agent pré-Tier2 (initial + 1 retry, mêmes sémantiques que le batch parallèle
+   * single-pass) pour le driver v4 per-agent. Re-dérive getTier3Agents() localement (pur + module-cached,
+   * comme runPostTier1Tier3Post) — le map n'est PAS sérialisable, donc jamais porté par le body de
+   * tier3-setup au replay. Renvoie le résultat (success ou failed-result) ; la collecte est faite par
+   * collectPreTier2Result.
+   */
+  private async runPreTier2Agent(
+    agentName: string,
+    enrichedContext: EnrichedAgentContext,
+  ): Promise<AgentResult> {
+    const tier3AgentMap = await getTier3Agents();
+    const agent = tier3AgentMap[agentName];
+    let result: AgentResult;
+    try {
+      result = await agent.run(enrichedContext);
+    } catch (error) {
+      result = {
+        agentName,
+        success: false,
+        executionTimeMs: 0,
+        cost: 0,
+        error: error instanceof Error ? error.message : "Unknown error",
+      } as AgentResult;
+    }
+    // Auto-retry failed agent (1 retry, comme runTier3PreTier2Batch)
+    if (!result.success) {
+      console.log(`[Orchestrator] Retrying failed agent: ${agentName}`);
+      try {
+        result = await agent.run(enrichedContext);
+        console.log(`[Orchestrator] Retry succeeded for ${agentName}`);
+      } catch (retryError) {
+        console.log(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
+      }
+    }
+    return result;
   }
 
   private async runTier2SectorStep(params: {
@@ -3999,6 +4086,9 @@ export class AgentOrchestrator {
       stepwise,
     } = init;
     let { totalCost, completedCount, factStore, factStoreFormatted, founderResponses } = init;
+    // graphVersion>=4. Gate aussi le split per-agent du batch tier3-pré (le bloc tier0 garde
+    // `tier0Split` brut pour ne pas élargir son diff — même valeur, lisibilité locale).
+    const isV4 = tier0Split;
 
     // État vivant traversant les unités (construit en run sain, REHYDRATÉ au replay).
     let enrichedContext: EnrichedAgentContext | undefined;
@@ -4399,36 +4489,130 @@ export class AgentOrchestrator {
       }
       if (!glueBodyRan) await ensureRehydrated();
 
-      // ===== UNITÉ tier3-pre (d-4) — synthesis-setup + batch Tier3 pré-Tier2 en step durable. Run
-      // sain : mute l'état vivant (enrichedContext BAPrefs/DealTerms/Structure + previousResults,
-      // allResults tier3-pré, startSynthesis DEBATING→SYNTHESIZING) + snapshot not-done → le terminal
-      // `post-tier1` rehydrate au replay-après-tier3-pre. Pas d'early-return (cost-check tier3-pré =
-      // SKIP-only). Modèle B : bodyRan → applique le wire ; sinon ensureRehydrated (no-op après le 1er). =====
-      let tier3PreBodyRan = false;
-      const tier3PreWire = await stepRunner.run("tier3-pre", () =>
-        runWithLLMContext({ analysisId: analysis.id }, async () => {
-          tier3PreBodyRan = true;
-          const ec = enrichedContext!;
-          const r = await this.runPostTier1Tier3Pre({
-            deal, dealId, onProgress, init, enrichedContext: ec, totalCost, completedCount,
-          });
-          await writeStepwiseSnapshot(
-            buildStepState({
-              analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
-              completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
-              transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier3-pre", done: false,
-              enrichedContext: ec, allResults,
-              verificationContext: verificationContext as Record<string, unknown> | null,
-              collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+      // ===== UNITÉS tier3-pre — split SELON LA VERSION. v4 (isV4) : `tier3-setup` (startSynthesis +
+      // DealTerms/Structure/BAPrefs ; map tier3 IGNORÉ, re-dérivé par chaque step via getTier3Agents)
+      // PUIS 3 steps per-agent durables `tier3-pre-conditions/-contradiction/-devils`. DÉFÉRAL
+      // previousResults : les 3 agents tournent contre la BASELINE post-glue (SANS les pairs — devils lit
+      // previousResults["contradiction-detector"] via evidence-solidity) ; les 3 écritures PR sont DIFFÉRÉES
+      // sur le step devils (applyDeferredPreTier2PreviousResults, ordre conditions→contradiction→devils).
+      // Cost-gate : maxCostUsd JAMAIS set sur le chemin durable (route/inngest) → assertion loud (all-or-none
+      // non déterministe au replay sinon, gate Codex). v3 (FROZEN) : step unique `tier3-pre` INCHANGÉ (compat
+      // cross-deploy des runs en vol). Modèle B partout. Le flush intermédiaire du compteur vient du snapshot
+      // (writeStepwiseSnapshot, updateMany conditionnel) → pas d'updateAnalysisProgress per-agent. =====
+      if (isV4) {
+        if (init.maxCostUsd !== undefined) {
+          throw new Error("[stepwise v4] maxCostUsd non supporté sur le chemin durable (cost-gate tier3-pré all-or-none non déterministe au replay)");
+        }
+        // ----- tier3-setup (SNAPSHOT — startSynthesis + DealTerms/Structure/BAPrefs ; map ignoré) -----
+        let tier3SetupBodyRan = false;
+        await stepRunner.run("tier3-setup", () =>
+          runWithLLMContext({ analysisId: analysis.id }, async () => {
+            tier3SetupBodyRan = true;
+            const ec = enrichedContext!;
+            await this.runSynthesisSetupStep({ deal, dealId, stateMachine, enrichedContext: ec });
+            await writeStepwiseSnapshot(
+              buildStepState({
+                analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                completedCount, totalCost, startTimeMs: startTime,
+                transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier3-setup", done: false,
+                enrichedContext: ec, allResults,
+                verificationContext: verificationContext as Record<string, unknown> | null,
+                collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+              })
+            );
+            return { unit: "tier3-setup" as const };
+          })
+        );
+        if (!tier3SetupBodyRan) await ensureRehydrated();
+
+        // ----- tier3-pre-{conditions,contradiction,devils} (1 agent/step ; collect SANS previousResults ;
+        // devils = dernier : applyDeferred (3 PR) + updateAnalysisProgress + onProgress completed +
+        // persistTierCheckpoint (no-op stepwise) AVANT le snapshot). -----
+        const preTier2Steps = [
+          { agentName: "conditions-analyst", unit: "tier3-pre-conditions" },
+          { agentName: "contradiction-detector", unit: "tier3-pre-contradiction" },
+          { agentName: "devils-advocate", unit: "tier3-pre-devils" },
+        ] as const;
+        for (let i = 0; i < preTier2Steps.length; i++) {
+          const { agentName, unit } = preTier2Steps[i];
+          const isLast = i === preTier2Steps.length - 1;
+          let preBodyRan = false;
+          const preWire = await stepRunner.run(unit, () =>
+            runWithLLMContext({ analysisId: analysis.id }, async () => {
+              preBodyRan = true;
+              const ec = enrichedContext!;
+              onProgress?.({
+                currentAgent: agentName,
+                completedAgents: completedCount,
+                totalAgents: TOTAL_AGENTS,
+                estimatedCostSoFar: totalCost,
+              });
+              const result = await this.runPreTier2Agent(agentName, ec);
+              ({ totalCost, completedCount } = await this.collectPreTier2Result({
+                agentName, result, allResults, totalCost, completedCount, stateMachine, dealId,
+              }));
+              if (isLast) {
+                // Les 3 agents ont tourné contre la baseline → publication différée des previousResults.
+                this.applyDeferredPreTier2PreviousResults(ec, allResults);
+                await updateAnalysisProgress(analysis.id, completedCount, totalCost);
+                onProgress?.({
+                  currentAgent: `tier3-parallel completed`,
+                  completedAgents: completedCount,
+                  totalAgents: TOTAL_AGENTS,
+                  estimatedCostSoFar: totalCost,
+                });
+                await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
+              }
+              await writeStepwiseSnapshot(
+                buildStepState({
+                  analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                  completedCount, totalCost, startTimeMs: startTime,
+                  transitionCount: stateMachine.getTransitionCount(), lastUnit: unit, done: false,
+                  enrichedContext: ec, allResults,
+                  verificationContext: verificationContext as Record<string, unknown> | null,
+                  collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+                })
+              );
+              return { totalCost, completedCount };
             })
           );
-          return { totalCost: r.totalCost, completedCount: r.completedCount };
-        })
-      );
-      if (!tier3PreBodyRan) await ensureRehydrated();
-      if (tier3PreBodyRan) {
-        totalCost = tier3PreWire.totalCost;
-        completedCount = tier3PreWire.completedCount;
+          if (!preBodyRan) await ensureRehydrated();
+          if (preBodyRan) {
+            totalCost = preWire.totalCost;
+            completedCount = preWire.completedCount;
+          }
+        }
+      } else {
+        // ===== UNITÉ tier3-pre (d-4, v3 FROZEN) — synthesis-setup + batch Tier3 pré-Tier2 en step unique.
+        // Run sain : mute l'état vivant (enrichedContext BAPrefs/DealTerms/Structure + previousResults,
+        // allResults tier3-pré, startSynthesis DEBATING→SYNTHESIZING) + snapshot not-done → le terminal
+        // `post-tier1` rehydrate au replay-après-tier3-pre. Pas d'early-return (cost-check = SKIP-only). =====
+        let tier3PreBodyRan = false;
+        const tier3PreWire = await stepRunner.run("tier3-pre", () =>
+          runWithLLMContext({ analysisId: analysis.id }, async () => {
+            tier3PreBodyRan = true;
+            const ec = enrichedContext!;
+            const r = await this.runPostTier1Tier3Pre({
+              deal, dealId, onProgress, init, enrichedContext: ec, totalCost, completedCount,
+            });
+            await writeStepwiseSnapshot(
+              buildStepState({
+                analysisId: analysis.id, dealId, analysisType: "full_analysis", totalAgents: TOTAL_AGENTS,
+                completedCount: r.completedCount, totalCost: r.totalCost, startTimeMs: startTime,
+                transitionCount: stateMachine.getTransitionCount(), lastUnit: "tier3-pre", done: false,
+                enrichedContext: ec, allResults,
+                verificationContext: verificationContext as Record<string, unknown> | null,
+                collectedWarnings, tier1Findings: allFindings, allValidations, needsReflect: [],
+              })
+            );
+            return { totalCost: r.totalCost, completedCount: r.completedCount };
+          })
+        );
+        if (!tier3PreBodyRan) await ensureRehydrated();
+        if (tier3PreBodyRan) {
+          totalCost = tier3PreWire.totalCost;
+          completedCount = tier3PreWire.completedCount;
+        }
       }
 
       // ===== UNITÉ tier2-sector (d-5) — sector expert + consensus/reflexion (FOLDÉS, gate Codex #11)

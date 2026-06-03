@@ -75,6 +75,10 @@ describe("AnalysisStateMachine.restoreFromStepState (D.5b b-4)", () => {
     ["tier1-phase-d", "ANALYZING"],
     ["post-tier1-glue", "DEBATING"],
     ["tier3-pre", "SYNTHESIZING"],
+    ["tier3-setup", "SYNTHESIZING"],
+    ["tier3-pre-conditions", "SYNTHESIZING"],
+    ["tier3-pre-contradiction", "SYNTHESIZING"],
+    ["tier3-pre-devils", "SYNTHESIZING"],
     ["tier2-sector", "SYNTHESIZING"],
     ["tier3-post", "SYNTHESIZING"],
   ];

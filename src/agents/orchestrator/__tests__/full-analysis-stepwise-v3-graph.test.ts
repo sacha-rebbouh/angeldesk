@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { TIER3_BATCHES_BEFORE_TIER2 } from "../types";
 
 // d-3 (d-3-5) — GOLDEN du graphe stepwise v3 (runFullAnalysisStepwiseV3) au niveau DRIVER
 // (sous-méthodes Tier1 stubées — E1 garanti structurellement par le Modèle B). v3 découpe Tier1
@@ -292,6 +293,17 @@ function stubHelpers(orch: Record<string, unknown>, captured: Captured[]) {
     totalCost: p.totalCost + 0.3,
     completedCount: p.completedCount + 3,
   }));
+  // d-4 (split v4 per-agent) — le driver v4 n'appelle PLUS runPostTier1Tier3Pre (gardé pour single-pass
+  // + v3-frozen) : il appelle tier3-setup (runSynthesisSetupStep) + 3 steps per-agent (runPreTier2Agent +
+  // collectPreTier2Result) + applyDeferred sur devils. Stubs : setup no-op, collect bump +0.1/+1 (×3 =
+  // +0.3/+3 === somme single-pass), applyDeferred no-op. La fuite previousResults est testée à part (real).
+  orch.runSynthesisSetupStep = vi.fn(async () => ({ tier3AgentMap: {} }));
+  orch.runPreTier2Agent = vi.fn(async (agentName: string) => ({ agentName, success: true, executionTimeMs: 1, cost: 0 }));
+  orch.collectPreTier2Result = vi.fn(async (p: { totalCost: number; completedCount: number }) => ({
+    totalCost: p.totalCost + 0.1,
+    completedCount: p.completedCount + 1,
+  }));
+  orch.applyDeferredPreTier2PreviousResults = vi.fn(() => {});
   orch.runPostTier1Tier2 = vi.fn(async (p: { totalCost: number; completedCount: number; reportTotalCost: (c: number) => void }) => {
     const totalCost = p.totalCost + 0.2;
     p.reportTotalCost(totalCost);
@@ -459,12 +471,14 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
   });
 });
 
-// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — Option B split tier0-thesis →
-// tier0-pre-context (1er snapshot) + tier0-thesis-extractor (thesis peelé), tout décale de +1 :
+// Séquence de steps v4 (tier0Split=true ; REFLECT_AGENTS={competitive-intel} en phase C). Le split
+// tier0-thesis (tier0-pre-context + tier0-thesis-extractor) ET le split per-agent du batch tier3-pré
+// (tier3-setup + tier3-pre-{conditions,contradiction,devils}) — tout après le glue décale de +3 :
 // 1 tier0-facts · 2 tier0-pre-context · 3 tier0-thesis-extractor · 4 tier1-a-agents · 5 tier1-a-finalize ·
 // 6 tier1-b-agents · 7 tier1-b-finalize · 8 tier1-c-agents · 9 tier1-c-reflexion-0 · 10 tier1-c-finalize ·
-// 11 tier1-d-agents · 12 tier1-d-finalize · 13 post-tier1-glue · 14 tier3-pre · 15 tier2-sector ·
-// 16 tier3-post-0 · 17 tier3-post-1 · 18 tier3-post-2 · 19 post-tier1.
+// 11 tier1-d-agents · 12 tier1-d-finalize · 13 post-tier1-glue · 14 tier3-setup · 15 tier3-pre-conditions ·
+// 16 tier3-pre-contradiction · 17 tier3-pre-devils · 18 tier2-sector · 19 tier3-post-0 · 20 tier3-post-1 ·
+// 21 tier3-post-2 · 22 post-tier1.
 describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydrate mid-Tier1)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -562,19 +576,45 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-tier3-pre — kill APRÈS tier3-pre (step 14) → rehydrate depuis le snapshot tier3-pre, terminal frais, ===ref", async () => {
+  it("E2-tier3-setup — kill APRÈS tier3-setup (step 14) → rehydrate depuis le snapshot tier3-setup, steps tier3-pre per-agent frais, ===ref", async () => {
     const { capRef, cap, passes, orch } = await runE2(14);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
-    // CARRY (d-4) : le snapshot tier3-pre porte un vc non-null → pas de rebuild au resume (tier3-pre
-    // mémoïsé not-done ; ensureRehydrated reconstruit l'état post-tier3-pre ; les steps suivants
-    // (tier2-sector + terminal RestAfterTier2Sector) tournent frais et retournent REST_RESULT). Force
-    // le chemin !tier3PreBodyRan → ensureRehydrated.
+    // CARRY (split v4 tier3-pré) : le snapshot tier3-setup porte un vc non-null → pas de rebuild au resume
+    // (tier3-setup mémoïsé not-done ; ensureRehydrated reconstruit l'état post-setup ; les 3 steps per-agent
+    // + tier2-sector + terminal tournent frais). Force le chemin !tier3SetupBodyRan → ensureRehydrated.
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-tier2-sector — kill APRÈS tier2-sector (step 15) → rehydrate depuis le snapshot tier2-sector, terminal frais, ===ref", async () => {
+  it("E2-tier3-pre-conditions — kill APRÈS tier3-pre-conditions (step 15) → rehydrate, contradiction/devils frais, ===ref", async () => {
     const { capRef, cap, passes, orch } = await runE2(15);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // CARRY : snapshot tier3-pre-conditions (previousResults BASELINE, allResults partiel) → au resume,
+    // contradiction puis devils tournent frais contre la baseline. Force !preBodyRan → ensureRehydrated.
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-tier3-pre-contradiction — kill APRÈS tier3-pre-contradiction (step 16) → rehydrate, devils frais contre baseline, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(16);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // CARRY : snapshot tier3-pre-contradiction porte encore previousResults BASELINE (déféral) → devils
+    // tourne frais SANS voir contradiction-detector dans previousResults (byte-équiv parallèle single-pass).
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-tier3-pre-devils — kill APRÈS tier3-pre-devils (step 17) → rehydrate (les 3 PR publiés), tier2-sector + terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(17);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // CARRY : le snapshot tier3-pre-devils porte les 3 previousResults (écriture différée) + un vc non-null
+    // → pas de rebuild. Force le chemin !preBodyRan (dernier step) → ensureRehydrated.
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-tier2-sector — kill APRÈS tier2-sector (step 18) → rehydrate depuis le snapshot tier2-sector, terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(18);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY (d-5) : le snapshot tier2-sector porte un vc non-null → pas de rebuild au resume (tier2-sector
@@ -583,8 +623,8 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-tier3-post-mid — kill APRÈS tier3-post-0 (step 16, 1er agent) → rehydrate, tier3-post-1/2 + terminal frais, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(16);
+  it("E2-tier3-post-mid — kill APRÈS tier3-post-0 (step 19, 1er agent) → rehydrate, tier3-post-1/2 + terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(19);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY (d-6) : kill EN COURS du post-batch per-agent (après le 1er des 3 batches). Le snapshot
@@ -593,12 +633,117 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-tier3-post-all — kill APRÈS tier3-post-2 (step 18, dernier agent) → rehydrate, terminal final frais, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(18);
+  it("E2-tier3-post-all — kill APRÈS tier3-post-2 (step 21, dernier agent) → rehydrate, terminal final frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(21);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY (d-6) : kill après TOUS les batches tier3-post ; au resume seul le terminal final tourne frais.
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+});
+
+// d-3-5c — TEST CIBLÉ du split tier3-pré (la fuite que les golden d-3-5a/b STUBBENT). Prouve l'invariant
+// byte-critique du DÉFÉRAL previousResults : les 3 agents pré-Tier2 (conditions/contradiction/devils)
+// tournent TOUS contre la BASELINE post-glue, en single-pass (parallèle) ET en v4 (per-agent). Un split
+// séquentiel naïf ferait voir contradiction-detector à devils (via evidence-solidity) → divergence ;
+// ce test serait alors ROUGE. + verrouille l'assertion cost-gate v4 (maxCostUsd interdit sur durable).
+describe("d-3-5c — tier3-pré split : déféral previousResults (byte-équiv parallèle) + cost-gate v4", () => {
+  // BASELINE previousResults post-glue. Aucune des 3 clés tier3-pré ne doit apparaître à l'INPUT.
+  const BASELINE_PR = { "deck-forensics": { ok: 1 }, "financial-auditor": { ok: 1 }, _consensus_resolutions: [{ id: "c1" }] };
+  const BASELINE_KEYS = Object.keys(BASELINE_PR).sort();
+  const PRE_AGENTS = TIER3_BATCHES_BEFORE_TIER2[0];
+
+  function makeCapturingMap(seen: Record<string, string[]>) {
+    type CapturingAgent = {
+      name: string;
+      run: (ctx: { previousResults?: Record<string, unknown> }) => Promise<{
+        agentName: string; success: true; executionTimeMs: number; cost: number; data: { summary: string };
+      }>;
+    };
+    const map: Record<string, CapturingAgent> = {};
+    for (const name of PRE_AGENTS) {
+      map[name] = {
+        name,
+        run: async (ctx) => {
+          seen[name] = Object.keys(ctx.previousResults ?? {}).sort();
+          return { agentName: name, success: true as const, executionTimeMs: 1, cost: 0.1, data: { summary: name } };
+        },
+      };
+    }
+    return map;
+  }
+  const fakeStateMachine = () => ({ recordAgentComplete: vi.fn(), recordAgentFailed: vi.fn() });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    snapshotStore.map.clear();
+  });
+
+  it("déféral : les 3 agents voient TOUS la baseline (devils SANS contradiction-detector) — single-pass === v4 ; PR finaux === ", async () => {
+    const orch = new AgentOrchestrator() as unknown as Record<string, unknown>;
+
+    // ----- single-pass : runTier3PreTier2Batch RÉEL (parallèle + déféral via applyDeferred) -----
+    const seenSingle: Record<string, string[]> = {};
+    const ecSingle = { previousResults: { ...BASELINE_PR } };
+    const allResultsSingle: Record<string, unknown> = {};
+    await (orch.runTier3PreTier2Batch as (p: unknown) => Promise<unknown>)({
+      stepwise: true, maxCostUsd: undefined, totalCost: 0, completedCount: 0,
+      tier3AgentMap: makeCapturingMap(seenSingle), enrichedContext: ecSingle, allResults: allResultsSingle,
+      stateMachine: fakeStateMachine(), analysis: { id: "analysis_1" }, dealId: "deal_1",
+      startTime: 0, onProgress: undefined, TOTAL_AGENTS: 22,
+    });
+
+    // ----- v4 per-agent : run séquentiel + collectPreTier2Result (SANS PR) puis applyDeferred (ordre driver) -----
+    const seenV4: Record<string, string[]> = {};
+    const mapV4 = makeCapturingMap(seenV4);
+    const ecV4 = { previousResults: { ...BASELINE_PR } };
+    const allResultsV4: Record<string, unknown> = {};
+    const sm = fakeStateMachine();
+    let tc = 0, cc = 0;
+    for (const name of PRE_AGENTS) {
+      const result = await mapV4[name].run(ecV4);
+      ({ totalCost: tc, completedCount: cc } = await (orch.collectPreTier2Result as (p: unknown) => Promise<{ totalCost: number; completedCount: number }>)({
+        agentName: name, result, allResults: allResultsV4, totalCost: tc, completedCount: cc, stateMachine: sm, dealId: "deal_1",
+      }));
+    }
+    (orch.applyDeferredPreTier2PreviousResults as (ec: unknown, ar: unknown) => void)(ecV4, allResultsV4);
+
+    // INVARIANT byte-critique : chaque agent a tourné contre la BASELINE (aucune clé tier3-pré à l'input).
+    for (const name of PRE_AGENTS) {
+      expect(seenSingle[name], `single-pass ${name}`).toEqual(BASELINE_KEYS);
+      expect(seenV4[name], `v4 ${name}`).toEqual(BASELINE_KEYS);
+    }
+    // Teeth : devils NE voit PAS contradiction-detector (la divergence qu'un split séquentiel naïf créerait).
+    expect(seenSingle["devils-advocate"]).not.toContain("contradiction-detector");
+    expect(seenV4["devils-advocate"]).not.toContain("contradiction-detector");
+    // Inputs vus identiques single-pass vs v4.
+    expect(seenV4).toEqual(seenSingle);
+
+    // APRÈS les 2 chemins : previousResults publie les 3 (déféral). Clés finales identiques.
+    const prSingle = Object.keys((ecSingle as { previousResults: Record<string, unknown> }).previousResults);
+    const prV4 = Object.keys(ecV4.previousResults);
+    for (const name of PRE_AGENTS) {
+      expect(prSingle, `single-pass PR ${name}`).toContain(name);
+      expect(prV4, `v4 PR ${name}`).toContain(name);
+    }
+    expect(prV4.sort()).toEqual(prSingle.sort());
+  });
+
+  it("cost-gate v4 — maxCostUsd défini sur le chemin durable → assertion loud (analyse FAILED via failFullAnalysis)", async () => {
+    const orch = new AgentOrchestrator() as unknown as Record<string, unknown>;
+    stubHelpers(orch, []);
+    persistenceMocks.completeAnalysis.mockResolvedValue(undefined);
+    persistenceMocks.updateAnalysisProgress.mockResolvedValue(undefined);
+    loadResultsMock.fn.mockResolvedValue(REST_RESULT.results);
+    const init = makeInit() as Record<string, unknown>;
+    init.maxCostUsd = 5;
+    const result = await (orch.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<{ success: boolean }>)(
+      {}, "deal_1", undefined, init, new InlineStepRunner(), true,
+    );
+    expect(result.success).toBe(false);
+    const failCalls = (orch.failFullAnalysis as ReturnType<typeof vi.fn>).mock.calls;
+    expect(failCalls.length).toBeGreaterThan(0);
+    expect((failCalls[0][0] as Error).message).toContain("maxCostUsd");
   });
 });
 
