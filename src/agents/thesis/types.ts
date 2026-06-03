@@ -193,6 +193,12 @@ export interface ThesisReconcilerOutput {
   updatedConfidence: number;
   verdictChanged: boolean;    // true si le verdict initial a change apres reconciliation
 
+  // Phase 9c — true quand la synthese LLM etait indisponible et que la
+  // reconciliation a ete produite en mode DETERMINISTE (verdict plancher +
+  // signaux structures). L'UI doit le signaler honnetement (pas de synthese
+  // redigee par modele). Optionnel : les analyses anterieures n'ont pas ce champ.
+  synthesisDegraded?: boolean;
+
   // Red flags THESIS_VS_REALITY derives des contradictions detectees
   newRedFlags: Array<{
     category: "THESIS" | "THESIS_VS_REALITY";

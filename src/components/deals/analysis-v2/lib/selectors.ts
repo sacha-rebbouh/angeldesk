@@ -1,4 +1,5 @@
 import type { EvidenceSolidity, Orientation } from "@/lib/ui-configs";
+import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
 
 import {
   agentData,
@@ -28,6 +29,46 @@ import type { AgentCardSignal } from "../atoms/agent-card";
 import type { EvidenceRowProps } from "../atoms/evidence-row";
 import type { RankRowItem, SignalWithSource, ThesisCard, LoadBearingClaim, ThesisAlert } from "./view-types";
 import { collectEvidence } from "./evidence-collector";
+import { isLegalRegistryUnavailableSignal, presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
+import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
+
+/**
+ * Source UNIQUE des risques consolidés (Codex #10 : pas deux listes
+ * divergentes entre Section 1 et le mémo). Fusionne dealbreakers Question
+ * Master + red flags Tier 1, **dédupliqués par topic sémantique**
+ * (`inferRedFlagTopic` — « valorisation » ne réapparaît plus 4×), triés par
+ * sévérité. Pas de cap : la liste complète déduplicée (#21).
+ */
+function consolidateRiskRanks(results: ResultsMap | null | undefined): RankRowItem[] {
+  if (!results) return [];
+  const fromQm = extractRanksFromQuestionMaster(results);
+  const fromRedFlags = extractRanksFromTier1RedFlags(results, 100);
+  // Représentant par topic choisi par SÉVÉRITÉ la plus haute (Codex : sinon une
+  // condition QM moins sévère, vue en premier, masque un red flag Tier 1 CRITICAL
+  // du même topic et sous-compte les risques critiques). Premier-vu gagne à égalité.
+  const byTopic = new Map<string, RankRowItem>();
+  for (const item of [...fromQm, ...fromRedFlags]) {
+    const key = inferRedFlagTopic(item.title);
+    const existing = byTopic.get(key);
+    if (!existing || rankSeverity(item.severity) < rankSeverity(existing.severity)) {
+      byTopic.set(key, item);
+    }
+  }
+  return [...byTopic.values()].sort((a, b) => rankSeverity(a.severity) - rankSeverity(b.severity));
+}
+
+/**
+ * Dérive un titre lisible depuis une description/impact quand l'agent n'a pas
+ * fourni de `title` (#5 : éviter le générique "Risque identifié" quand du
+ * contenu existe). Première phrase, jamais tronquée silencieusement.
+ */
+function deriveRiskTitle(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const trimmed = scrubAgentNamesFromText(text).trim();
+  if (!trimmed) return null;
+  const firstSentence = trimmed.split(/(?<=[.!?])\s+/)[0]?.trim();
+  return firstSentence && firstSentence.length > 0 ? firstSentence : trimmed;
+}
 
 const SEVERITY_RANK: Record<string, number> = {
   CRITICAL: 0,
@@ -90,20 +131,39 @@ function extractRanksFromQuestionMaster(results: ResultsMap | null | undefined):
     const severity = severityToPill(stringAt(item, ["severity"]));
     const condition = stringAt(item, ["condition"]) ?? stringAt(item, ["description"]) ?? "Condition critique";
     const description = stringAt(item, ["description"]);
-    const sourceAgent = stringAt(item, ["sourceAgent"]);
     const riskIf = stringAt(item, ["riskIfIgnored"]);
     const timeToResolve = stringAt(item, ["timeToResolve"]);
     ranks.push({
       id: stringAt(item, ["id"]) ?? `qm-${ranks.length}`,
-      title: compactString(condition, 180) ?? "Condition critique",
-      description: compactString(description ?? riskIf, 280) ?? undefined,
+      title: scrubAgentNamesFromText(condition) || "Condition critique",
+      description: scrubAgentNamesFromText(description ?? riskIf ?? "") || undefined,
       severity,
       severityLabel: severityLabel(severity),
-      source: sourceAgent ?? "question-master",
+      // source = nom d'agent → pas de pastille (cohérence avec les ranks Tier 1).
+      source: null,
       tags: timeToResolve ? [{ label: `Délai : ${timeToResolve}`, tone: "info" as const }] : [],
     });
   }
   return ranks;
+}
+
+/**
+ * Blob texte d'un red flag (tous champs porteurs de provenance/signal), utilisé
+ * de façon UNIFORME par les 3 chemins du reframe « couverture légale » (#6) —
+ * skip des ranks, notice `detectLegalCoverageGap`, filtre des concerns — pour
+ * qu'un flag retiré des risques lève TOUJOURS la notice (jamais de troncature
+ * muette, même si la source registre n'est que dans `location`). Codex #2.
+ */
+function redFlagSignalBlob(rf: Record<string, unknown>): string {
+  return [
+    stringAt(rf, ["title"]),
+    stringAt(rf, ["description"]),
+    stringAt(rf, ["impact"]),
+    stringAt(rf, ["evidence"]),
+    stringAt(rf, ["location"]),
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, limit: number): RankRowItem[] {
@@ -118,22 +178,37 @@ function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, l
       const severityRank = rankSeverity(severityRaw);
       if (severityRank > 1) continue;
       const severity = severityToPill(severityRaw);
-      const title = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]) ?? "Risque identifié";
+      const rawTitle = stringAt(rf, ["title"]);
       const description = stringAt(rf, ["description"]);
-      const location = stringAt(rf, ["location"]);
       const impact = stringAt(rf, ["impact"]);
+      const location = stringAt(rf, ["location"]);
       const evidence = stringAt(rf, ["evidence"]);
+      // #6 : un flag « registre officiel indisponible » n'est pas un risque société —
+      // il est reclassé en notice « couverture légale à vérifier » (detectLegalCoverageGap),
+      // donc retiré des risques rangés (signature explicite, jamais un « légal » flou).
+      if (isLegalRegistryUnavailableSignal(redFlagSignalBlob(rf))) {
+        continue;
+      }
+      // #5 : titre fourni (scrubé des noms d'agents — un title runtime peut en
+      // contenir), sinon dérivé de description/impact, sinon générique en dernier recours.
+      const cleanRawTitle = rawTitle ? scrubAgentNamesFromText(rawTitle) : "";
+      const title = cleanRawTitle || deriveRiskTitle(description ?? impact) || "Risque identifié";
+      // #7/#4 : description complète (pas de troncature muette), scrubée des noms d'agents.
+      const fullDescription = scrubAgentNamesFromText([description, impact].filter(Boolean).join(" · ")) || null;
+      // #7 : preuve complète scrubée → rendue en détail repliable (plus de chip tronqué à 80c).
+      const cleanEvidence = scrubAgentNamesFromText(evidence) || null;
+      // #7 : la "source" était le nom d'agent → pas de pastille ; la provenance utile
+      // est la `location` sanitizée en tag.
+      const locationTag = location ? sanitizeSourceLabel(location) : null;
       collected.push({
         id: stringAt(rf, ["id"]) ?? `${name}-${collected.length}`,
-        title: compactString(title, 180) ?? "Risque identifié",
-        description: compactString([description, impact].filter(Boolean).join(" · "), 280),
+        title,
+        description: fullDescription,
+        evidence: cleanEvidence,
         severity,
         severityLabel: severityLabel(severity),
-        source: name,
-        tags: [
-          location ? { label: location, tone: "neutral" as const } : null,
-          evidence ? { label: compactString(evidence, 80) ?? "", tone: "info" as const } : null,
-        ].filter((t): t is { label: string; tone: "neutral" | "info" } => t !== null && t.label.length > 0),
+        source: null,
+        tags: locationTag ? [{ label: locationTag, tone: "neutral" as const }] : [],
         _rank: severityRank,
       });
     }
@@ -145,7 +220,7 @@ function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, l
     const key = item.title.toLowerCase().slice(0, 80);
     if (seen.has(key)) continue;
     seen.add(key);
-    deduped.push({ id: item.id, title: item.title, description: item.description, severity: item.severity, severityLabel: item.severityLabel, source: item.source, tags: item.tags });
+    deduped.push({ id: item.id, title: item.title, description: item.description, evidence: item.evidence, severity: item.severity, severityLabel: item.severityLabel, source: item.source, tags: item.tags });
     if (deduped.length >= limit) break;
   }
   return deduped;
@@ -246,24 +321,34 @@ export function buildDecisionStripModel(deal: { id: string; name?: string | null
   };
 }
 
+/**
+ * #6 : détecte si AU MOINS un agent a signalé l'indisponibilité du registre
+ * officiel (Pappers/K-bis). Ces flags sont retirés des risques rangés et
+ * regroupés en UNE notice honnête « couverture légale à vérifier » (pas un
+ * risque société). Signature explicite (source registre ET indisponibilité).
+ */
+function detectLegalCoverageGap(results: ResultsMap | null | undefined): boolean {
+  if (!results) return false;
+  for (const entry of Object.values(results)) {
+    if (!entry?.success) continue;
+    for (const rf of arrayAt(entry.data, ["redFlags"])) {
+      if (!isRecord(rf)) continue;
+      if (isLegalRegistryUnavailableSignal(redFlagSignalBlob(rf))) return true;
+    }
+  }
+  return false;
+}
+
 export function buildDecisionSectionModel(results: ResultsMap | null | undefined) {
   return {
     favorable: extractPositiveSignals(results, 5),
     vigilance: extractVigilanceSignals(results, 5),
-    ranks: (() => {
-      const fromQm = extractRanksFromQuestionMaster(results);
-      const fromRedFlags = extractRanksFromTier1RedFlags(results, 8);
-      const merged: RankRowItem[] = [];
-      const seen = new Set<string>();
-      for (const item of [...fromQm, ...fromRedFlags]) {
-        const key = item.title.toLowerCase().slice(0, 80);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push(item);
-        if (merged.length >= 8) break;
-      }
-      return merged;
-    })(),
+    // #21 : liste complète déduplicée (source unique consolidateRiskRanks),
+    // plus de cap muet à 8 ni de doublons « valorisation ».
+    ranks: consolidateRiskRanks(results),
+    // #6 : couverture légale (registre officiel indisponible) reclassée en notice
+    // honnête, hors des risques société.
+    legalCoverageGap: detectLegalCoverageGap(results),
     alertConvergence: countAlertSignalDistribution(results),
   };
 }
@@ -273,6 +358,8 @@ export type ThesisSectionModel = {
   loadBearing: LoadBearingClaim[];
   alerts: ThesisAlert[];
   reconciled: boolean;
+  /** #11 (9c) : réconciliation aboutie MAIS en mode déterministe (synthèse LLM indisponible). */
+  reconciliationDegraded: boolean;
   reconciliationReason: string | null;
   verdict: string | null;
   confidence: number | null;
@@ -280,7 +367,7 @@ export type ThesisSectionModel = {
 
 export function buildThesisSectionModel(thesis: Record<string, unknown> | null, results: ResultsMap | null | undefined, analysisMode?: string | null): ThesisSectionModel {
   if (!thesis) {
-    return { cards: [], loadBearing: [], alerts: [], reconciled: false, reconciliationReason: "Aucune thèse enregistrée pour ce dossier.", verdict: null, confidence: null };
+    return { cards: [], loadBearing: [], alerts: [], reconciled: false, reconciliationDegraded: false, reconciliationReason: "Aucune thèse enregistrée pour ce dossier.", verdict: null, confidence: null };
   }
   const cards: ThesisCard[] = [
     { key: "reformulated", title: "Reformulation", body: stringAt(thesis, ["reformulated"]) },
@@ -319,7 +406,8 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
         id: stringAt(item, ["id"]) ?? title.slice(0, 40),
         title,
         detail: stringAt(item, ["detail"]),
-        category: stringAt(item, ["category"]),
+        // Label user-facing (jamais l'enum brut "ASSUMPTION_FRAGILE" → #13).
+        category: thesisAlertCategoryLabel(stringAt(item, ["category"])),
         severity: sev,
         severityLabel: severityLabel(sev),
       } satisfies ThesisAlert;
@@ -332,6 +420,10 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
   // Le message « n'a pas tourné » était faux quand l'agent avait timeout.
   const reconcilerEntry = results?.["thesis-reconciler"];
   const reconciled = reconcilerEntry?.success === true;
+  // 9c : réconciliation aboutie mais en mode déterministe (marqueur structuré
+  // posé par l'agent quand la chaîne LLM est épuisée — pas une heuristique texte).
+  const reconciliationDegraded =
+    reconciled && isRecord(reconcilerEntry?.data) && valueAt(reconcilerEntry.data, ["synthesisDegraded"]) === true;
   let reconciliationReason: string | null = null;
   if (!reconciled) {
     const reconcilerError = reconcilerEntry && isString(reconcilerEntry.error) ? reconcilerEntry.error : null;
@@ -355,6 +447,7 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
     loadBearing,
     alerts,
     reconciled,
+    reconciliationDegraded,
     reconciliationReason,
     verdict: stringAt(thesis, ["verdict"]),
     confidence: numberAt(thesis, ["confidence"]),
@@ -382,8 +475,31 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
           ? intensityToOrientation(intensity)
           : null;
       const solidity = isString(solidityFromContribution) ? (solidityFromContribution as EvidenceSolidity) : null;
-      const insights = flattenInsights(snap.data, 3);
-      const oneLiner = summarizeOneLiner(snap.data) ?? deriveFallbackOneLiner(snap.data);
+      // #14/#15 : séparer « ce qui étaye » (insights non négatifs) de « ce qui
+      // alerte » (red flags structurés) — plus de puces positives sous une
+      // orientation d'alerte. Tout est scrubé des noms d'agents.
+      const supports = flattenInsights(snap.data, 5)
+        .filter((i) => !NEGATIVE_KEYWORDS.test(i))
+        .map((i) => scrubAgentNamesFromText(i))
+        .filter((i) => i.length > 0)
+        .slice(0, 3);
+      const concerns = arrayAt(snap.data, ["redFlags"])
+        .filter((rf) => {
+          if (!isRecord(rf)) return false;
+          // #6 : un « registre indisponible » n'est pas une alerte de dimension —
+          // il est porté par la notice « couverture légale à vérifier ».
+          return !isLegalRegistryUnavailableSignal(redFlagSignalBlob(rf));
+        })
+        .map((rf) => {
+          if (!isRecord(rf)) return "";
+          const t = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]) ?? stringAt(rf, ["impact"]) ?? "";
+          return scrubAgentNamesFromText(t);
+        })
+        .filter((t) => t.length > 0)
+        .slice(0, 3);
+      // oneLiner scrubé des noms d'agents (cohérent avec supports/concerns).
+      const rawOneLiner = summarizeOneLiner(snap.data) ?? deriveFallbackOneLiner(snap.data);
+      const oneLiner = rawOneLiner ? scrubAgentNamesFromText(rawOneLiner) || null : null;
       const redFlags = arrayAt(snap.data, ["redFlags"]).length;
       const questions = arrayAt(snap.data, ["questions"]).length;
       const score = numberAt(snap.data, ["score", "value"]);
@@ -394,7 +510,8 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
         orientation,
         solidity,
         scoreValue: score != null ? Math.round(score) : null,
-        insights,
+        supports,
+        concerns,
         redFlagCount: redFlags,
         questionCount: questions,
       });
@@ -426,18 +543,16 @@ function deriveFallbackOneLiner(data: unknown): string | null {
     const t = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]);
     if (t) return compactString(`Signal d'alerte : ${t}`, 180);
   }
-  const score = numberAt(data, ["score", "value"]);
-  if (typeof score === "number") {
-    const intensity = stringAt(data, ["signalIntensity"]);
-    const intl = intensity
-      ? ({
-          low: "signal favorable",
-          elevated: "signal contrasté",
-          high: "vigilance requise",
-          critical: "signal d'alerte",
-        } as Record<string, string>)[intensity]
-      : null;
-    return `Score ${Math.round(score)}/100${intl ? ` · ${intl}` : ""}`;
+  // #16 : pas de score chiffré dans le oneLiner — uniquement un libellé d'intensité non numérique.
+  const intensity = stringAt(data, ["signalIntensity"]);
+  if (intensity) {
+    const intl = ({
+      low: "Signal favorable",
+      elevated: "Signal contrasté",
+      high: "Vigilance requise",
+      critical: "Signal d'alerte",
+    } as Record<string, string>)[intensity];
+    if (intl) return intl;
   }
   return null;
 }
@@ -461,6 +576,8 @@ export function buildEvidenceSectionModel(results: ResultsMap | null | undefined
   return collectEvidence(results);
 }
 
+type MemoPriority = { action: string; rationale: string | null; deadline: string | null; priority: string | null };
+
 export type MemoSectionModel =
   | {
       kind: "generated";
@@ -470,19 +587,44 @@ export type MemoSectionModel =
       investmentThesis: string | null;
       criticalRisks: Array<{ title: string; detail: string | null; severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"; severityLabel: string; source: string | null }>;
       nextSteps: string[];
+      /** Plan d'investigation priorisé (Question Master) — enrichit des next steps trop courts (#22). */
+      topPriorities: MemoPriority[];
+      /** Total de risques critiques distincts consolidés — pour « voir les N risques » (#21). */
+      totalCriticalRisks: number;
     }
   | {
       kind: "reconstituted";
       reason: string;
       strengths: SignalWithSource[];
-      criticalRisks: Array<{ title: string; detail: string | null; source: string }>;
-      topPriorities: Array<{ action: string; rationale: string | null; deadline: string | null; priority: string | null }>;
+      criticalRisks: Array<{ title: string; detail: string | null; source: string | null }>;
+      topPriorities: MemoPriority[];
       diligenceItems: Array<{ item: string; documentsNeeded: string[]; estimatedEffort: string | null }>;
       negotiationPoints: Array<{ point: string; category: string | null; argument: string | null }>;
       forNegotiation: string[];
+      totalCriticalRisks: number;
     };
 
 export function buildMemoSectionModel(results: ResultsMap | null | undefined): MemoSectionModel {
+  // Source unique consolidée (Codex #10) : total de risques critiques distincts (#21).
+  const consolidated = consolidateRiskRanks(results);
+  const totalCriticalRisks = consolidated.filter((r) => r.severity === "CRITICAL").length;
+
+  // Plan d'investigation priorisé (Question Master) — partagé par les deux modes (#22).
+  const qm = agentData(results, "question-master");
+  const topPriorities: MemoPriority[] = (isRecord(qm) ? arrayAt(qm, ["topPriorities"]) : [])
+    .map((p) => {
+      if (!isRecord(p)) return null;
+      // Tous les champs RENDUS sont scrubés (action/rationale/deadline) — ils
+      // viennent de Question Master et peuvent contenir des noms d'agents (Codex).
+      return {
+        action: scrubAgentNamesFromText(stringAt(p, ["action"]) ?? "") || "Action prioritaire",
+        rationale: scrubAgentNamesFromText(stringAt(p, ["rationale"]) ?? "") || null,
+        deadline: scrubAgentNamesFromText(stringAt(p, ["deadline"]) ?? "") || null,
+        priority: stringAt(p, ["priority"]),
+      } satisfies MemoPriority;
+    })
+    .filter((x): x is MemoPriority => x !== null);
+
   const memo = agentData(results, "memo-generator");
   if (isRecord(memo)) {
     return {
@@ -490,27 +632,37 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       executiveSummary: stringAt(memo, ["executiveSummary", "oneLiner"]),
       keyPoints: arrayAt(memo, ["executiveSummary", "keyPoints"])
         .map((kp) => (isString(kp) ? kp : isRecord(kp) ? stringAt(kp, ["text"]) : null))
-        .filter((kp): kp is string => kp !== null),
+        .filter((kp): kp is string => kp !== null)
+        .map((kp) => scrubAgentNamesFromText(kp) || kp),
       companyOverview: stringAt(memo, ["companyOverview"]),
       investmentThesis: isString(valueAt(memo, ["investmentThesis"]))
         ? (valueAt(memo, ["investmentThesis"]) as string)
         : stringAt(memo, ["investmentThesis", "summary"]),
-      // memo-generator émet criticalRisks[] = {riskId, severity, description, evidence, source}
-      // (PAS de `title`). On dérive donc le titre de `description` et le détail de
-      // `evidence`, et on conserve severity + source (jetés auparavant → tous les
-      // risques s'affichaient « Risque » sans pondération).
+      // criticalRisks[] = {severity, description, evidence, source} (PAS de title).
+      // Titre dérivé de description, détail = evidence ; tout scrubé (le prompt mémo
+      // enseignait « Source: <agent> »), source via presentableSource (null si agent).
       criticalRisks: arrayAt(memo, ["criticalRisks"])
+        .filter((r) => {
+          if (!isRecord(r)) return false;
+          // #6 : « registre officiel indisponible » sort des risques critiques du
+          // mémo (porté par la notice « couverture légale à vérifier »). « K-bis
+          // NON FOURNI » (sans token d'indisponibilité) reste un vrai item de diligence.
+          const blob = [stringAt(r, ["description"]), stringAt(r, ["title"]), stringAt(r, ["evidence"]), stringAt(r, ["detail"])].filter(Boolean).join(" ");
+          return !isLegalRegistryUnavailableSignal(blob);
+        })
         .map((r) => {
           if (!isRecord(r)) return null;
           const severity = severityToPill(stringAt(r, ["severity"]));
-          const title = stringAt(r, ["description"]) ?? stringAt(r, ["title"]) ?? "Risque identifié";
-          const detail = stringAt(r, ["evidence"]) ?? stringAt(r, ["detail"]);
+          const rawTitle = stringAt(r, ["description"]) ?? stringAt(r, ["title"]);
+          const title = (rawTitle ? scrubAgentNamesFromText(rawTitle) : "") || "Risque identifié";
+          const rawDetail = stringAt(r, ["evidence"]) ?? stringAt(r, ["detail"]);
+          const detail = rawDetail ? scrubAgentNamesFromText(rawDetail) || null : null;
           return {
-            title: compactString(title, 200) ?? "Risque identifié",
-            detail: detail ? compactString(detail, 320) : null,
+            title,
+            detail,
             severity,
             severityLabel: severityLabel(severity),
-            source: stringAt(r, ["source"]) ?? null,
+            source: presentableSource(stringAt(r, ["source"])),
           };
         })
         .filter(
@@ -518,15 +670,14 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
             r !== null,
         ),
       nextSteps: arrayAt(memo, ["nextSteps"])
-        .map((s) => (isString(s) ? s : null))
-        .filter((s): s is string => s !== null),
+        .map((s) => (isString(s) ? scrubAgentNamesFromText(s) : null))
+        .filter((s): s is string => s !== null && s.length > 0),
+      topPriorities,
+      totalCriticalRisks,
     };
   }
 
-  const qm = agentData(results, "question-master");
   const strengths = extractPositiveSignals(results, 6);
-  const ranks = extractRanksFromTier1RedFlags(results, 6);
-  const topPrioritiesRaw = isRecord(qm) ? arrayAt(qm, ["topPriorities"]) : [];
   const diligenceRaw = isRecord(qm) ? arrayAt(qm, ["diligenceChecklist", "items"]) : [];
   const negotiationRaw = isRecord(qm) ? arrayAt(qm, ["negotiationPoints"]) : [];
   const forNegotiation: string[] = [];
@@ -534,7 +685,7 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
     for (const entry of Object.values(results)) {
       if (!entry?.success) continue;
       const items = arrayAt(entry.data, ["narrative", "forNegotiation"]);
-      for (const i of items) if (isString(i)) forNegotiation.push(i);
+      for (const i of items) if (isString(i)) forNegotiation.push(scrubAgentNamesFromText(i) || i);
     }
   }
 
@@ -542,24 +693,11 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
     kind: "reconstituted",
     reason: "Le mémo synthétique n'a pas pu être généré par l'agent. La vue ci-dessous reconstitue les éléments à partir des Tier 1 disponibles, du Question Master et de la cohérence documentaire.",
     strengths,
-    criticalRisks: ranks
+    // Liste complète déduplicée (source unique consolidateRiskRanks), filtrée critique/élevé.
+    criticalRisks: consolidated
       .filter((r) => r.severity === "CRITICAL" || r.severity === "HIGH")
-      .map((r) => ({
-        title: r.title,
-        detail: r.description ?? null,
-        source: r.source ?? "Tier 1",
-      })),
-    topPriorities: topPrioritiesRaw
-      .map((p) => {
-        if (!isRecord(p)) return null;
-        return {
-          action: stringAt(p, ["action"]) ?? "Action prioritaire",
-          rationale: stringAt(p, ["rationale"]),
-          deadline: stringAt(p, ["deadline"]),
-          priority: stringAt(p, ["priority"]),
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null),
+      .map((r) => ({ title: r.title, detail: r.description ?? null, source: r.source ?? null })),
+    topPriorities,
     diligenceItems: diligenceRaw
       .map((it) => {
         if (!isRecord(it)) return null;
@@ -582,6 +720,7 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       })
       .filter((x): x is NonNullable<typeof x> => x !== null),
     forNegotiation,
+    totalCriticalRisks,
   };
 }
 

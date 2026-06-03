@@ -1,6 +1,155 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 8c : Pappers MCP (décision argent → utilisateur)
+
+### Décision
+MCP officiel Pappers vérifié réel (`mcp.pappers.fr/{clé}`, abonnement payant à crédits, essai 2 semaines). Décision argent posée à l'utilisateur (AskUserQuestion) → **« Rester au plancher »**. 8a/8b reste la solution livrée pour #6 ; ni clé REST ni MCP provisionnés maintenant. MCP scopé et différé (revisité quand budget tranché). Aucun changement de code (la notice « couverture légale à vérifier » couvre l'UX en attendant).
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phase 9c : UI honnête réconciliation (#11)
+
+### Contexte
+9a fait que le réconciliateur RÉUSSIT (terminal_fallback → `success:true`) même quand les LLM échouent → il n'apparaît plus dans le bandeau « agents non aboutis » (#1 résolu par 9a, fin du cadrage « 1 petit agent »). Reste à signaler honnêtement le NOUVEL état : réconciliation aboutie MAIS en mode déterministe (synthèse LLM indisponible).
+
+### Changements
+- `thesis/types.ts` : champ STRUCTURÉ optionnel `synthesisDegraded?` sur `ThesisReconcilerOutput` (rétrocompat).
+- `tier3/thesis-reconciler.ts` `execute()` : `synthesisDegraded = (resolution === "terminal_fallback")` — marqueur structuré, jamais une heuristique texte.
+- `analysis-v2/lib/selectors.ts` `buildThesisSectionModel` : `reconciliationDegraded` (= reconciled && `data.synthesisDegraded`) ajouté au `ThesisSectionModel`.
+- `analysis-v2/sections/thesis-section.tsx` : bandeau honnête (tone info) « Réconciliation en mode déterministe » — verdict + frictions viennent des signaux structurés, sans rédaction par modèle. Le bandeau « non effectuée » reste pour les vrais échecs. page-shell NON touché (le réconciliateur réussit → plus « agent non abouti »).
+
+### Vérif
+12 tests reconciler (dont « Test clé » end-to-end : completeJSON rejette tous les modèles → `execute()` success déterministe + `synthesisDegraded` ; + « Contrat PROD » : `run()` → `success:true`) + test selector `reconciliationDegraded`. Suite agents+thesis+analysis-v2+lib : 1473 passed. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9c : APPROVE.
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phase 9b : idempotence persistence du réconciliateur
+
+### Contexte
+`thesisService.applyReconciliation` réécrivait `reconciledAt: new Date()` à CHAQUE appel → byte-drift au replay d'un step stepwise (alors que la sortie déterministe 9a est stable).
+
+### Changements (`services/thesis/index.ts`)
+- Helper pur `canonicalizeReconciliation(value)` : tri stable RÉCURSIF des clés ET des arrays → comparaison ordre-insensible. Le `reconcilerOutput` n'a aucune valeur volatile (`reconciledAt` est une colonne séparée) → JSON canonique suffit.
+- `applyReconciliation` : garde idempotente AVANT l'update — si `reconciledAt` déjà set + `reconciliationJson` présent + `verdict`/`confidence` identiques + canonique égal → return la thèse existante SANS réécrire (`reconciledAt` préservé). Sinon update normal. La garde superseded (`!isLatest`) reste avant.
+
+### Vérif
+26 tests thesis-service verts (+3 : équivalent→pas de réécriture (notes réordonnées), verdict différent→réécrit, note-only→réécrit). tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9b : APPROVE.
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phase 9a : réconciliateur de thèse DURABLE (#1/#11)
+
+### Contexte
+Le réconciliateur de thèse (cœur produit) timeoutait → `success:false` → l'UI montrait « réconciliation non effectuée ». Faits vérifiés en lisant le code : `base-agent.run()` CATCH en interne (jamais de throw) → la boucle retry orchestrateur ne se redéclenche pas ; `llmCompleteJSON` cap chaque modèle à 50s (chaîne 3×50≈150s < 180s agent timeout) ; `llmCompleteJSONValidated` renvoie le `terminalFallbackData` (resolution `terminal_fallback`, success:true) S'IL valide le schéma, sinon throw. Le `terminalFallbackData` de `getThesisCallOptions` était un no-op « keep initial verdict ».
+
+### Changements (`tier3/thesis-reconciler.ts`)
+- `buildDeterministicLLMReconciliation(thesis, guardrails): LLMReconcilerOutput` (PAS `ThesisReconcilerOutput`, Codex #1) : verdict = floor déterministe ; `reconciliationNotes` = challenges (TRI STABLE → idempotence replay 9b) ; `newRedFlags` PRUDENTS (Codex #2) — `THESIS_VS_REALITY` émis SEULEMENT si un champ de thèse est **confidemment matché** (`field` non-null) ET le claim porteur existe ; sinon `reconciliationNote`. Confiance basse.
+- `inferThesisField()` → `… | null` (Codex 9a) : RETIRÉ le défaut `loadBearing` qui fabriquait une association vers `loadBearing[0]` pour toute raison non classable. `DeterministicChallenge.field` nullable (propagé : clé dédup, prompt, tri).
+- `execute()` : passe le déterministe comme `terminalFallbackData` APRÈS le spread `getThesisCallOptions` (override le no-op) ; capture `resolution` → si `terminal_fallback`, note honnête « Réconciliation déterministe — synthèse LLM indisponible ».
+- `criticalSignals` dédup (Codex #2) : retiré `blockers.length +` (un blocker pousse déjà un challenge CRITICAL → double-compte). 1 blocker seul → `vigilance` (était `alert_dominant`). `ThesisReconcilerSchema` exporté pour test.
+
+### Vérif
+10 tests reconciler verts (schéma-valide, verdict=floor, newRedFlags prudents, field-null→note jamais fabriqué, déterministe, blocker-seul→vigilance). Suite agents+thesis+orchestrator : 701 passed. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9a : APPROVE (après 1 REQUEST_CHANGES : défaut loadBearing fabriqué → field null).
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phase 8a/8b : Pappers / couverture légale (#6)
+
+### Contexte
+Le red flag CRITICAL « Absence de Vérification Légale (K-bis) » (devils-advocate, Avekapeti) a pour CAUSE « registre Pappers indisponible » (notre outil n'a pas pu interroger le registre — clé `PAPPERS_API_KEY` absente en prod), PAS « société risquée ». Il gonflait le compte de risques critiques et trahissait la machinerie comme un risque société.
+
+### Changements (8a — reframe, plancher doctrine)
+- `lib/presentation.ts` : `isLegalRegistryUnavailableSignal(text)` — **signature EXPLICITE** (résolution Codex), jamais une heuristique floue : exige À LA FOIS (1) un token de **CONNECTEUR/REGISTRE = l'outil interrogé** (`pappers`, `registre officiel/du commerce/national/des sociétés`, `greffe`, `infogreffe`, `companies house`, `societe.com`) — **`k-bis` EXCLU** car c'est un DOCUMENT (« K-bis indisponible/non fourni/non vérifié » = manque côté fondateur, vrai item de diligence) ; ET (2) un token explicite d'**ÉCHEC OUTIL** (`indisponible`, `non disponible`, `impossible de vérifier/interroger/consulter`, `pas pu (être) vérifier/interroger/consulter`). **Volontairement EXCLUS** (resserrements Codex r1/r2) : `non vérifié(s)`, `absence de vérification`, `n'a pas pu` non contraint — états ambigus. La conjonction « le CONNECTEUR est indisponible » isole l'échec outil sans jamais déclasser un vrai risque (litige, requalification, **procédure collective au greffe**, doc manquant). Constantes notice `LEGAL_COVERAGE_GAP_TITLE`/`_DETAIL`.
+- `lib/selectors.ts` : helper partagé `redFlagSignalBlob(rf)` (title+description+impact+evidence+**location**) utilisé par les 3 chemins (alignement Codex #2, plus de fuite si la source n'est que dans `location`). (a) `extractRanksFromTier1RedFlags` retire les flags à signature « connecteur indisponible » (plus de faux risque critique, total #21 diminué d'autant) ; (b) `detectLegalCoverageGap(results)` → `buildDecisionSectionModel.legalCoverageGap` (1 notice consolidée, honnête) ; (c) `buildSignalsSectionModel.concerns` filtre les mêmes (pas d'alerte de dimension) ; (d) mémo généré `criticalRisks` filtre les mêmes (no-op « non fourni » pour Avekapeti, future-proof).
+- `sections/decision-section.tsx` : Callout neutre « Couverture légale à vérifier » (limite de couverture de l'outil, pas un risque avéré) quand `legalCoverageGap`.
+
+### 8b — REST (diagnostic, secret jamais loggé)
+- Confirmé : `connectors/pappers.ts` lit bien `process.env.PAPPERS_API_KEY` (pas `n_API_KEY`). La clé n'est mise que dans le query `api_token` ; aucun log ne contient l'URL ni la clé (lignes warn/error = codes statut / chaînes statiques). Indispo Avekapeti = `unconfiguredCritical` (clé absente en prod, 19/19 autres connecteurs OK). Provisionnement clé (REST payant / MCP) = décision argent → Phase 8c. Aucun changement de code connecteur (déjà sûr, Surgical).
+
+### Vérif
+42 tests verts analysis-v2 (35 → +5 unit signature dont décoys fondateur/document, +2 guard VM #6). tsc clean (hors `exit-strategist.ts`). Validé sur données réelles : le fixture hostile reprend VERBATIM le flag devils-advocate Avekapeti (matche via « registre officiel … indisponible »).
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phase 7 : consolidation risques (source unique) + mémo (#20/#21/#22)
+
+### Changements
+- `lib/selectors.ts` : `consolidateRiskRanks()` = SOURCE UNIQUE (Codex #10) — fusionne dealbreakers QM + red flags Tier 1, **dédup par topic** (`inferRedFlagTopic`, réutilise le service `red-flag-dedup`), **représentant par sévérité max** (pas de premier-vu qui masque un CRITICAL), tri stable. `buildDecisionSectionModel.ranks` l'utilise (liste complète déduplicée #21, fin du cap muet à 8). `buildMemoSectionModel` : `totalCriticalRisks` + `topPriorities` (tous champs scrubés) partagés ; criticalRisks généré scrubés + `presentableSource` ; reconstitué = liste consolidée. Fin des `compactString` dans le mémo.
+- `sections/memo-section.tsx` : #20 sous-titre neutre + note finale sans disclaimer redondant ; #21 `CompleteRisksHint` standalone (compte les **topics CRITICAL distincts** affichés, lien vers `#decision`) ; #22 bloc « Priorités d'investigation » surfacé aussi dans le mémo généré (`PrioritiesList`).
+- Guards : dédup par topic (2 flags valorisation → 1), `totalCriticalRisks` exposé, `topPriorities` scrubés.
+
+### Vérif
+35 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 7 : APPROVE (après 2 REQUEST_CHANGES : représentant par sévérité + comptage par topic distinct + hint standalone + scrub tous champs).
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phase 6 : preuves consolidées (#18 troncatures/noms d'agents, #19 contradictions)
+
+### Changements
+- `lib/evidence-collector.ts` : sources sanitizées (`sanitizeSourceLabel`), troncatures `compactString` retirées (claim/note complets), textes scrubés. Contradictions reformatées (#19) : source rattachée INLINE à chaque énoncé (« Doc : "…" ↔ Doc : "…" »), implication = note (« Lecture »), `topic`/`s1`/`s2` scrubés ; colonne Source = « Recoupement de sources » seulement si une source inline est présentable, sinon fallback honnête.
+- `sections/evidence-section.tsx` : footer sans noms d'agents.
+- Guard : assertion VM evidence rows (claim/source/note sans nom d'agent ; « Recoupement » ⇒ source inline réelle).
+
+### Vérif
+33 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 6 : APPROVE (après 1 REQUEST_CHANGES : scrub topic/énoncés + source conditionnelle).
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phase 5 : cartes signaux (étaye/alerte, score masqué, légende)
+
+### Contexte
+Section 3 « Signaux par dimension » : #14/#15 puces positives sous orientation d'alerte, #16 score /100 biaisant, #17/#2 orientations peu différenciées.
+
+### Changements
+- `atoms/agent-card.tsx` : deux mini-listes « Ce qui étaye » / « Ce qui alerte » ; score /100 **masqué** (conservé en modèle).
+- `lib/selectors.ts` (`buildSignalsSectionModel`) : `supports` (insights non-négatifs scrubés) + `concerns` (red flags title/description/impact scrubés) remplacent `insights[]` ; `oneLiner` scrubé ; `deriveFallbackOneLiner` ne renvoie plus de « Score X/100 » (libellé d'intensité non numérique).
+- `sections/signals-section.tsx` : légende compacte des 4 orientations (#17/#2).
+- Guard : assertion VM cards (oneLiner/supports/concerns sans nom d'agent ni `/100`).
+
+### Vérif
+32 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 5 : APPROVE (après 1 REQUEST_CHANGES : score /100 dans oneLiner fallback + oneLiner non scrubé).
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phase 4 : Section 1 (provenance, troncatures, flèche, convergence)
+
+### Contexte
+Section « Synthèse de décision » : #4/#7 troncatures muettes, #5 titre générique, #7/#18 noms d'agents en source, #8 flèche cliquable morte, #9 convergence illisible.
+
+### Changements
+- `atoms/source-pin.tsx` : refonte GLOBALE (#8/#7) — `<span>` info non-cliquable (plus de flèche-bouton morte), source sanitizée via `presentableSource`, **rien affiché** si la source n'est qu'un nom d'agent ; tolère `null`.
+- `lib/presentation.ts` : `presentableSource` (null si pas de vraie provenance), `scrubAgentNamesFromText` (scrub texte libre sans tokeniser), strip d'un préfixe-label `agent:`/`source:`.
+- `lib/selectors.ts` : `extractRanksFromTier1RedFlags` — #5 titre dérivé (jamais « Risque identifié » si contenu), title scrubé, #4/#7 description + preuve COMPLÈTES (fin des `compactString`), preuve en champ `evidence`, source = null (pas de nom d'agent), location sanitizée. `extractRanksFromQuestionMaster` aligné. Mémo reconstitué : plus de provenance factice « Tier 1 ».
+- `lib/view-types.ts` : `RankRowItem.evidence`. `atoms/rank-row.tsx` : preuve en `<details>` repliable.
+- `lib/solidity-aggregator.ts` : #9 `countAlertSignalDistribution` restreint aux 12 dimensions Tier 1. `sections/decision-section.tsx` : #9 mini-table libellée (Signal critique / Investigation / Point d'attention / Conforme).
+- Guards : fixture enrichi (titre piégé) + assertions VM ranks/mémo (zéro nom d'agent, pas de titre/provenance factice).
+
+### Vérif
+31 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 4 : APPROVE (après 2 REQUEST_CHANGES : scrub embedded `agent:` + rawTitle ; provenance « Tier 1 »).
+
+---
+## 2026-06-03 — Refonte analysis-v2 — Phases 0b/2/3 : guard runtime + section thèse + verdict honnête
+
+### Contexte
+Suite refonte analysis-v2. 0b = filet de tests ; 2 = section thèse (#10 capitalisation, #12 statut/à-vérifier visibles, #13 enum → label) ; 3 = decision-strip (#3 cohérence verdict thèse).
+
+### Changements
+- 0b : `__tests__/fixtures/hostile-results.ts` (fixture réutilisable) + `__tests__/doctrine-runtime-guard.test.ts` (guard data-driven, helpers + VM thèse).
+- 2 : `sections/thesis-section.tsx` — `capitalizeFirstMeaningfulChar` (card bodies + load-bearing), statut `declared` en tonalité vigilance (« Déclaré · non vérifié »), bloc « À vérifier » en badge visible, catégorie en chip lisible. `lib/selectors.ts` (`buildThesisSectionModel`) — `category` mappée via `thesisAlertCategoryLabel` (VM expose le label, jamais l'enum).
+- 3 : `decision-strip.tsx` — `thesisConfronted` : verdict thèse affiché « Thèse non réconciliée » (tonalité neutre) quand la réconciliation n'a pas abouti (hors `thesis_only`), au lieu du verdict initial présenté comme abouti.
+
+### Vérif
+26 tests verts (analysis-v2). `tsc --noEmit` propre (hors `exit-strategist.ts` préexistant). Gate Codex Phases 2+3 : APPROVE.
+
+---
+## 2026-06-03 — Refonte analysis-v2 (22 pts) — Phase 0a : helpers de présentation + labels doctrine
+
+### Contexte
+Refonte de la vue Deep Dive (analysis-v2) sur 22 problèmes remontés (captures Avekapeti), plan validé par Codex (VERDICT APPROVE après 2 tours). Phase 0a = fondation : sanitization user-facing (zéro nom d'agent technique, zéro enum brut) réutilisée par toutes les phases suivantes.
+
+### Changements
+- `analysis-v2/lib/solidity-aggregator.ts` : `export` de `AGENT_DEFINITIONS` (source unique, évite copie divergente).
+- `analysis-v2/lib/presentation.ts` (nouveau) : `sanitizeSourceLabel` (scrub global des noms d'agents même embarqués + `*-expert`, fallback honnête « Provenance documentaire non disponible / Synthèse interne non sourcée », réécriture jargon Context Engine/Fact Store, séparateurs `·`/`&` seulement pour préserver les dates), `humanizeInlineAgentNames`, `capitalizeFirstMeaningfulChar` (1er char only, display-only), `AGENT_TECHNICAL_NAMES`.
+- `lib/ui-configs.ts` : `THESIS_ALERT_CATEGORY_LABELS` (8 catégories) + `thesisAlertCategoryLabel()` (fallback humanisé, jamais d'enum brut).
+- `analysis-v2/__tests__/presentation.test.ts` (nouveau) : 13 tests hostiles (dont noms d'agents embarqués).
+
+### Vérif
+13/13 tests verts. `tsc --noEmit` : aucune nouvelle erreur (seule erreur préexistante = `exit-strategist.ts`, untracked, hors périmètre). Gate Codex Phase 0a : APPROVE (après 1 REQUEST_CHANGES corrigé — scrub embedded).
+
+---
 ## 2026-06-03 — Gate Codex : indépendance d'abord, confrontation ensuite (anti-ancrage, symétrique)
 
 ### Contexte

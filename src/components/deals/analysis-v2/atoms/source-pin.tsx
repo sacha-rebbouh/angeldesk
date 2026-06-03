@@ -1,30 +1,35 @@
-import { ArrowUpRight } from "lucide-react";
+import { Info } from "lucide-react";
+
+import { presentableSource } from "../lib/presentation";
 
 /**
- * Petit ancrage de provenance — affiche un chevron discret qui révèle le
- * nom de l'agent source via tooltip natif au survol.
+ * Indicateur de provenance — pastille d'info NON cliquable révélant la source
+ * (document) au survol via tooltip natif.
  *
- * Objectif : ne pas surcharger la lecture avec "source : <agent>" partout.
- * La provenance reste accessible (clavier + screen reader) mais ne pollue
- * pas le texte principal.
+ * Règles :
+ *  - la source est SANITIZÉE (jamais de nom d'agent technique en tooltip → #7) ;
+ *  - si la "source" n'était qu'un nom d'agent / machinerie, on n'affiche RIEN
+ *    (pas de fausse pastille → #8 : plus de flèche qui ne mène nulle part) ;
+ *  - élément non interactif (icône info), pas un bouton trompeur.
  */
 type SourcePinProps = {
-  source: string;
+  source: string | null | undefined;
   label?: string;
   className?: string;
 };
 
 export function SourcePin({ source, label = "Source", className }: SourcePinProps) {
-  const tooltip = `${label} : ${source}`;
+  const clean = presentableSource(source);
+  if (!clean) return null;
+  const tooltip = `${label} : ${clean}`;
   return (
-    <button
-      type="button"
+    <span
+      role="note"
       title={tooltip}
       aria-label={tooltip}
-      tabIndex={0}
-      className={`av-transition inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[var(--av-muted)] hover:bg-[var(--av-surface-muted)] hover:text-[var(--av-info)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--av-info)] ${className ?? ""}`}
+      className={`av-transition inline-flex h-5 w-5 shrink-0 cursor-help items-center justify-center rounded-full text-[var(--av-muted)] ${className ?? ""}`}
     >
-      <ArrowUpRight size={12} aria-hidden="true" />
-    </button>
+      <Info size={12} aria-hidden="true" />
+    </span>
   );
 }

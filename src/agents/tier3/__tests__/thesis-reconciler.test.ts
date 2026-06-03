@@ -9,9 +9,40 @@ vi.mock("@/services/openrouter/router", () => ({
   completeJSONValidated: vi.fn(),
   completeJSONStream: vi.fn(),
   completeStream: vi.fn(),
+  // Contexte LLM utilisé par BaseAgent.run() (test « contrat prod » 9c).
+  getAnalysisContext: vi.fn(() => undefined),
+  runWithLLMContext: vi.fn((_ctx: unknown, fn: () => unknown) => fn()),
+  setAgentContext: vi.fn(),
 }));
 
-import { ThesisReconcilerAgent } from "../thesis-reconciler";
+import { completeJSON } from "@/services/openrouter/router";
+import { ThesisReconcilerAgent, ThesisReconcilerSchema } from "../thesis-reconciler";
+import type { ThesisReconcilerOutput } from "@/agents/thesis/types";
+
+type DeterministicChallenge = {
+  field: "problem" | "solution" | "whyNow" | "moat" | "loadBearing" | null;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM";
+  agentName: string;
+  reason: string;
+};
+type DeterministicGuardrails = {
+  blockers: Array<{ agentName: string; reason: string; recommendation?: string }>;
+  challenges: DeterministicChallenge[];
+  verdictFloor?: string;
+};
+type ReconcilerInternals = {
+  buildDeterministicLLMReconciliation: (
+    thesis: ThesisExtractorOutput,
+    guardrails: DeterministicGuardrails
+  ) => {
+    updatedVerdict: string;
+    updatedConfidence: number;
+    newRedFlags: Array<{ category: string; severity: string; sourceAgent: string; sourceClaim: string; conflictingFinding: string }>;
+    reconciliationNotes: Array<{ title: string; detail: string; impact: string }>;
+    hiddenStrengths: string[];
+  };
+  buildDeterministicGuardrails: (context: AgentContext) => DeterministicGuardrails;
+};
 
 function buildThesis(): ThesisExtractorOutput {
   return {
@@ -129,7 +160,9 @@ describe("ThesisReconcilerAgent deterministic guardrails", () => {
           severity: "CRITICAL",
         }),
         expect.objectContaining({
-          field: "loadBearing",
+          // « Unit economics non soutenables » ne matche aucun champ → field null
+          // (plus de défaut « loadBearing » fabriqué — Codex 9a).
+          field: null,
           agentName: "financial-auditor",
           severity: "HIGH",
         }),
@@ -171,5 +204,159 @@ describe("ThesisReconcilerAgent deterministic guardrails", () => {
     expect(prompt).toContain("GARDE-FOUS DETERMINISTES");
     expect(prompt).toContain("market-intelligence");
     expect(prompt).toContain("vigilance");
+  });
+});
+
+describe("ThesisReconcilerAgent — réconciliation déterministe (Phase 9a, terminalFallbackData)", () => {
+  const agent = () => new ThesisReconcilerAgent() as unknown as ReconcilerInternals;
+
+  const guardrails: DeterministicGuardrails = {
+    verdictFloor: "alert_dominant",
+    blockers: [{ agentName: "competitive-intel", reason: "Moat non defendable" }],
+    challenges: [
+      { field: "moat", severity: "CRITICAL", agentName: "competitive-intel", reason: "Moat non defendable" },
+      { field: "solution", severity: "HIGH", agentName: "tech-stack-dd", reason: "Solution techniquement fragile" },
+      { field: "whyNow", severity: "MEDIUM", agentName: "market-intelligence", reason: "Timing incertain" },
+    ],
+  };
+
+  it("produit un output VALIDE contre le schéma (sinon throw → success:false)", () => {
+    const out = agent().buildDeterministicLLMReconciliation(buildThesis(), guardrails);
+    expect(ThesisReconcilerSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("pose le verdict au floor déterministe + confiance basse", () => {
+    const out = agent().buildDeterministicLLMReconciliation(buildThesis(), guardrails);
+    expect(out.updatedVerdict).toBe("alert_dominant");
+    expect(out.updatedConfidence).toBeLessThanOrEqual(30); // dégradé → confiance basse
+    expect(out.hiddenStrengths).toEqual([]);
+  });
+
+  it("newRedFlags PRUDENTS : seulement CRITICAL/HIGH avec un claim porteur réel ; MEDIUM → note", () => {
+    const out = agent().buildDeterministicLLMReconciliation(buildThesis(), guardrails);
+    // moat (CRITICAL, claim réel) + solution (HIGH, claim réel) → 2 newRedFlags ; whyNow MEDIUM → note
+    expect(out.newRedFlags).toHaveLength(2);
+    for (const rf of out.newRedFlags) {
+      expect(rf.category).toBe("THESIS_VS_REALITY");
+      expect(rf.sourceAgent.length).toBeGreaterThan(0);
+      expect(rf.sourceClaim.length).toBeGreaterThan(0);
+      expect(rf.conflictingFinding.length).toBeGreaterThan(0);
+    }
+    expect(out.reconciliationNotes.some((n) => /Timing incertain/.test(n.detail))).toBe(true);
+  });
+
+  it("claim porteur ABSENT (moat null) → reconciliationNote, jamais un newRedFlag aux champs fabriqués", () => {
+    const thesisNoMoat = { ...buildThesis(), moat: null };
+    const out = agent().buildDeterministicLLMReconciliation(thesisNoMoat, {
+      verdictFloor: "vigilance",
+      blockers: [],
+      challenges: [{ field: "moat", severity: "CRITICAL", agentName: "competitive-intel", reason: "Moat non defendable" }],
+    });
+    expect(out.newRedFlags).toHaveLength(0); // pas de sourceClaim réel → pas de red flag fabriqué
+    expect(out.reconciliationNotes.length).toBeGreaterThan(0);
+    expect(ThesisReconcilerSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("est DÉTERMINISTE (même entrée → sortie identique, pour l'idempotence au replay)", () => {
+    const a = agent().buildDeterministicLLMReconciliation(buildThesis(), guardrails);
+    const b = agent().buildDeterministicLLMReconciliation(buildThesis(), guardrails);
+    expect(a).toEqual(b);
+  });
+
+  it("sans floor ni challenge → conserve le verdict initial, output valide", () => {
+    const out = agent().buildDeterministicLLMReconciliation(buildThesis(), {
+      verdictFloor: undefined,
+      blockers: [],
+      challenges: [],
+    });
+    expect(out.updatedVerdict).toBe("contrasted"); // verdict initial du fixture
+    expect(out.newRedFlags).toEqual([]);
+    expect(ThesisReconcilerSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("Codex 9a : red flag non classable → challenge field=null, ZÉRO newRedFlag fabriqué contre loadBearing[0]", () => {
+    const context = {
+      previousResults: {
+        "thesis-extractor": { success: true, data: buildThesis() },
+        "financial-auditor": {
+          success: true,
+          data: { redFlags: [{ severity: "CRITICAL", title: "Anomalie comptable", description: "Écriture non catégorisable au bilan" }] },
+        },
+      },
+    } as unknown as AgentContext;
+    const a = agent();
+    const g = a.buildDeterministicGuardrails(context);
+    const ch = g.challenges.find((c) => c.agentName === "financial-auditor");
+    expect(ch?.field).toBeNull(); // plus de défaut « loadBearing »
+    // et le déterministe ne fabrique PAS de THESIS_VS_REALITY contre la 1ʳᵉ hypothèse porteuse
+    const out = a.buildDeterministicLLMReconciliation(buildThesis(), g);
+    expect(out.newRedFlags).toHaveLength(0);
+    expect(out.reconciliationNotes.length).toBeGreaterThan(0);
+    expect(ThesisReconcilerSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("Test clé : chaîne LLM épuisée → execute() success déterministe (verdict floor + synthesisDegraded)", async () => {
+    // Tous les modèles échouent → terminalFallbackData déterministe (pas de throw → success).
+    vi.mocked(completeJSON).mockRejectedValue(new Error("model timeout"));
+    const context = {
+      previousResults: {
+        "thesis-extractor": { success: true, data: buildThesis() },
+        "competitive-intel": {
+          success: true,
+          data: { alertSignal: { hasBlocker: true, blockerReason: "Moat non defendable face a la concurrence" } },
+        },
+      },
+    } as unknown as AgentContext;
+
+    const internals = new ThesisReconcilerAgent() as unknown as {
+      execute: (c: AgentContext) => Promise<ThesisReconcilerOutput>;
+    };
+    const out = await internals.execute(context);
+
+    expect(out.synthesisDegraded).toBe(true);
+    expect(out.updatedVerdict).toBe("vigilance"); // 1 blocker → floor vigilance
+    expect(out.reconciliationNotes.some((n) => /déterministe/i.test(n.title))).toBe(true);
+    vi.mocked(completeJSON).mockReset();
+  });
+
+  it("Contrat PROD : run() renvoie success:true sur chaîne LLM épuisée (pas de step kill)", async () => {
+    vi.mocked(completeJSON).mockRejectedValue(new Error("model timeout"));
+    const context = {
+      previousResults: {
+        "thesis-extractor": { success: true, data: buildThesis() },
+        "competitive-intel": {
+          success: true,
+          data: { alertSignal: { hasBlocker: true, blockerReason: "Moat non defendable face a la concurrence" } },
+        },
+      },
+    } as unknown as AgentContext;
+
+    const result = (await new ThesisReconcilerAgent().run(context)) as {
+      success: boolean;
+      data?: ThesisReconcilerOutput;
+    };
+    expect(result.success).toBe(true); // terminalFallbackData → pas de throw → success
+    expect(result.data?.synthesisDegraded).toBe(true);
+    expect(result.data?.updatedVerdict).toBe("vigilance");
+    vi.mocked(completeJSON).mockReset();
+  });
+
+  it("Codex #2 : un blocker SEUL → floor vigilance (plus de double-compte → alert_dominant)", () => {
+    const context = {
+      previousResults: {
+        "thesis-extractor": { success: true, data: buildThesis() },
+        "competitive-intel": {
+          success: true,
+          data: {
+            alertSignal: { hasBlocker: true, blockerReason: "Moat non defendable face a la concurrence" },
+            // PAS de redFlag CRITICAL séparé : un seul signal critique réel
+          },
+        },
+      },
+    } as unknown as AgentContext;
+
+    const guardrailsOut = agent().buildDeterministicGuardrails(context);
+    expect(guardrailsOut.blockers).toHaveLength(1);
+    expect(guardrailsOut.verdictFloor).toBe("vigilance"); // 1 signal critique → vigilance, PAS alert_dominant
   });
 });

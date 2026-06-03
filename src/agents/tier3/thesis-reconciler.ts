@@ -26,7 +26,9 @@ import { getThesisCallOptions } from "@/lib/thesis/call-options";
 // ---------------------------------------------------------------------------
 // LLM response schema
 // ---------------------------------------------------------------------------
-const ThesisReconcilerSchema = z.object({
+// Exporté pour test : le terminalFallbackData déterministe DOIT valider contre ce
+// schéma (sinon llmCompleteJSONValidated throw → success:false → cœur produit perdu).
+export const ThesisReconcilerSchema = z.object({
   updatedVerdict: z.enum(["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]),
   updatedConfidence: z.number().min(0).max(100),
   verdictChangeJustification: z.string(),
@@ -61,7 +63,9 @@ type DeterministicThesisField =
   | "loadBearing";
 
 type DeterministicChallenge = {
-  field: DeterministicThesisField;
+  // `null` = aucun champ de thèse n'est confidemment matché (Codex 9a) : on ne
+  // fabrique alors PAS d'association vers une hypothèse porteuse → reconciliationNote.
+  field: DeterministicThesisField | null;
   severity: "CRITICAL" | "HIGH" | "MEDIUM";
   agentName: string;
   reason: string;
@@ -75,6 +79,14 @@ type DeterministicGuardrails = {
   }>;
   challenges: DeterministicChallenge[];
   verdictFloor?: ThesisVerdict;
+};
+
+// Ordre de sévérité pour un tri STABLE des challenges → sortie déterministe
+// reproductible au replay (idempotence persistence, Phase 9b).
+const DETERMINISTIC_SEVERITY_ORDER: Record<"CRITICAL" | "HIGH" | "MEDIUM", number> = {
+  CRITICAL: 0,
+  HIGH: 1,
+  MEDIUM: 2,
 };
 
 // ---------------------------------------------------------------------------
@@ -191,8 +203,12 @@ LANGUE: Francais.`;
     // 3. Construire le prompt user
     const userPrompt = this.buildUserPrompt(thesis, agentFindingsSummary, deterministicGuardrails);
 
-    // 4. Appel LLM
-    const { data } = await this.llmCompleteJSONValidated<LLMReconcilerOutput>(
+    // 4. Appel LLM — avec un terminalFallbackData DÉTERMINISTE (floor + challenges)
+    //    qui SURCHARGE le no-op « keep initial verdict » de getThesisCallOptions
+    //    (spread AVANT, override APRÈS — l'option déterministe gagne). Chaîne LLM
+    //    épuisée → vraie réconciliation (resolution: terminal_fallback, success:true),
+    //    plus un no-op « réconciliation indisponible » : le cœur produit reste rendu.
+    const { data, resolution } = await this.llmCompleteJSONValidated<LLMReconcilerOutput>(
       userPrompt,
       ThesisReconcilerSchema,
       {
@@ -201,6 +217,7 @@ LANGUE: Francais.`;
           initialVerdict,
           initialConfidence: thesis.confidence,
         }),
+        terminalFallbackData: this.buildDeterministicLLMReconciliation(thesis, deterministicGuardrails),
       }
     );
 
@@ -228,10 +245,27 @@ LANGUE: Francais.`;
       });
     }
 
+    // Chaîne LLM épuisée → réconciliation déterministe. Note honnête en tête :
+    // l'UI doit savoir que la synthèse vient des signaux structurés, pas d'un modèle
+    // (capture de `resolution`, base-agent.ts — ignoré jusqu'ici).
+    if (resolution === "terminal_fallback") {
+      reconciliationNotes.unshift({
+        title: "Réconciliation déterministe — synthèse LLM indisponible",
+        detail:
+          "Les modèles de synthèse étaient indisponibles. La réconciliation ci-dessous est " +
+          "dérivée des signaux structurés des agents (verdict plancher + points de friction), " +
+          "sans synthèse rédigée par un modèle.",
+        impact: "neutral",
+      });
+    }
+
     return {
       updatedVerdict: finalVerdict,
       updatedConfidence: data.updatedConfidence,
       verdictChanged: finalChanged,
+      // 9c : la réconciliation a-t-elle été produite en mode déterministe (chaîne
+      // LLM épuisée) ? L'UI le signale honnêtement.
+      synthesisDegraded: resolution === "terminal_fallback",
       newRedFlags: data.newRedFlags,
       reconciliationNotes,
       hiddenStrengths: data.hiddenStrengths,
@@ -370,9 +404,11 @@ LANGUE: Francais.`;
       }
     }
 
-    const criticalSignals =
-      blockers.length +
-      challenges.filter((challenge) => challenge.severity === "CRITICAL").length;
+    // Codex #2 : un blocker pousse DÉJÀ un challenge CRITICAL (pushDeterministicChallenge).
+    // Ajouter `blockers.length` double-comptait le même signal (1 blocker → 2 critical
+    // → alert_dominant à tort). On compte les signaux CRITICAL UNIQUES (challenges
+    // dédupliqués par field:agent:reason).
+    const criticalSignals = challenges.filter((challenge) => challenge.severity === "CRITICAL").length;
     const highSignals = challenges.filter((challenge) => challenge.severity === "HIGH").length;
 
     let verdictFloor: ThesisVerdict | undefined;
@@ -394,7 +430,7 @@ LANGUE: Francais.`;
     seen: Set<string>,
     challenge: DeterministicChallenge
   ): void {
-    const key = `${challenge.field}:${challenge.agentName}:${challenge.reason}`;
+    const key = `${challenge.field ?? "_"}:${challenge.agentName}:${challenge.reason}`;
     if (seen.has(key)) return;
     seen.add(key);
     target.push(challenge);
@@ -407,7 +443,9 @@ LANGUE: Francais.`;
     return "MEDIUM";
   }
 
-  private inferThesisField(text: string): DeterministicThesisField {
+  // Retourne `null` quand AUCUN champ n'est confidemment matché (Codex 9a) — au lieu
+  // d'un défaut « loadBearing » qui fabriquerait une association vers loadBearing[0].
+  private inferThesisField(text: string): DeterministicThesisField | null {
     const normalized = text.toLowerCase();
     if (
       /(moat|concurren|competition|diff[eé]renci|barri[eè]re|network effect|patent|commodity)/i.test(normalized)
@@ -423,7 +461,7 @@ LANGUE: Francais.`;
     if (/(solution|produit|product|tech|feasibility|impl[eé]mentation|fit)/i.test(normalized)) {
       return "solution";
     }
-    return "loadBearing";
+    return null;
   }
 
   private buildDeterministicGuardrailsSection(guardrails: DeterministicGuardrails): string {
@@ -443,7 +481,7 @@ LANGUE: Francais.`;
       lines.push("## Challenges structures");
       for (const challenge of guardrails.challenges) {
         lines.push(
-          `- [${challenge.severity}] ${challenge.field} <- ${challenge.agentName}: ${challenge.reason}`
+          `- [${challenge.severity}] ${challenge.field ?? "signal general"} <- ${challenge.agentName}: ${challenge.reason}`
         );
       }
     }
@@ -526,6 +564,116 @@ OUTPUT ATTENDU: JSON strict conforme au schema, en francais, sans texte hors JSO
     return THESIS_VERDICT_ORDER.indexOf(verdictFloor) > THESIS_VERDICT_ORDER.indexOf(proposed)
       ? verdictFloor
       : proposed;
+  }
+
+  /**
+   * Réconciliation DÉTERMINISTE (sans LLM) construite depuis les garde-fous
+   * structurés. Passée comme `terminalFallbackData` : quand toute la chaîne LLM
+   * échoue, `llmCompleteJSONValidated` renvoie CECI (resolution `terminal_fallback`)
+   * au lieu de throw → l'agent réussit (`success:true`) avec une VRAIE réconciliation
+   * (verdict plancher + challenges), pas un no-op « réconciliation indisponible ».
+   *
+   * Type = `LLMReconcilerOutput` (PAS `ThesisReconcilerOutput`, Codex #1) : le
+   * post-processing de `execute()` (clamp + floor + verdictChanged) le transforme
+   * ensuite, exactement comme une sortie LLM réelle. Fonction PURE et déterministe
+   * (tri stable) pour que l'équivalence tienne au replay (idempotence 9b).
+   */
+  private buildDeterministicLLMReconciliation(
+    thesis: ThesisExtractorOutput,
+    guardrails: DeterministicGuardrails
+  ): LLMReconcilerOutput {
+    const updatedVerdict = guardrails.verdictFloor ?? thesis.verdict;
+    const downgraded =
+      THESIS_VERDICT_ORDER.indexOf(updatedVerdict) > THESIS_VERDICT_ORDER.indexOf(thesis.verdict);
+
+    // Tri STABLE (sévérité puis field/agent/reason) → sortie reproductible au replay.
+    const sortedChallenges = [...guardrails.challenges].sort((a, b) => {
+      const sevDiff = DETERMINISTIC_SEVERITY_ORDER[a.severity] - DETERMINISTIC_SEVERITY_ORDER[b.severity];
+      if (sevDiff !== 0) return sevDiff;
+      const fieldA = a.field ?? "";
+      const fieldB = b.field ?? "";
+      if (fieldA !== fieldB) return fieldA < fieldB ? -1 : 1;
+      if (a.agentName !== b.agentName) return a.agentName < b.agentName ? -1 : 1;
+      return a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0;
+    });
+
+    const newRedFlags: LLMReconcilerOutput["newRedFlags"] = [];
+    const reconciliationNotes: LLMReconcilerOutput["reconciliationNotes"] = [];
+
+    for (const challenge of sortedChallenges) {
+      // newRedFlags PRUDENTS (Codex #2 + 9a) : un THESIS_VS_REALITY n'est émis QUE si
+      // (a) un champ de thèse est confidemment matché (field non-null, jamais le défaut
+      // loadBearing fabriqué) ET (b) le claim porteur correspondant existe (le schéma
+      // exige sourceClaim/conflictingFinding réels). Sinon → reconciliationNote.
+      const claim = challenge.field ? this.thesisClaimForField(thesis, challenge.field) : null;
+      if (challenge.severity !== "MEDIUM" && challenge.field && claim) {
+        newRedFlags.push({
+          category: "THESIS_VS_REALITY",
+          severity: challenge.severity,
+          title: `Contradiction structurelle — ${this.thesisFieldLabel(challenge.field)}`,
+          description: challenge.reason,
+          sourceAgent: challenge.agentName, // interne ; sanitizé côté UI
+          sourceClaim: claim,
+          conflictingFinding: challenge.reason,
+        });
+      } else {
+        reconciliationNotes.push({
+          title: challenge.field ? `Signal structuré — ${this.thesisFieldLabel(challenge.field)}` : "Signal structuré",
+          detail: challenge.reason,
+          impact: "challenges",
+        });
+      }
+    }
+
+    // Confiance dérivée : basse (synthèse LLM indisponible) ; plus basse si le floor dégrade.
+    const baseConfidence = typeof thesis.confidence === "number" ? thesis.confidence : 50;
+    const updatedConfidence = downgraded ? Math.min(baseConfidence, 30) : Math.min(baseConfidence, 45);
+
+    return {
+      updatedVerdict,
+      updatedConfidence,
+      verdictChangeJustification: downgraded
+        ? `Réconciliation déterministe : les signaux structurés des agents imposent un verdict plancher (${updatedVerdict}).`
+        : "Réconciliation déterministe : aucun signal structuré n'impose de dégrader le verdict initial.",
+      newRedFlags,
+      reconciliationNotes,
+      hiddenStrengths: [],
+    };
+  }
+
+  /** Claim porteur de la thèse pour un field donné (null si non déclaré). */
+  private thesisClaimForField(
+    thesis: ThesisExtractorOutput,
+    field: DeterministicThesisField
+  ): string | null {
+    switch (field) {
+      case "problem":
+        return thesis.problem?.trim() || null;
+      case "solution":
+        return thesis.solution?.trim() || null;
+      case "whyNow":
+        return thesis.whyNow?.trim() || null;
+      case "moat":
+        return thesis.moat?.trim() || null;
+      case "loadBearing":
+        return thesis.loadBearing[0]?.statement?.trim() || null;
+    }
+  }
+
+  /** Libellé user-facing d'un field de thèse (jamais l'enum brut). */
+  private thesisFieldLabel(field: DeterministicThesisField): string {
+    switch (field) {
+      case "problem":
+        return "Problème";
+      case "solution":
+        return "Solution";
+      case "whyNow":
+        return "Why-now";
+      case "moat":
+        return "Moat";
+      case "loadBearing":
+        return "Hypothèse porteuse";
+    }
   }
 }
 

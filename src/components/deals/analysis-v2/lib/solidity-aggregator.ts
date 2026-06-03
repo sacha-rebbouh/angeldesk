@@ -141,7 +141,10 @@ export function countAlertSignalDistribution(results: ResultsMap | null | undefi
 } {
   const counts = { STOP: 0, INVESTIGATE_FURTHER: 0, PROCEED_WITH_CAUTION: 0, PROCEED: 0, total: 0 };
   if (!results) return counts;
-  for (const entry of Object.values(results)) {
+  // #9 : restreindre aux 12 dimensions Tier 1 (le libellé dit « Tier 1 » mais
+  // l'itération sur TOUS les résultats comptait Tier 2/3 → total > 12, confus).
+  for (const def of AGENT_DEFINITIONS) {
+    const entry = results[def.key];
     if (!entry?.success) continue;
     const reco = valueAt(entry.data, ["alertSignal", "recommendation"]);
     if (isString(reco) && reco in counts) {
@@ -237,7 +240,7 @@ export type AgentSnapshot = {
 // NOTE: doit rester synchronisé avec TIER1_AGENT_NAMES (src/agents/orchestrator/types.ts).
 // exit-strategist + scenario-modeler ont été retirés du runtime (doctrine anti-oraculaire) :
 // ne PAS les réintroduire ici, sinon ils réapparaissent en carte « Analyse non exécutée ».
-const AGENT_DEFINITIONS: Array<{ key: string; label: string; role: string }> = [
+export const AGENT_DEFINITIONS: Array<{ key: string; label: string; role: string }> = [
   { key: "financial-auditor", label: "Audit financier", role: "Finance" },
   { key: "deck-forensics", label: "Forensique du deck", role: "Deck" },
   { key: "team-investigator", label: "Investigation équipe", role: "Équipe" },

@@ -37,6 +37,35 @@ import { ThesisExtractorOutputSchema } from "@/agents/thesis/schemas";
 // ---------------------------------------------------------------------------
 
 /**
+ * Forme canonique d'un reconciliationJson pour comparaison ORDRE-INSENSIBLE
+ * (idempotence 9b) : tri stable récursif des clés ET des arrays. Le
+ * `reconcilerOutput` ne contient aucune valeur volatile (pas de Date/durée —
+ * `reconciledAt` est une colonne séparée), donc le JSON canonique suffit ; deux
+ * réconciliations déterministes équivalentes produisent la même chaîne au replay.
+ */
+function canonicalizeReconciliation(value: unknown): string {
+  const normalize = (v: unknown): unknown => {
+    if (Array.isArray(v)) {
+      return v
+        .map(normalize)
+        .sort((a, b) => {
+          const sa = JSON.stringify(a);
+          const sb = JSON.stringify(b);
+          return sa < sb ? -1 : sa > sb ? 1 : 0;
+        });
+    }
+    if (v && typeof v === "object") {
+      const obj = v as Record<string, unknown>;
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(obj).sort()) out[key] = normalize(obj[key]);
+      return out;
+    }
+    return v;
+  };
+  return JSON.stringify(normalize(value));
+}
+
+/**
  * Hash a string into a signed 64-bit integer suitable for pg_advisory_xact_lock.
  * Uses SHA-256 then takes first 8 bytes as int64. Ensures per-dealId lock consistency.
  */
@@ -373,6 +402,24 @@ export const thesisService = {
       logger.warn(
         { thesisId, dealId: thesis.dealId },
         "Skipping thesis reconciliation because the thesis is no longer latest"
+      );
+      return thesis as unknown as ThesisRecord;
+    }
+
+    // Idempotence (9b) : si une réconciliation ÉQUIVALENTE est déjà persistée, NE PAS
+    // réécrire `reconciledAt` (sinon byte-drift à chaque replay de step stepwise). La
+    // sortie déterministe est stable (tri stable côté agent) → l'équivalence tient au
+    // replay. Comparaison canonique ordre-insensible + verdict/confidence.
+    if (
+      thesis.reconciledAt &&
+      thesis.reconciliationJson != null &&
+      thesis.verdict === reconcilerOutput.updatedVerdict &&
+      thesis.confidence === reconcilerOutput.updatedConfidence &&
+      canonicalizeReconciliation(thesis.reconciliationJson) === canonicalizeReconciliation(reconcilerOutput)
+    ) {
+      logger.info(
+        { thesisId, dealId: thesis.dealId },
+        "Thesis reconciliation unchanged — skipping rewrite (idempotent replay)"
       );
       return thesis as unknown as ThesisRecord;
     }

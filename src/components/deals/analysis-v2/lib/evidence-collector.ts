@@ -3,7 +3,6 @@ import { getFactKeyLabel, type EvidenceSolidity } from "@/lib/ui-configs";
 import {
   agentData,
   arrayAt,
-  compactString,
   isFiniteNumber,
   isRecord,
   isString,
@@ -12,6 +11,7 @@ import {
   stringAt,
   valueAt,
 } from "./extractors";
+import { presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
 
 import type { EvidenceRowProps, EvidenceStatus } from "../atoms/evidence-row";
 
@@ -90,16 +90,16 @@ function collectFromFactExtractor(results: ResultsMap): EvidenceRowProps[] {
     const unit = stringAt(fact, ["unit"]);
     const claimParts = [factLabel, displayValue ?? (isFiniteNumber(value) ? `${value}${unit ? ` ${unit}` : ""}` : null)];
     const claim = claimParts.filter(Boolean).join(" — ");
-    const source = stringAt(fact, ["source"]) ?? "Source non précisée";
+    const source = sanitizeSourceLabel(stringAt(fact, ["source"]));
     const extracted = stringAt(fact, ["extractedText"]);
     const reliability = stringAt(fact, ["reliability", "reliability"]);
     const projection = valueAt(fact, ["reliability", "isProjection"]);
     const documentDate = stringAt(fact, ["reliability", "temporalAnalysis", "documentDate"]);
     const truth = numberAt(fact, ["truthConfidence"]);
     out.push({
-      claim: compactString(claim, 220) ?? "Fait extrait",
+      claim: claim || "Fait extrait",
       source,
-      sourceDetail: extracted ? compactString(extracted, 160) : null,
+      sourceDetail: extracted ? scrubAgentNamesFromText(extracted) || null : null,
       freshness: freshnessFromDate(documentDate),
       solidity: asSolidity(reliability) ?? (truth != null && truth >= 90 ? "strong" : truth != null && truth >= 70 ? "moderate" : "low"),
       status: projection === true ? "PROJECTION_AS_FACT" : "DECLARED",
@@ -118,18 +118,18 @@ function collectFromDeckForensics(results: ResultsMap): EvidenceRowProps[] {
     if (!isRecord(claim)) continue;
     const text = stringAt(claim, ["claim"]) ?? "Claim deck";
     const location = stringAt(claim, ["location"]);
-    const source = stringAt(claim, ["sourceUsed"]) ?? "Deck";
+    const source = sanitizeSourceLabel(stringAt(claim, ["sourceUsed"]) ?? "Deck");
     const evidence = stringAt(claim, ["evidence"]);
     const dataReliability = stringAt(claim, ["dataReliability"]);
     const status = asStatus(stringAt(claim, ["status"])) ?? null;
     out.push({
-      claim: compactString(text, 220) ?? "Claim deck",
+      claim: text,
       source,
-      sourceDetail: location ?? null,
+      sourceDetail: location ? scrubAgentNamesFromText(location) || null : null,
       freshness: null,
       solidity: asSolidity(dataReliability) ?? (status === "VERIFIED" ? "strong" : status === "CONTRADICTED" ? "contradictory" : null),
       status,
-      note: evidence ? compactString(evidence, 160) : null,
+      note: evidence ? scrubAgentNamesFromText(evidence) || null : null,
     });
   }
   return out;
@@ -150,13 +150,13 @@ function collectFromDeckCoherence(results: ResultsMap): EvidenceRowProps[] {
       .filter(Boolean)
       .join(" · ");
     out.push({
-      claim: compactString(title, 220) ?? title,
+      claim: title,
       source: "Deck",
       sourceDetail: pages || null,
       freshness: null,
       solidity: severity === "critical" ? "contradictory" : severity === "warning" ? "low" : "moderate",
       status: severity === "critical" ? "CONTRADICTED" : "PARTIAL",
-      note: description ? compactString(description, 160) : null,
+      note: description ? scrubAgentNamesFromText(description) || null : null,
     });
   }
   return out;
@@ -169,21 +169,32 @@ function collectFromContradictions(results: ResultsMap): EvidenceRowProps[] {
   const out: EvidenceRowProps[] = [];
   for (const item of contradictions) {
     if (!isRecord(item)) continue;
-    const topic = stringAt(item, ["topic"]) ?? "Contradiction";
-    const s1 = stringAt(item, ["statement1", "text"]);
-    const s1loc = stringAt(item, ["statement1", "location"]);
-    const s2 = stringAt(item, ["statement2", "text"]);
-    const s2loc = stringAt(item, ["statement2", "location"]);
+    // Tout texte interpolé est scrubé des noms d'agents (le texte d'un énoncé
+    // peut lui-même en contenir), pas seulement les locations/implication.
+    const topic = scrubAgentNamesFromText(stringAt(item, ["topic"]) ?? "") || "Contradiction";
+    const s1 = scrubAgentNamesFromText(stringAt(item, ["statement1", "text"]) ?? "");
+    const s1loc = presentableSource(stringAt(item, ["statement1", "location"]));
+    const s2 = scrubAgentNamesFromText(stringAt(item, ["statement2", "text"]) ?? "");
+    const s2loc = presentableSource(stringAt(item, ["statement2", "location"]));
     const implication = stringAt(item, ["implication"]);
     const severity = stringAt(item, ["severity"]);
+    // #19 : source rattachée INLINE à chaque énoncé (compréhensible sans contexte),
+    // texte complet (plus de troncature à 260c #18). L'implication devient la « Lecture » (note).
+    const partA = s1 ? `${s1loc ? `${s1loc} : ` : ""}« ${s1} »` : "";
+    const partB = s2 ? `${s2loc ? `${s2loc} : ` : ""}« ${s2} »` : "";
+    const body = [partA, partB].filter(Boolean).join(" ↔ ");
+    const claim = body ? `${topic} — ${body}` : topic;
+    // Pas de fausse provenance : "Recoupement de sources" seulement si au moins
+    // une source inline est présentable ; sinon fallback honnête.
+    const hasInlineSource = Boolean(s1loc || s2loc);
     out.push({
-      claim: compactString(`${topic} — ${s1 ?? ""} ↔ ${s2 ?? ""}`, 260) ?? topic,
-      source: [s1loc, s2loc].filter(Boolean).join(" · ") || "Multi-source",
-      sourceDetail: implication ? compactString(implication, 160) : null,
+      claim,
+      source: hasInlineSource ? "Recoupement de sources" : "Provenance documentaire non disponible",
+      sourceDetail: null,
       freshness: null,
       solidity: "contradictory",
       status: severity === "CRITICAL" ? "CONTRADICTED" : "PARTIAL",
-      note: null,
+      note: implication ? scrubAgentNamesFromText(implication) || null : null,
     });
   }
   return out;

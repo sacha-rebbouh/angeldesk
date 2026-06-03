@@ -445,6 +445,67 @@ describe("thesisService.applyReconciliation", () => {
     expect(updated.confidence).toBe(72);
     expect(updated.reconciledAt).toBeNull();
   });
+
+  it("idempotent (9b) : ré-appliquer un output ÉQUIVALENT ne réécrit pas reconciledAt", async () => {
+    const thesis = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
+    const out: ThesisReconcilerOutput = {
+      updatedVerdict: "vigilance",
+      updatedConfidence: 40,
+      verdictChanged: true,
+      newRedFlags: [],
+      reconciliationNotes: [{ title: "Signal", detail: "Détail", impact: "challenges" }],
+      hiddenStrengths: [],
+    };
+    const first = await thesisService.applyReconciliation({ thesisId: thesis.id, reconcilerOutput: out });
+    const firstAt = first.reconciledAt;
+    expect(firstAt).toBeInstanceOf(Date);
+
+    // Replay : MÊME contenu (arrays dans un ordre différent → toujours équivalent) → reconciledAt INCHANGÉ
+    const second = await thesisService.applyReconciliation({
+      thesisId: thesis.id,
+      reconcilerOutput: { ...out, hiddenStrengths: [], reconciliationNotes: [{ impact: "challenges", detail: "Détail", title: "Signal" }] },
+    });
+    expect(second.reconciledAt).toEqual(firstAt); // pas de réécriture
+  });
+
+  it("réécrit si l'output DIFFÈRE (verdict ou notes changent)", async () => {
+    const thesis = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
+    const base: ThesisReconcilerOutput = {
+      updatedVerdict: "vigilance",
+      updatedConfidence: 40,
+      verdictChanged: true,
+      newRedFlags: [],
+      reconciliationNotes: [],
+      hiddenStrengths: [],
+    };
+    await thesisService.applyReconciliation({ thesisId: thesis.id, reconcilerOutput: base });
+    const second = await thesisService.applyReconciliation({
+      thesisId: thesis.id,
+      reconcilerOutput: { ...base, updatedVerdict: "alert_dominant", updatedConfidence: 25 },
+    });
+    expect(second.verdict).toBe("alert_dominant");
+    expect(second.confidence).toBe(25);
+  });
+
+  it("réécrit si SEULE une note change (même verdict/confidence) — Codex 9b", async () => {
+    const thesis = await thesisService.create({ dealId: "deal_1", extractorOutput: makeExtractorOutput() });
+    const base: ThesisReconcilerOutput = {
+      updatedVerdict: "vigilance",
+      updatedConfidence: 40,
+      verdictChanged: true,
+      newRedFlags: [],
+      reconciliationNotes: [{ title: "A", detail: "X", impact: "challenges" }],
+      hiddenStrengths: [],
+    };
+    await thesisService.applyReconciliation({ thesisId: thesis.id, reconcilerOutput: base });
+    // verdict/confidence identiques MAIS note différente → le contenu canonique diverge → réécriture
+    const second = await thesisService.applyReconciliation({
+      thesisId: thesis.id,
+      reconcilerOutput: { ...base, reconciliationNotes: [{ title: "B", detail: "Y", impact: "neutral" }] },
+    });
+    const notes = (second.reconciliationJson as ThesisReconcilerOutput).reconciliationNotes;
+    expect(notes[0]?.title).toBe("B"); // rewrite effectif (pas un skip idempotent)
+  });
 });
 
 describe("thesisService.recordDecision", () => {

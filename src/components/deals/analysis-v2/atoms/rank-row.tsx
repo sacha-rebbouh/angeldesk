@@ -12,6 +12,8 @@ type RankRowProps = {
   rank: number;
   title: string;
   description?: string;
+  /** Preuve complète — rendue en détail repliable, jamais tronquée (#4/#7). */
+  evidence?: string | null;
   severity: StatusPillSeverity;
   severityLabel?: string;
   source?: string | null;
@@ -39,7 +41,7 @@ function TagBadge({ tag }: { tag: Tag }) {
   );
 }
 
-export function RankRow({ rank, title, description, severity, severityLabel, source, tags, rightSlot }: RankRowProps) {
+export function RankRow({ rank, title, description, evidence, severity, severityLabel, source, tags, rightSlot }: RankRowProps) {
   return (
     <article
       className="grid items-start gap-4 rounded-xl border bg-[var(--av-surface)] p-4 sm:grid-cols-[40px_minmax(0,1fr)_auto]"
@@ -62,6 +64,15 @@ export function RankRow({ rank, title, description, severity, severityLabel, sou
               <TagBadge key={`${tag.label}-${idx}`} tag={tag} />
             ))}
           </div>
+        ) : null}
+        {evidence ? (
+          <details className="mt-2.5 group">
+            <summary className="cursor-pointer list-none text-[12px] font-medium text-[var(--av-info)] [&::-webkit-details-marker]:hidden">
+              <span className="group-open:hidden">Voir la preuve</span>
+              <span className="hidden group-open:inline">Masquer la preuve</span>
+            </summary>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-[var(--av-muted)]">{evidence}</p>
+          </details>
         ) : null}
       </div>
       <div className="flex flex-col items-end gap-2">
