@@ -7,7 +7,7 @@
 Étendre Codex au-delà des seuls plans multi-étapes, sans tomber dans le « Codex sur tout » (coût/latence + bruit qui érode l'attention). Décision utilisateur (impacte le coût → arbitrage utilisateur, pas Codex).
 
 ### Changements
-- `CLAUDE.md` § Gate Codex : nouvelle sous-section « Périmètre — quand faire intervenir Codex ». **Gate obligatoire** sur changements à risque (durabilité/byte-equiv, scoring, auth/sécu, migrations, prompts doctrine, refacto/logique non triviale), plan ou standalone, via `codex-gate-drive.sh`. **Second regard diagnostic** sur captures de bug / incompréhension via `codex exec -s read-only -i <capture>` (hors gate diff-based, car souvent pas de changement). **Skip** : UI, petits fix, typos/commentaires/format/doc.
+- `CLAUDE.md` § Gate Codex : nouvelle sous-section « Périmètre — quand faire intervenir Codex ». **Gate obligatoire** sur changements à risque (durabilité/byte-equiv, scoring, auth/sécu, migrations, prompts doctrine, refacto/logique non triviale), plan ou standalone, via `codex-gate-drive.sh`. **Second regard diagnostic** sur captures de bug / incompréhension via `codex exec -s read-only -i <capture>` (hors gate diff-based, car souvent pas de changement). **Sounding board** sur idées de features/produit via `codex exec -s read-only` (Codex critique faisabilité/risques/alternatives, **ne décide pas** — la décision produit reste à l'utilisateur, cf. § Routing). **Skip** : UI, petits fix, typos/commentaires/format/doc.
 
 ### Vérif
 Flag `-i/--image` de `codex exec` confirmé dans `codex exec --help`. Doc/doctrine uniquement, aucun code exécutable modifié.
