@@ -1,6 +1,19 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 9b : idempotence persistence du réconciliateur
+
+### Contexte
+`thesisService.applyReconciliation` réécrivait `reconciledAt: new Date()` à CHAQUE appel → byte-drift au replay d'un step stepwise (alors que la sortie déterministe 9a est stable).
+
+### Changements (`services/thesis/index.ts`)
+- Helper pur `canonicalizeReconciliation(value)` : tri stable RÉCURSIF des clés ET des arrays → comparaison ordre-insensible. Le `reconcilerOutput` n'a aucune valeur volatile (`reconciledAt` est une colonne séparée) → JSON canonique suffit.
+- `applyReconciliation` : garde idempotente AVANT l'update — si `reconciledAt` déjà set + `reconciliationJson` présent + `verdict`/`confidence` identiques + canonique égal → return la thèse existante SANS réécrire (`reconciledAt` préservé). Sinon update normal. La garde superseded (`!isLatest`) reste avant.
+
+### Vérif
+26 tests thesis-service verts (+3 : équivalent→pas de réécriture (notes réordonnées), verdict différent→réécrit, note-only→réécrit). tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9b : APPROVE.
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 9a : réconciliateur de thèse DURABLE (#1/#11)
 
 ### Contexte
