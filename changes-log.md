@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Gate Codex : indépendance d'abord, confrontation ensuite (anti-ancrage, symétrique)
+
+### Contexte
+Sur les contextes d'idéation/diagnostic, Codex était susceptible d'être **ancré** par l'analyse de Claude (« voici ma solution, t'es d'accord ? ») → il critique dans le cadre de Claude au lieu de penser frais. Perte de la valeur des deux avis indépendants. Demande utilisateur : Codex doit réfléchir **seul à partir de la demande originale d'abord**, puis confrontation — l'idée utile peut venir de l'un comme de l'autre (symétrique).
+
+### Changements
+- `CLAUDE.md` § Gate Codex → sous-section « Indépendance d'abord, confrontation ensuite (anti-ancrage) ». Pour idéation/diagnostic (feature, diagnostic — **pas** la review de diff) : fournir à Codex la **demande originale verbatim + contexte neutre, SANS la solution/conclusion de Claude** ; Codex produit son propre raisonnement d'abord ; confrontation ensuite (2ᵉ relance `codex exec resume` montrant l'avis de Claude, ou synthèse Claude). Exception : review de diff = ancrage inhérent OK.
+
+### Vérif
+Doc/doctrine uniquement. Cohérent avec § Routing (décision produit = utilisateur) et la doctrine produit Board AI (désaccords exposés).
+
+---
 ## 2026-06-03 — Gate Codex : périmètre risk-tiered + second regard diagnostic (captures / incompréhension)
 
 ### Contexte
