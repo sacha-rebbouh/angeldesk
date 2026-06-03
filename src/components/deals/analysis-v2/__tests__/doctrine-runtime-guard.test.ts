@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_TECHNICAL_NAMES, sanitizeSourceLabel } from "../lib/presentation";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
-import { buildThesisSectionModel } from "../lib/selectors";
+import { buildDecisionSectionModel, buildMemoSectionModel, buildThesisSectionModel } from "../lib/selectors";
 import { HOSTILE_CATEGORIES, HOSTILE_RESULTS, HOSTILE_SOURCE_STRINGS, HOSTILE_THESIS } from "./fixtures/hostile-results";
 
 /**
@@ -48,6 +48,36 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
       if (alert.category == null) continue;
       expect(alert.category).not.toMatch(/_/);
       expect(alert.category).not.toMatch(/^[A-Z_]+$/); // pas un enum SCREAMING_CASE
+    }
+  });
+
+  // Phase 4 : les risques rangés n'exposent aucun nom d'agent (source/tags/preuve)
+  // et ne retombent pas sur "Risque identifié" quand du contenu existe (#5).
+  it("buildDecisionSectionModel.ranks : zéro nom d'agent, pas de titre générique quand contenu existe", () => {
+    const model = buildDecisionSectionModel(HOSTILE_RESULTS);
+    expect(model.ranks.length).toBeGreaterThan(0);
+    for (const r of model.ranks) {
+      if (r.source) expectNoAgentName(r.source);
+      for (const t of r.tags ?? []) expectNoAgentName(t.label);
+      if (r.evidence) expectNoAgentName(r.evidence);
+      if (r.description) expectNoAgentName(r.description);
+      expectNoAgentName(r.title); // un title runtime peut contenir un nom d'agent → doit être scrubé
+      // le red flag du fixture a un `impact` mais pas de `title` → titre dérivé, pas générique
+      expect(r.title).not.toBe("Risque identifié");
+    }
+  });
+
+  // Phase 4 (finding Codex) : le mémo reconstitué ne fabrique pas de provenance
+  // factice ("Tier 1") ni de nom d'agent dans la source des risques critiques.
+  it("buildMemoSectionModel : pas de provenance factice dans les risques critiques", () => {
+    const memo = buildMemoSectionModel(HOSTILE_RESULTS);
+    if (memo.kind === "reconstituted") {
+      for (const r of memo.criticalRisks) {
+        if (r.source) {
+          expect(r.source).not.toBe("Tier 1");
+          expectNoAgentName(r.source);
+        }
+      }
     }
   });
 });

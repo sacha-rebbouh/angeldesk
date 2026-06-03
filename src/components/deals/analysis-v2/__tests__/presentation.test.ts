@@ -4,7 +4,9 @@ import {
   AGENT_TECHNICAL_NAMES,
   capitalizeFirstMeaningfulChar,
   humanizeInlineAgentNames,
+  presentableSource,
   sanitizeSourceLabel,
+  scrubAgentNamesFromText,
 } from "../lib/presentation";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
 
@@ -75,6 +77,25 @@ describe("humanizeInlineAgentNames", () => {
     expect(humanizeInlineAgentNames("competitive-intel & market-intelligence outputs")).toBe(
       "Synthèse interne non sourcée",
     );
+  });
+});
+
+describe("préfixe 'agent:' / 'source:' (finding Codex Phase 4)", () => {
+  it("presentableSource ne laisse jamais 'agent' résiduel", () => {
+    expect(presentableSource("agent: competitive-intel outputs")).toBeNull();
+    expect(presentableSource("Source: deck-forensics")).toBeNull();
+  });
+
+  it("scrubAgentNamesFromText retire le préfixe label + le nom d'agent", () => {
+    expect(scrubAgentNamesFromText("agent: deck-forensics output")).toBe("");
+    expect(scrubAgentNamesFromText("Source: competitive-intel — 4 concurrents identifiés")).toBe(
+      "4 concurrents identifiés",
+    );
+  });
+
+  it("scrub d'un title runtime piégé", () => {
+    const cleaned = scrubAgentNamesFromText("competitive-intel: Omission de concurrents majeurs");
+    expect(cleaned).toBe("Omission de concurrents majeurs");
   });
 });
 

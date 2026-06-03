@@ -30,7 +30,19 @@ export const HOSTILE_RESULTS: ResultsMap = {
   },
   "competitive-intel": {
     success: true,
-    data: { narrative: { keyInsights: ["Concurrents directs bien financés non mentionnés (Popchef, Foodles)."] }, redFlags: [] },
+    data: {
+      narrative: { keyInsights: ["Concurrents directs bien financés non mentionnés (Popchef, Foodles)."] },
+      redFlags: [
+        {
+          // title runtime contenant un nom d'agent → doit être scrubé dans RankRow.title
+          severity: "CRITICAL",
+          title: "competitive-intel: Omission de concurrents majeurs bien financés",
+          description: "Popchef (20M€) et Foodles (100M€) sont absents du deck.",
+          location: "market-intelligence outputs",
+          evidence: "Source: competitive-intel — 4 concurrents directs identifiés",
+        },
+      ],
+    },
   },
   "contradiction-detector": {
     success: true,

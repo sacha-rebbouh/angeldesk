@@ -1,6 +1,23 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 4 : Section 1 (provenance, troncatures, flèche, convergence)
+
+### Contexte
+Section « Synthèse de décision » : #4/#7 troncatures muettes, #5 titre générique, #7/#18 noms d'agents en source, #8 flèche cliquable morte, #9 convergence illisible.
+
+### Changements
+- `atoms/source-pin.tsx` : refonte GLOBALE (#8/#7) — `<span>` info non-cliquable (plus de flèche-bouton morte), source sanitizée via `presentableSource`, **rien affiché** si la source n'est qu'un nom d'agent ; tolère `null`.
+- `lib/presentation.ts` : `presentableSource` (null si pas de vraie provenance), `scrubAgentNamesFromText` (scrub texte libre sans tokeniser), strip d'un préfixe-label `agent:`/`source:`.
+- `lib/selectors.ts` : `extractRanksFromTier1RedFlags` — #5 titre dérivé (jamais « Risque identifié » si contenu), title scrubé, #4/#7 description + preuve COMPLÈTES (fin des `compactString`), preuve en champ `evidence`, source = null (pas de nom d'agent), location sanitizée. `extractRanksFromQuestionMaster` aligné. Mémo reconstitué : plus de provenance factice « Tier 1 ».
+- `lib/view-types.ts` : `RankRowItem.evidence`. `atoms/rank-row.tsx` : preuve en `<details>` repliable.
+- `lib/solidity-aggregator.ts` : #9 `countAlertSignalDistribution` restreint aux 12 dimensions Tier 1. `sections/decision-section.tsx` : #9 mini-table libellée (Signal critique / Investigation / Point d'attention / Conforme).
+- Guards : fixture enrichi (titre piégé) + assertions VM ranks/mémo (zéro nom d'agent, pas de titre/provenance factice).
+
+### Vérif
+31 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 4 : APPROVE (après 2 REQUEST_CHANGES : scrub embedded `agent:` + rawTitle ; provenance « Tier 1 »).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phases 0b/2/3 : guard runtime + section thèse + verdict honnête
 
 ### Contexte

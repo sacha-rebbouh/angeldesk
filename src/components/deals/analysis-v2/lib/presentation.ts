@@ -54,8 +54,12 @@ const AGENT_SCRUB_REGEX = new RegExp(
 const GENERIC_ONLY = new Set([
   "source", "sources", "analyse", "analyses", "issue", "issu", "issus", "issue de",
   "de", "du", "des", "le", "la", "les", "données", "donnee", "donnees",
-  "rapport", "rapports", "via", "par", "et", "depuis", "selon",
+  "rapport", "rapports", "via", "par", "et", "depuis", "selon", "agent", "agents",
 ]);
+
+// Préfixe-label générique en tête ("Source:", "Agent:", "Analyse:") — redondant
+// ou résidu après scrub d'un nom d'agent. Retiré pour ne pas laisser "agent:".
+const LEADING_LABEL_PREFIX = /^\s*(?:agents?|sources?|analyses?|rapports?|donn[ée]es?)\s*:\s*/i;
 
 // Réécritures de jargon runtime interne vers des libellés user-facing neutres.
 // (Context Engine / Fact Store / Evidence Engine = machinerie sous le capot.)
@@ -85,6 +89,7 @@ export function sanitizeSourceLabel(raw: string | null | undefined): string {
   if (!raw || !raw.trim()) return MISSING_SOURCE;
   let s = raw.trim();
   for (const [re, repl] of MACHINERY_REWRITES) s = s.replace(re, repl);
+  s = s.replace(LEADING_LABEL_PREFIX, "");
   s = s.replace(AGENT_SCRUB_REGEX, " ");
   s = s.replace(/\b(?:outputs?|output)\b/gi, " ");
 
@@ -107,6 +112,35 @@ export function sanitizeSourceLabel(raw: string | null | undefined): string {
 export function humanizeInlineAgentNames(text: string | null | undefined): string {
   if (!text || !text.trim()) return MISSING_SOURCE;
   return sanitizeSourceLabel(text);
+}
+
+/**
+ * Variante stricte : renvoie la source nettoyée seulement si c'est une VRAIE
+ * provenance (document), sinon `null`. Utilisée par les indicateurs de
+ * provenance (SourcePin) pour NE PAS afficher de pastille quand la "source"
+ * n'était qu'un nom d'agent / machinerie (rien d'utile à montrer).
+ */
+export function presentableSource(raw: string | null | undefined): string | null {
+  const label = sanitizeSourceLabel(raw);
+  return label === MISSING_SOURCE || label === INTERNAL_UNSOURCED ? null : label;
+}
+
+/**
+ * Scrub les noms d'agents d'un TEXTE LIBRE (phrase de preuve/détail) SANS
+ * tokeniser sur `·`/`&` (préserve la ponctuation interne d'une phrase) et SANS
+ * fabriquer de fallback. Retire aussi un préfixe "agent:" en tête. Renvoie ""
+ * si rien d'utile ne reste.
+ */
+export function scrubAgentNamesFromText(text: string | null | undefined): string {
+  if (!text) return "";
+  let s = text;
+  for (const [re, repl] of MACHINERY_REWRITES) s = s.replace(re, repl);
+  s = s.replace(LEADING_LABEL_PREFIX, "");
+  s = s.replace(AGENT_SCRUB_REGEX, " ");
+  s = s.replace(/\b(?:outputs?|output)\b/gi, " ");
+  s = s.replace(/\s+([,.;:!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
+  s = s.replace(/^[\s:,;.\-–—]+/, "").trim();
+  return s;
 }
 
 /**

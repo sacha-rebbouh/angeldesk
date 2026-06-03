@@ -66,6 +66,7 @@ export function DecisionSection({ model }: { model: Model }) {
                   rank={idx + 1}
                   title={r.title}
                   description={r.description ?? undefined}
+                  evidence={r.evidence}
                   severity={r.severity}
                   severityLabel={r.severityLabel}
                   source={r.source}
@@ -78,9 +79,39 @@ export function DecisionSection({ model }: { model: Model }) {
       </div>
 
       {alertConvergence.total > 0 ? (
-        <PartialBanner tone={alertConvergence.STOP >= 4 ? "alert" : alertConvergence.STOP >= 1 ? "vigilance" : "info"} title="Convergence des signaux d'alerte (Tier 1)">
-          {alertConvergence.STOP} agent{alertConvergence.STOP > 1 ? "s" : ""} remonte{alertConvergence.STOP > 1 ? "nt" : ""} un signal critique, {alertConvergence.INVESTIGATE_FURTHER} demande{alertConvergence.INVESTIGATE_FURTHER > 1 ? "nt" : ""} investigation, {alertConvergence.PROCEED_WITH_CAUTION} signale{alertConvergence.PROCEED_WITH_CAUTION > 1 ? "nt" : ""} des points d'attention et {alertConvergence.PROCEED} lit{alertConvergence.PROCEED > 1 ? "ent" : ""} la dimension comme conforme.
-        </PartialBanner>
+        <div
+          className="flex flex-col gap-3 rounded-xl bg-[var(--av-surface)] p-4"
+          style={{ border: "1px solid var(--av-line)", boxShadow: "var(--av-shadow-soft)" }}
+        >
+          <div className="flex flex-col gap-0.5">
+            <h3 className="av-h3">Convergence des signaux par dimension</h3>
+            <p className="av-note">
+              Lecture de chaque lentille d&apos;analyse horizontale ({alertConvergence.total} dimension
+              {alertConvergence.total > 1 ? "s" : ""} exploitable{alertConvergence.total > 1 ? "s" : ""}).
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {[
+              { label: "Signal critique", value: alertConvergence.STOP, color: "var(--av-alert)", bg: "var(--av-alert-soft)", edge: "var(--av-alert-edge)" },
+              { label: "Investigation", value: alertConvergence.INVESTIGATE_FURTHER, color: "var(--av-vigilance)", bg: "var(--av-vigilance-soft)", edge: "var(--av-vigilance-edge)" },
+              { label: "Point d'attention", value: alertConvergence.PROCEED_WITH_CAUTION, color: "var(--av-info)", bg: "var(--av-info-soft)", edge: "var(--av-info-edge)" },
+              { label: "Conforme", value: alertConvergence.PROCEED, color: "var(--av-favorable)", bg: "var(--av-favorable-soft)", edge: "var(--av-favorable-edge)" },
+            ].map((cell) => (
+              <div
+                key={cell.label}
+                className="flex flex-col gap-0.5 rounded-lg px-3 py-2"
+                style={{ background: cell.bg, border: `1px solid ${cell.edge}` }}
+              >
+                <span className="text-[22px] font-semibold leading-none av-tabular" style={{ color: cell.color }}>
+                  {cell.value}
+                </span>
+                <span className="text-[12px] font-medium" style={{ color: cell.color }}>
+                  {cell.label}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       ) : null}
     </section>
   );

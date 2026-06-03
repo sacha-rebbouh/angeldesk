@@ -4,6 +4,8 @@ export type RankRowItem = {
   id: string;
   title: string;
   description?: string | null;
+  /** Preuve complète (sourcée, sanitizée) — rendue en détail repliable, jamais tronquée. */
+  evidence?: string | null;
   severity: StatusPillSeverity;
   severityLabel: string;
   source?: string | null;

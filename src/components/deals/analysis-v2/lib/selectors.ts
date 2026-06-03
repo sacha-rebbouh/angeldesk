@@ -29,6 +29,20 @@ import type { AgentCardSignal } from "../atoms/agent-card";
 import type { EvidenceRowProps } from "../atoms/evidence-row";
 import type { RankRowItem, SignalWithSource, ThesisCard, LoadBearingClaim, ThesisAlert } from "./view-types";
 import { collectEvidence } from "./evidence-collector";
+import { sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
+
+/**
+ * Dérive un titre lisible depuis une description/impact quand l'agent n'a pas
+ * fourni de `title` (#5 : éviter le générique "Risque identifié" quand du
+ * contenu existe). Première phrase, jamais tronquée silencieusement.
+ */
+function deriveRiskTitle(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const trimmed = scrubAgentNamesFromText(text).trim();
+  if (!trimmed) return null;
+  const firstSentence = trimmed.split(/(?<=[.!?])\s+/)[0]?.trim();
+  return firstSentence && firstSentence.length > 0 ? firstSentence : trimmed;
+}
 
 const SEVERITY_RANK: Record<string, number> = {
   CRITICAL: 0,
@@ -91,16 +105,16 @@ function extractRanksFromQuestionMaster(results: ResultsMap | null | undefined):
     const severity = severityToPill(stringAt(item, ["severity"]));
     const condition = stringAt(item, ["condition"]) ?? stringAt(item, ["description"]) ?? "Condition critique";
     const description = stringAt(item, ["description"]);
-    const sourceAgent = stringAt(item, ["sourceAgent"]);
     const riskIf = stringAt(item, ["riskIfIgnored"]);
     const timeToResolve = stringAt(item, ["timeToResolve"]);
     ranks.push({
       id: stringAt(item, ["id"]) ?? `qm-${ranks.length}`,
-      title: compactString(condition, 180) ?? "Condition critique",
-      description: compactString(description ?? riskIf, 280) ?? undefined,
+      title: scrubAgentNamesFromText(condition) || "Condition critique",
+      description: scrubAgentNamesFromText(description ?? riskIf ?? "") || undefined,
       severity,
       severityLabel: severityLabel(severity),
-      source: sourceAgent ?? "question-master",
+      // source = nom d'agent → pas de pastille (cohérence avec les ranks Tier 1).
+      source: null,
       tags: timeToResolve ? [{ label: `Délai : ${timeToResolve}`, tone: "info" as const }] : [],
     });
   }
@@ -119,22 +133,31 @@ function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, l
       const severityRank = rankSeverity(severityRaw);
       if (severityRank > 1) continue;
       const severity = severityToPill(severityRaw);
-      const title = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]) ?? "Risque identifié";
+      const rawTitle = stringAt(rf, ["title"]);
       const description = stringAt(rf, ["description"]);
-      const location = stringAt(rf, ["location"]);
       const impact = stringAt(rf, ["impact"]);
+      const location = stringAt(rf, ["location"]);
       const evidence = stringAt(rf, ["evidence"]);
+      // #5 : titre fourni (scrubé des noms d'agents — un title runtime peut en
+      // contenir), sinon dérivé de description/impact, sinon générique en dernier recours.
+      const cleanRawTitle = rawTitle ? scrubAgentNamesFromText(rawTitle) : "";
+      const title = cleanRawTitle || deriveRiskTitle(description ?? impact) || "Risque identifié";
+      // #7/#4 : description complète (pas de troncature muette), scrubée des noms d'agents.
+      const fullDescription = scrubAgentNamesFromText([description, impact].filter(Boolean).join(" · ")) || null;
+      // #7 : preuve complète scrubée → rendue en détail repliable (plus de chip tronqué à 80c).
+      const cleanEvidence = scrubAgentNamesFromText(evidence) || null;
+      // #7 : la "source" était le nom d'agent → pas de pastille ; la provenance utile
+      // est la `location` sanitizée en tag.
+      const locationTag = location ? sanitizeSourceLabel(location) : null;
       collected.push({
         id: stringAt(rf, ["id"]) ?? `${name}-${collected.length}`,
-        title: compactString(title, 180) ?? "Risque identifié",
-        description: compactString([description, impact].filter(Boolean).join(" · "), 280),
+        title,
+        description: fullDescription,
+        evidence: cleanEvidence,
         severity,
         severityLabel: severityLabel(severity),
-        source: name,
-        tags: [
-          location ? { label: location, tone: "neutral" as const } : null,
-          evidence ? { label: compactString(evidence, 80) ?? "", tone: "info" as const } : null,
-        ].filter((t): t is { label: string; tone: "neutral" | "info" } => t !== null && t.label.length > 0),
+        source: null,
+        tags: locationTag ? [{ label: locationTag, tone: "neutral" as const }] : [],
         _rank: severityRank,
       });
     }
@@ -146,7 +169,7 @@ function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, l
     const key = item.title.toLowerCase().slice(0, 80);
     if (seen.has(key)) continue;
     seen.add(key);
-    deduped.push({ id: item.id, title: item.title, description: item.description, severity: item.severity, severityLabel: item.severityLabel, source: item.source, tags: item.tags });
+    deduped.push({ id: item.id, title: item.title, description: item.description, evidence: item.evidence, severity: item.severity, severityLabel: item.severityLabel, source: item.source, tags: item.tags });
     if (deduped.length >= limit) break;
   }
   return deduped;
@@ -477,7 +500,7 @@ export type MemoSectionModel =
       kind: "reconstituted";
       reason: string;
       strengths: SignalWithSource[];
-      criticalRisks: Array<{ title: string; detail: string | null; source: string }>;
+      criticalRisks: Array<{ title: string; detail: string | null; source: string | null }>;
       topPriorities: Array<{ action: string; rationale: string | null; deadline: string | null; priority: string | null }>;
       diligenceItems: Array<{ item: string; documentsNeeded: string[]; estimatedEffort: string | null }>;
       negotiationPoints: Array<{ point: string; category: string | null; argument: string | null }>;
@@ -549,7 +572,9 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       .map((r) => ({
         title: r.title,
         detail: r.description ?? null,
-        source: r.source ?? "Tier 1",
+        // Pas de provenance factice : r.source est null (le nom d'agent n'est
+        // pas une source user-facing). SourcePin n'affiche alors rien.
+        source: r.source ?? null,
       })),
     topPriorities: topPrioritiesRaw
       .map((p) => {
