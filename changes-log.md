@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 (22 pts) — Phase 0a : helpers de présentation + labels doctrine
+
+### Contexte
+Refonte de la vue Deep Dive (analysis-v2) sur 22 problèmes remontés (captures Avekapeti), plan validé par Codex (VERDICT APPROVE après 2 tours). Phase 0a = fondation : sanitization user-facing (zéro nom d'agent technique, zéro enum brut) réutilisée par toutes les phases suivantes.
+
+### Changements
+- `analysis-v2/lib/solidity-aggregator.ts` : `export` de `AGENT_DEFINITIONS` (source unique, évite copie divergente).
+- `analysis-v2/lib/presentation.ts` (nouveau) : `sanitizeSourceLabel` (scrub global des noms d'agents même embarqués + `*-expert`, fallback honnête « Provenance documentaire non disponible / Synthèse interne non sourcée », réécriture jargon Context Engine/Fact Store, séparateurs `·`/`&` seulement pour préserver les dates), `humanizeInlineAgentNames`, `capitalizeFirstMeaningfulChar` (1er char only, display-only), `AGENT_TECHNICAL_NAMES`.
+- `lib/ui-configs.ts` : `THESIS_ALERT_CATEGORY_LABELS` (8 catégories) + `thesisAlertCategoryLabel()` (fallback humanisé, jamais d'enum brut).
+- `analysis-v2/__tests__/presentation.test.ts` (nouveau) : 13 tests hostiles (dont noms d'agents embarqués).
+
+### Vérif
+13/13 tests verts. `tsc --noEmit` : aucune nouvelle erreur (seule erreur préexistante = `exit-strategist.ts`, untracked, hors périmètre). Gate Codex Phase 0a : APPROVE (après 1 REQUEST_CHANGES corrigé — scrub embedded).
+
+---
 ## 2026-06-03 — Gate Codex : indépendance d'abord, confrontation ensuite (anti-ancrage, symétrique)
 
 ### Contexte

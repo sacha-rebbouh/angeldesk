@@ -517,6 +517,34 @@ export function getEnumLabel(value: string, labels?: Record<string, string>): st
 }
 
 // =============================================================================
+// Thesis alert categories — libellés FR user-facing pour ThesisAlertCategory
+// (src/agents/thesis/types.ts). Affichés dans la Section 2 « Alertes thèse ».
+// L'enum brut (ex. "ASSUMPTION_FRAGILE") ne doit JAMAIS être rendu tel quel.
+// =============================================================================
+export const THESIS_ALERT_CATEGORY_LABELS: Record<string, string> = {
+  why_now: "Timing",
+  problem_reality: "Réalité du problème",
+  solution_fit: "Adéquation solution",
+  moat: "Défensibilité",
+  unit_economics: "Économie unitaire",
+  team_dependency: "Dépendance équipe",
+  market_size: "Taille de marché",
+  assumption_fragile: "Hypothèse fragile",
+};
+
+/**
+ * Libellé FR pour une catégorie d'alerte thèse. Fallback humanisé (underscores
+ * → espaces, capitalisation) pour toute catégorie non mappée — jamais d'enum brut.
+ */
+export function thesisAlertCategoryLabel(category: string | null | undefined): string | null {
+  if (!category) return null;
+  const key = category.toLowerCase();
+  if (key in THESIS_ALERT_CATEGORY_LABELS) return THESIS_ALERT_CATEGORY_LABELS[key];
+  const humanized = key.replace(/_/g, " ").trim();
+  return humanized.length > 0 ? humanized.charAt(0).toUpperCase() + humanized.slice(1) : null;
+}
+
+// =============================================================================
 // Fact key display labels — libellés FR courts pour la taxonomie FACT_KEYS
 // (src/services/fact-store/fact-keys.ts). Affichés dans la colonne « Affirmation »
 // de la table Preuves consolidées. Les acronymes métier (ARR/MRR/CAC/LTV/EBITDA/

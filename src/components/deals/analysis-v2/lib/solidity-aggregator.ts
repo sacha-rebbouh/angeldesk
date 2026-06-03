@@ -237,7 +237,7 @@ export type AgentSnapshot = {
 // NOTE: doit rester synchronisé avec TIER1_AGENT_NAMES (src/agents/orchestrator/types.ts).
 // exit-strategist + scenario-modeler ont été retirés du runtime (doctrine anti-oraculaire) :
 // ne PAS les réintroduire ici, sinon ils réapparaissent en carte « Analyse non exécutée ».
-const AGENT_DEFINITIONS: Array<{ key: string; label: string; role: string }> = [
+export const AGENT_DEFINITIONS: Array<{ key: string; label: string; role: string }> = [
   { key: "financial-auditor", label: "Audit financier", role: "Finance" },
   { key: "deck-forensics", label: "Forensique du deck", role: "Deck" },
   { key: "team-investigator", label: "Investigation équipe", role: "Équipe" },
