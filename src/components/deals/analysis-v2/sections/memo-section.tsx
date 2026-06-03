@@ -2,6 +2,7 @@ import { PartialBanner } from "../atoms/partial-banner";
 import { SourcePin } from "../atoms/source-pin";
 import { StatusPill } from "../atoms/status-pill";
 import { nextStepOwnerLabel, nextStepPriorityLabel, parseNextStep } from "@/lib/ui-configs";
+import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
 import type { MemoSectionModel } from "../lib/selectors";
 
 function NextStepItem({ index, raw }: { index: number; raw: string }) {
@@ -44,6 +45,69 @@ function SectionBlock({ title, children }: { title: string; children: React.Reac
   );
 }
 
+/**
+ * #21 : pointe vers la liste complète quand le mémo généré n'en montre qu'une
+ * sélection éditoriale. Compte les TOPICS CRITICAL DISTINCTS affichés (pas les
+ * lignes brutes, qui peuvent contenir des doublons ou des HIGH) et se rend en
+ * STANDALONE — même si le bloc éditorial de risques est absent (Codex).
+ */
+function CompleteRisksHint({
+  criticalRisks,
+  total,
+}: {
+  criticalRisks: Array<{ title: string; severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO" }>;
+  total: number;
+}) {
+  const shownCriticalTopics = new Set(
+    criticalRisks.filter((r) => r.severity === "CRITICAL").map((r) => inferRedFlagTopic(r.title)),
+  ).size;
+  if (total <= shownCriticalTopics) return null;
+  return (
+    <p className="text-[12px] text-[var(--av-muted)]">
+      {total} risques critiques identifiés au total — voir{" "}
+      <a href="#decision" className="font-medium text-[var(--av-info)] underline-offset-2 hover:underline">
+        « Synthèse de décision »
+      </a>{" "}
+      pour la liste complète.
+    </p>
+  );
+}
+
+type Priority = { action: string; rationale: string | null; deadline: string | null; priority: string | null };
+
+function PrioritiesList({ priorities }: { priorities: Priority[] }) {
+  return (
+    <ol className="flex flex-col gap-3 text-[14px] text-[var(--av-ink)]">
+      {priorities.map((p, i) => (
+        <li key={i} className="flex flex-col gap-1">
+          <div className="flex items-start justify-between gap-2">
+            <strong className="text-[14px] font-semibold">
+              <span className="av-tabular text-[var(--av-muted)]">{i + 1}. </span>
+              {p.action}
+            </strong>
+            {p.priority ? (
+              <StatusPill
+                severity={
+                  p.priority.toUpperCase() === "CRITICAL"
+                    ? "CRITICAL"
+                    : p.priority.toUpperCase() === "HIGH"
+                      ? "HIGH"
+                      : p.priority.toUpperCase() === "MEDIUM"
+                        ? "MEDIUM"
+                        : "LOW"
+                }
+                label={p.priority}
+              />
+            ) : null}
+          </div>
+          {p.rationale ? <span className="text-[13px] text-[var(--av-muted)]">{p.rationale}</span> : null}
+          {p.deadline ? <span className="text-[12px] text-[var(--av-muted)]">Délai indicatif : {p.deadline}</span> : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export function MemoSection({ model }: { model: MemoSectionModel }) {
   return (
     <section id="memo" className="flex scroll-mt-44 flex-col gap-5">
@@ -51,8 +115,7 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
         <span className="av-eyebrow">Section 5</span>
         <h2 className="av-h2">Mémo synthétique</h2>
         <p className="av-note">
-          Document de synthèse pour le comité ou la discussion d'investissement. La décision finale reste à
-          l'investisseur.
+          Synthèse factuelle des signaux, preuves et zones d'incertitude.
         </p>
       </header>
 
@@ -105,6 +168,8 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
               </ul>
             </SectionBlock>
           ) : null}
+          {/* Standalone : se rend même si le bloc éditorial de risques est absent (#21). */}
+          <CompleteRisksHint criticalRisks={model.criticalRisks} total={model.totalCriticalRisks} />
           {model.nextSteps.length > 0 ? (
             <SectionBlock title="Prochaines étapes">
               <ol className="flex flex-col gap-2.5 text-[14px] text-[var(--av-ink)]">
@@ -112,6 +177,11 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
                   <NextStepItem key={i} index={i} raw={s} />
                 ))}
               </ol>
+            </SectionBlock>
+          ) : null}
+          {model.topPriorities.length > 0 ? (
+            <SectionBlock title="Priorités d'investigation">
+              <PrioritiesList priorities={model.topPriorities} />
             </SectionBlock>
           ) : null}
         </>
@@ -151,36 +221,7 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
 
           {model.topPriorities.length > 0 ? (
             <SectionBlock title="Priorités d'investigation">
-              <ol className="flex flex-col gap-3 text-[14px] text-[var(--av-ink)]">
-                {model.topPriorities.map((p, i) => (
-                  <li key={i} className="flex flex-col gap-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <strong className="text-[14px] font-semibold">
-                        <span className="av-tabular text-[var(--av-muted)]">{i + 1}. </span>
-                        {p.action}
-                      </strong>
-                      {p.priority ? (
-                        <StatusPill
-                          severity={
-                            p.priority.toUpperCase() === "CRITICAL"
-                              ? "CRITICAL"
-                              : p.priority.toUpperCase() === "HIGH"
-                                ? "HIGH"
-                                : p.priority.toUpperCase() === "MEDIUM"
-                                  ? "MEDIUM"
-                                  : "LOW"
-                          }
-                          label={p.priority}
-                        />
-                      ) : null}
-                    </div>
-                    {p.rationale ? <span className="text-[13px] text-[var(--av-muted)]">{p.rationale}</span> : null}
-                    {p.deadline ? (
-                      <span className="text-[12px] text-[var(--av-muted)]">Délai indicatif : {p.deadline}</span>
-                    ) : null}
-                  </li>
-                ))}
-              </ol>
+              <PrioritiesList priorities={model.topPriorities} />
             </SectionBlock>
           ) : null}
 
@@ -221,8 +262,7 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
       )}
 
       <p className="av-note">
-        Les éléments ci-dessus consolident les analyses disponibles à un instant T. La décision reste à
-        l'investisseur.
+        Les éléments ci-dessus consolident les analyses disponibles à un instant T.
       </p>
     </section>
   );

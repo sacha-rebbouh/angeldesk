@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 7 : consolidation risques (source unique) + mémo (#20/#21/#22)
+
+### Changements
+- `lib/selectors.ts` : `consolidateRiskRanks()` = SOURCE UNIQUE (Codex #10) — fusionne dealbreakers QM + red flags Tier 1, **dédup par topic** (`inferRedFlagTopic`, réutilise le service `red-flag-dedup`), **représentant par sévérité max** (pas de premier-vu qui masque un CRITICAL), tri stable. `buildDecisionSectionModel.ranks` l'utilise (liste complète déduplicée #21, fin du cap muet à 8). `buildMemoSectionModel` : `totalCriticalRisks` + `topPriorities` (tous champs scrubés) partagés ; criticalRisks généré scrubés + `presentableSource` ; reconstitué = liste consolidée. Fin des `compactString` dans le mémo.
+- `sections/memo-section.tsx` : #20 sous-titre neutre + note finale sans disclaimer redondant ; #21 `CompleteRisksHint` standalone (compte les **topics CRITICAL distincts** affichés, lien vers `#decision`) ; #22 bloc « Priorités d'investigation » surfacé aussi dans le mémo généré (`PrioritiesList`).
+- Guards : dédup par topic (2 flags valorisation → 1), `totalCriticalRisks` exposé, `topPriorities` scrubés.
+
+### Vérif
+35 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 7 : APPROVE (après 2 REQUEST_CHANGES : représentant par sévérité + comptage par topic distinct + hint standalone + scrub tous champs).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 6 : preuves consolidées (#18 troncatures/noms d'agents, #19 contradictions)
 
 ### Changements

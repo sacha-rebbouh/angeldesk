@@ -44,6 +44,39 @@ export const HOSTILE_RESULTS: ResultsMap = {
       ],
     },
   },
+  // Deux flags de MÊME topic (valorisation) sur des agents distincts → doivent
+  // être dédupliqués par topic dans les ranks consolidés (#21 « sans doublons »).
+  "financial-auditor": {
+    success: true,
+    data: {
+      redFlags: [
+        { severity: "CRITICAL", title: "Instabilité de la valorisation (10M€ → 6M€ en 3 mois)", description: "Valorisation incohérente entre documents.", location: "Mail 3 (24/02/2026)" },
+      ],
+    },
+  },
+  "cap-table-auditor": {
+    success: true,
+    data: {
+      redFlags: [
+        { severity: "CRITICAL", title: "Volatilité extrême de la valorisation", description: "Base de valorisation non justifiée.", location: "Table de capi Septembre 2024.png" },
+      ],
+    },
+  },
+  // Question Master : priorités d'investigation dont les champs contiennent des
+  // noms d'agents (action/rationale) → doivent être scrubés (#22).
+  "question-master": {
+    success: true,
+    data: {
+      topPriorities: [
+        {
+          action: "Exiger le K-bis (Source: legal-regulatory)",
+          rationale: "Selon competitive-intel, le registre est indisponible.",
+          deadline: "Immédiat",
+          priority: "CRITICAL",
+        },
+      ],
+    },
+  },
   "contradiction-detector": {
     success: true,
     data: {

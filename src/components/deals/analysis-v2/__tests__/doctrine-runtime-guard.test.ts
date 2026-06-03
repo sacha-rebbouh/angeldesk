@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_TECHNICAL_NAMES, sanitizeSourceLabel } from "../lib/presentation";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
+import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
 import {
   buildDecisionSectionModel,
   buildEvidenceSectionModel,
@@ -83,6 +84,29 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
         expectNoAgentName(s);
         expect(s, `"${s}" expose un score /100`).not.toMatch(/\/\s*100/); // #16 : pas de score chiffré dans le texte
       }
+    }
+  });
+
+  // Phase 7 : les ranks consolidés sont dédupliqués par topic (#21 « sans doublons »).
+  it("buildDecisionSectionModel.ranks : déduplication par topic (2 flags valorisation → 1)", () => {
+    const model = buildDecisionSectionModel(HOSTILE_RESULTS);
+    const topics = model.ranks.map((r) => inferRedFlagTopic(r.title));
+    expect(new Set(topics).size, `topics dupliqués: ${topics.join(", ")}`).toBe(topics.length);
+    // les 2 flags de topic « valuation » du fixture doivent être fusionnés en 1 rank
+    expect(topics.filter((t) => t === "valuation").length).toBeLessThanOrEqual(1);
+  });
+
+  // Phase 7 : le mémo expose le total de risques critiques (pour « voir les N »)
+  // et les priorités d'investigation sont scrubées sur TOUS les champs rendus.
+  it("buildMemoSectionModel expose totalCriticalRisks + priorités scrubées (#21/#22)", () => {
+    const memo = buildMemoSectionModel(HOSTILE_RESULTS);
+    expect(typeof memo.totalCriticalRisks).toBe("number");
+    expect(memo.totalCriticalRisks).toBeGreaterThan(0);
+    expect(memo.topPriorities.length).toBeGreaterThan(0);
+    for (const p of memo.topPriorities) {
+      expectNoAgentName(p.action);
+      if (p.rationale) expectNoAgentName(p.rationale);
+      if (p.deadline) expectNoAgentName(p.deadline);
     }
   });
 

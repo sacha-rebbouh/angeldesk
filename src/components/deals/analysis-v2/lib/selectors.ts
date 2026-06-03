@@ -29,7 +29,33 @@ import type { AgentCardSignal } from "../atoms/agent-card";
 import type { EvidenceRowProps } from "../atoms/evidence-row";
 import type { RankRowItem, SignalWithSource, ThesisCard, LoadBearingClaim, ThesisAlert } from "./view-types";
 import { collectEvidence } from "./evidence-collector";
-import { sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
+import { presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
+import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
+
+/**
+ * Source UNIQUE des risques consolidés (Codex #10 : pas deux listes
+ * divergentes entre Section 1 et le mémo). Fusionne dealbreakers Question
+ * Master + red flags Tier 1, **dédupliqués par topic sémantique**
+ * (`inferRedFlagTopic` — « valorisation » ne réapparaît plus 4×), triés par
+ * sévérité. Pas de cap : la liste complète déduplicée (#21).
+ */
+function consolidateRiskRanks(results: ResultsMap | null | undefined): RankRowItem[] {
+  if (!results) return [];
+  const fromQm = extractRanksFromQuestionMaster(results);
+  const fromRedFlags = extractRanksFromTier1RedFlags(results, 100);
+  // Représentant par topic choisi par SÉVÉRITÉ la plus haute (Codex : sinon une
+  // condition QM moins sévère, vue en premier, masque un red flag Tier 1 CRITICAL
+  // du même topic et sous-compte les risques critiques). Premier-vu gagne à égalité.
+  const byTopic = new Map<string, RankRowItem>();
+  for (const item of [...fromQm, ...fromRedFlags]) {
+    const key = inferRedFlagTopic(item.title);
+    const existing = byTopic.get(key);
+    if (!existing || rankSeverity(item.severity) < rankSeverity(existing.severity)) {
+      byTopic.set(key, item);
+    }
+  }
+  return [...byTopic.values()].sort((a, b) => rankSeverity(a.severity) - rankSeverity(b.severity));
+}
 
 /**
  * Dérive un titre lisible depuis une description/impact quand l'agent n'a pas
@@ -274,20 +300,9 @@ export function buildDecisionSectionModel(results: ResultsMap | null | undefined
   return {
     favorable: extractPositiveSignals(results, 5),
     vigilance: extractVigilanceSignals(results, 5),
-    ranks: (() => {
-      const fromQm = extractRanksFromQuestionMaster(results);
-      const fromRedFlags = extractRanksFromTier1RedFlags(results, 8);
-      const merged: RankRowItem[] = [];
-      const seen = new Set<string>();
-      for (const item of [...fromQm, ...fromRedFlags]) {
-        const key = item.title.toLowerCase().slice(0, 80);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        merged.push(item);
-        if (merged.length >= 8) break;
-      }
-      return merged;
-    })(),
+    // #21 : liste complète déduplicée (source unique consolidateRiskRanks),
+    // plus de cap muet à 8 ni de doublons « valorisation ».
+    ranks: consolidateRiskRanks(results),
     alertConvergence: countAlertSignalDistribution(results),
   };
 }
@@ -502,6 +517,8 @@ export function buildEvidenceSectionModel(results: ResultsMap | null | undefined
   return collectEvidence(results);
 }
 
+type MemoPriority = { action: string; rationale: string | null; deadline: string | null; priority: string | null };
+
 export type MemoSectionModel =
   | {
       kind: "generated";
@@ -511,19 +528,44 @@ export type MemoSectionModel =
       investmentThesis: string | null;
       criticalRisks: Array<{ title: string; detail: string | null; severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"; severityLabel: string; source: string | null }>;
       nextSteps: string[];
+      /** Plan d'investigation priorisé (Question Master) — enrichit des next steps trop courts (#22). */
+      topPriorities: MemoPriority[];
+      /** Total de risques critiques distincts consolidés — pour « voir les N risques » (#21). */
+      totalCriticalRisks: number;
     }
   | {
       kind: "reconstituted";
       reason: string;
       strengths: SignalWithSource[];
       criticalRisks: Array<{ title: string; detail: string | null; source: string | null }>;
-      topPriorities: Array<{ action: string; rationale: string | null; deadline: string | null; priority: string | null }>;
+      topPriorities: MemoPriority[];
       diligenceItems: Array<{ item: string; documentsNeeded: string[]; estimatedEffort: string | null }>;
       negotiationPoints: Array<{ point: string; category: string | null; argument: string | null }>;
       forNegotiation: string[];
+      totalCriticalRisks: number;
     };
 
 export function buildMemoSectionModel(results: ResultsMap | null | undefined): MemoSectionModel {
+  // Source unique consolidée (Codex #10) : total de risques critiques distincts (#21).
+  const consolidated = consolidateRiskRanks(results);
+  const totalCriticalRisks = consolidated.filter((r) => r.severity === "CRITICAL").length;
+
+  // Plan d'investigation priorisé (Question Master) — partagé par les deux modes (#22).
+  const qm = agentData(results, "question-master");
+  const topPriorities: MemoPriority[] = (isRecord(qm) ? arrayAt(qm, ["topPriorities"]) : [])
+    .map((p) => {
+      if (!isRecord(p)) return null;
+      // Tous les champs RENDUS sont scrubés (action/rationale/deadline) — ils
+      // viennent de Question Master et peuvent contenir des noms d'agents (Codex).
+      return {
+        action: scrubAgentNamesFromText(stringAt(p, ["action"]) ?? "") || "Action prioritaire",
+        rationale: scrubAgentNamesFromText(stringAt(p, ["rationale"]) ?? "") || null,
+        deadline: scrubAgentNamesFromText(stringAt(p, ["deadline"]) ?? "") || null,
+        priority: stringAt(p, ["priority"]),
+      } satisfies MemoPriority;
+    })
+    .filter((x): x is MemoPriority => x !== null);
+
   const memo = agentData(results, "memo-generator");
   if (isRecord(memo)) {
     return {
@@ -531,27 +573,29 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       executiveSummary: stringAt(memo, ["executiveSummary", "oneLiner"]),
       keyPoints: arrayAt(memo, ["executiveSummary", "keyPoints"])
         .map((kp) => (isString(kp) ? kp : isRecord(kp) ? stringAt(kp, ["text"]) : null))
-        .filter((kp): kp is string => kp !== null),
+        .filter((kp): kp is string => kp !== null)
+        .map((kp) => scrubAgentNamesFromText(kp) || kp),
       companyOverview: stringAt(memo, ["companyOverview"]),
       investmentThesis: isString(valueAt(memo, ["investmentThesis"]))
         ? (valueAt(memo, ["investmentThesis"]) as string)
         : stringAt(memo, ["investmentThesis", "summary"]),
-      // memo-generator émet criticalRisks[] = {riskId, severity, description, evidence, source}
-      // (PAS de `title`). On dérive donc le titre de `description` et le détail de
-      // `evidence`, et on conserve severity + source (jetés auparavant → tous les
-      // risques s'affichaient « Risque » sans pondération).
+      // criticalRisks[] = {severity, description, evidence, source} (PAS de title).
+      // Titre dérivé de description, détail = evidence ; tout scrubé (le prompt mémo
+      // enseignait « Source: <agent> »), source via presentableSource (null si agent).
       criticalRisks: arrayAt(memo, ["criticalRisks"])
         .map((r) => {
           if (!isRecord(r)) return null;
           const severity = severityToPill(stringAt(r, ["severity"]));
-          const title = stringAt(r, ["description"]) ?? stringAt(r, ["title"]) ?? "Risque identifié";
-          const detail = stringAt(r, ["evidence"]) ?? stringAt(r, ["detail"]);
+          const rawTitle = stringAt(r, ["description"]) ?? stringAt(r, ["title"]);
+          const title = (rawTitle ? scrubAgentNamesFromText(rawTitle) : "") || "Risque identifié";
+          const rawDetail = stringAt(r, ["evidence"]) ?? stringAt(r, ["detail"]);
+          const detail = rawDetail ? scrubAgentNamesFromText(rawDetail) || null : null;
           return {
-            title: compactString(title, 200) ?? "Risque identifié",
-            detail: detail ? compactString(detail, 320) : null,
+            title,
+            detail,
             severity,
             severityLabel: severityLabel(severity),
-            source: stringAt(r, ["source"]) ?? null,
+            source: presentableSource(stringAt(r, ["source"])),
           };
         })
         .filter(
@@ -559,15 +603,14 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
             r !== null,
         ),
       nextSteps: arrayAt(memo, ["nextSteps"])
-        .map((s) => (isString(s) ? s : null))
-        .filter((s): s is string => s !== null),
+        .map((s) => (isString(s) ? scrubAgentNamesFromText(s) : null))
+        .filter((s): s is string => s !== null && s.length > 0),
+      topPriorities,
+      totalCriticalRisks,
     };
   }
 
-  const qm = agentData(results, "question-master");
   const strengths = extractPositiveSignals(results, 6);
-  const ranks = extractRanksFromTier1RedFlags(results, 6);
-  const topPrioritiesRaw = isRecord(qm) ? arrayAt(qm, ["topPriorities"]) : [];
   const diligenceRaw = isRecord(qm) ? arrayAt(qm, ["diligenceChecklist", "items"]) : [];
   const negotiationRaw = isRecord(qm) ? arrayAt(qm, ["negotiationPoints"]) : [];
   const forNegotiation: string[] = [];
@@ -575,7 +618,7 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
     for (const entry of Object.values(results)) {
       if (!entry?.success) continue;
       const items = arrayAt(entry.data, ["narrative", "forNegotiation"]);
-      for (const i of items) if (isString(i)) forNegotiation.push(i);
+      for (const i of items) if (isString(i)) forNegotiation.push(scrubAgentNamesFromText(i) || i);
     }
   }
 
@@ -583,26 +626,11 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
     kind: "reconstituted",
     reason: "Le mémo synthétique n'a pas pu être généré par l'agent. La vue ci-dessous reconstitue les éléments à partir des Tier 1 disponibles, du Question Master et de la cohérence documentaire.",
     strengths,
-    criticalRisks: ranks
+    // Liste complète déduplicée (source unique consolidateRiskRanks), filtrée critique/élevé.
+    criticalRisks: consolidated
       .filter((r) => r.severity === "CRITICAL" || r.severity === "HIGH")
-      .map((r) => ({
-        title: r.title,
-        detail: r.description ?? null,
-        // Pas de provenance factice : r.source est null (le nom d'agent n'est
-        // pas une source user-facing). SourcePin n'affiche alors rien.
-        source: r.source ?? null,
-      })),
-    topPriorities: topPrioritiesRaw
-      .map((p) => {
-        if (!isRecord(p)) return null;
-        return {
-          action: stringAt(p, ["action"]) ?? "Action prioritaire",
-          rationale: stringAt(p, ["rationale"]),
-          deadline: stringAt(p, ["deadline"]),
-          priority: stringAt(p, ["priority"]),
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null),
+      .map((r) => ({ title: r.title, detail: r.description ?? null, source: r.source ?? null })),
+    topPriorities,
     diligenceItems: diligenceRaw
       .map((it) => {
         if (!isRecord(it)) return null;
@@ -625,6 +653,7 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       })
       .filter((x): x is NonNullable<typeof x> => x !== null),
     forNegotiation,
+    totalCriticalRisks,
   };
 }
 
