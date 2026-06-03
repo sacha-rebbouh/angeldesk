@@ -4,6 +4,7 @@ import {
   AGENT_TECHNICAL_NAMES,
   capitalizeFirstMeaningfulChar,
   humanizeInlineAgentNames,
+  isLegalRegistryUnavailableSignal,
   presentableSource,
   sanitizeSourceLabel,
   scrubAgentNamesFromText,
@@ -116,6 +117,45 @@ describe("capitalizeFirstMeaningfulChar", () => {
   it("ne casse rien sur chiffres/vide", () => {
     expect(capitalizeFirstMeaningfulChar("3M EUR")).toBe("3M EUR");
     expect(capitalizeFirstMeaningfulChar("")).toBe("");
+  });
+});
+
+describe("isLegalRegistryUnavailableSignal (#6 — signature explicite, jamais floue)", () => {
+  it("reconnaît « connecteur/registre indisponible » (token connecteur ET échec outil)", () => {
+    expect(isLegalRegistryUnavailableSignal("Le registre officiel français (Pappers.fr) est indisponible.")).toBe(true);
+    expect(isLegalRegistryUnavailableSignal("Pappers.fr: Registre officiel FR indisponible: K-bis, dirigeants non vérifiés.")).toBe(true);
+    expect(isLegalRegistryUnavailableSignal("Le greffe n'a pas pu être interrogé pour ce dossier.")).toBe(true);
+    expect(isLegalRegistryUnavailableSignal("Impossible de vérifier la société au registre du commerce.")).toBe(true);
+    // blob réel devils-advocate Avekapeti : titre ambigu + description qui nomme le registre down
+    expect(
+      isLegalRegistryUnavailableSignal("Absence de Vérification Légale (K-bis). Le registre officiel (Pappers.fr) est indisponible."),
+    ).toBe(true);
+  });
+
+  it("NE déclasse PAS un vrai risque légal (token connecteur SANS échec outil)", () => {
+    expect(isLegalRegistryUnavailableSignal("Procédure collective active au greffe")).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("Non-conformité RGPD au registre du commerce")).toBe(false);
+  });
+
+  it("NE déclasse PAS un manque côté fondateur/document (aucun connecteur en échec)", () => {
+    // titre ambigu seul, sans connecteur nommé en échec → pas de reclassement (resserrement Codex)
+    expect(isLegalRegistryUnavailableSignal("Absence de Vérification Légale (K-bis)")).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("Absence de vérification du K-bis par le fondateur")).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("K-bis non fourni par le fondateur")).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("K-bis non vérifié par le fondateur")).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("K-bis indisponible dans la data room")).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("Le fondateur n'a pas pu fournir le K-bis")).toBe(false);
+  });
+
+  it("NE déclasse PAS une non-vérification non-registre", () => {
+    expect(isLegalRegistryUnavailableSignal("Équipe dirigeante non vérifiée")).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("Données financières incohérentes et non vérifiées")).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("Métriques de traction indisponibles")).toBe(false);
+  });
+
+  it("entrée vide → false", () => {
+    expect(isLegalRegistryUnavailableSignal(null)).toBe(false);
+    expect(isLegalRegistryUnavailableSignal("")).toBe(false);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { AGENT_TECHNICAL_NAMES, sanitizeSourceLabel } from "../lib/presentation";
+import { AGENT_TECHNICAL_NAMES, isLegalRegistryUnavailableSignal, sanitizeSourceLabel } from "../lib/presentation";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
 import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
 import {
@@ -125,6 +125,38 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
         expect(row.claim, `"${row.claim}" annonce un recoupement sans source inline`).toMatch(/ : «/);
       }
     }
+  });
+
+  // Phase 8a (#6) : un flag « registre officiel indisponible » est reclassé en
+  // notice « couverture légale à vérifier » (hors risques société) ; les vrais
+  // risques légaux (procédure collective, équipe non vérifiée) restent critiques.
+  it("buildDecisionSectionModel : registre indisponible reclassé en notice, vrais risques préservés", () => {
+    const model = buildDecisionSectionModel(HOSTILE_RESULTS);
+    // (a) la notice « couverture légale à vérifier » est levée
+    expect(model.legalCoverageGap).toBe(true);
+    // (b) aucun risque rangé ne porte la signature « registre indisponible »
+    for (const r of model.ranks) {
+      const blob = [r.title, r.description ?? "", r.evidence ?? ""].join(" ");
+      expect(isLegalRegistryUnavailableSignal(blob), `le rank "${r.title}" aurait dû être reclassé`).toBe(false);
+    }
+    // (c) les décoys (vrais risques) restent présents (jamais déclassés)
+    const titles = model.ranks.map((r) => r.title.toLowerCase());
+    expect(titles.some((t) => t.includes("procédure collective")), "procédure collective manquante").toBe(true);
+    expect(titles.some((t) => t.includes("équipe dirigeante non vérifiée")), "équipe non vérifiée manquante").toBe(true);
+  });
+
+  // Phase 8a (#6) : la carte d'une dimension ne présente PAS le « registre
+  // indisponible » comme alerte (porté par la notice), sans masquer les vrais risques.
+  it("buildSignalsSectionModel : concern « registre indisponible » filtré des cartes", () => {
+    const model = buildSignalsSectionModel(HOSTILE_RESULTS);
+    let kept = 0;
+    for (const c of model.cards) {
+      for (const concern of c.concerns) {
+        expect(isLegalRegistryUnavailableSignal(concern), `le concern "${concern}" aurait dû être filtré`).toBe(false);
+        if (concern.toLowerCase().includes("procédure collective")) kept += 1;
+      }
+    }
+    expect(kept, "le vrai risque légal aurait dû rester en concern").toBeGreaterThan(0);
   });
 
   // Phase 4 (finding Codex) : le mémo reconstitué ne fabrique pas de provenance

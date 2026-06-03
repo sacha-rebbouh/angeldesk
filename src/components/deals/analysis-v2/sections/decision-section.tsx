@@ -2,12 +2,13 @@ import { Callout } from "../atoms/callout";
 import { PartialBanner } from "../atoms/partial-banner";
 import { RankRow } from "../atoms/rank-row";
 import { SourcePin } from "../atoms/source-pin";
+import { LEGAL_COVERAGE_GAP_DETAIL, LEGAL_COVERAGE_GAP_TITLE } from "../lib/presentation";
 import type { buildDecisionSectionModel } from "../lib/selectors";
 
 type Model = ReturnType<typeof buildDecisionSectionModel>;
 
 export function DecisionSection({ model }: { model: Model }) {
-  const { favorable, vigilance, ranks, alertConvergence } = model;
+  const { favorable, vigilance, ranks, legalCoverageGap, alertConvergence } = model;
   return (
     <section id="decision" className="flex scroll-mt-44 flex-col gap-5">
       <header className="flex flex-col gap-1">
@@ -77,6 +78,12 @@ export function DecisionSection({ model }: { model: Model }) {
           </ol>
         )}
       </div>
+
+      {legalCoverageGap ? (
+        <Callout tone="info" eyebrow="Couverture" title={LEGAL_COVERAGE_GAP_TITLE}>
+          <p>{LEGAL_COVERAGE_GAP_DETAIL}</p>
+        </Callout>
+      ) : null}
 
       {alertConvergence.total > 0 ? (
         <div

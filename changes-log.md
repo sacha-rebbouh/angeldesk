@@ -1,6 +1,23 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 8a/8b : Pappers / couverture légale (#6)
+
+### Contexte
+Le red flag CRITICAL « Absence de Vérification Légale (K-bis) » (devils-advocate, Avekapeti) a pour CAUSE « registre Pappers indisponible » (notre outil n'a pas pu interroger le registre — clé `PAPPERS_API_KEY` absente en prod), PAS « société risquée ». Il gonflait le compte de risques critiques et trahissait la machinerie comme un risque société.
+
+### Changements (8a — reframe, plancher doctrine)
+- `lib/presentation.ts` : `isLegalRegistryUnavailableSignal(text)` — **signature EXPLICITE** (résolution Codex), jamais une heuristique floue : exige À LA FOIS (1) un token de **CONNECTEUR/REGISTRE = l'outil interrogé** (`pappers`, `registre officiel/du commerce/national/des sociétés`, `greffe`, `infogreffe`, `companies house`, `societe.com`) — **`k-bis` EXCLU** car c'est un DOCUMENT (« K-bis indisponible/non fourni/non vérifié » = manque côté fondateur, vrai item de diligence) ; ET (2) un token explicite d'**ÉCHEC OUTIL** (`indisponible`, `non disponible`, `impossible de vérifier/interroger/consulter`, `pas pu (être) vérifier/interroger/consulter`). **Volontairement EXCLUS** (resserrements Codex r1/r2) : `non vérifié(s)`, `absence de vérification`, `n'a pas pu` non contraint — états ambigus. La conjonction « le CONNECTEUR est indisponible » isole l'échec outil sans jamais déclasser un vrai risque (litige, requalification, **procédure collective au greffe**, doc manquant). Constantes notice `LEGAL_COVERAGE_GAP_TITLE`/`_DETAIL`.
+- `lib/selectors.ts` : helper partagé `redFlagSignalBlob(rf)` (title+description+impact+evidence+**location**) utilisé par les 3 chemins (alignement Codex #2, plus de fuite si la source n'est que dans `location`). (a) `extractRanksFromTier1RedFlags` retire les flags à signature « connecteur indisponible » (plus de faux risque critique, total #21 diminué d'autant) ; (b) `detectLegalCoverageGap(results)` → `buildDecisionSectionModel.legalCoverageGap` (1 notice consolidée, honnête) ; (c) `buildSignalsSectionModel.concerns` filtre les mêmes (pas d'alerte de dimension) ; (d) mémo généré `criticalRisks` filtre les mêmes (no-op « non fourni » pour Avekapeti, future-proof).
+- `sections/decision-section.tsx` : Callout neutre « Couverture légale à vérifier » (limite de couverture de l'outil, pas un risque avéré) quand `legalCoverageGap`.
+
+### 8b — REST (diagnostic, secret jamais loggé)
+- Confirmé : `connectors/pappers.ts` lit bien `process.env.PAPPERS_API_KEY` (pas `n_API_KEY`). La clé n'est mise que dans le query `api_token` ; aucun log ne contient l'URL ni la clé (lignes warn/error = codes statut / chaînes statiques). Indispo Avekapeti = `unconfiguredCritical` (clé absente en prod, 19/19 autres connecteurs OK). Provisionnement clé (REST payant / MCP) = décision argent → Phase 8c. Aucun changement de code connecteur (déjà sûr, Surgical).
+
+### Vérif
+42 tests verts analysis-v2 (35 → +5 unit signature dont décoys fondateur/document, +2 guard VM #6). tsc clean (hors `exit-strategist.ts`). Validé sur données réelles : le fixture hostile reprend VERBATIM le flag devils-advocate Avekapeti (matche via « registre officiel … indisponible »).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 7 : consolidation risques (source unique) + mémo (#20/#21/#22)
 
 ### Changements

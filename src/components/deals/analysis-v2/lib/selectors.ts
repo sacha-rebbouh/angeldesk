@@ -29,7 +29,7 @@ import type { AgentCardSignal } from "../atoms/agent-card";
 import type { EvidenceRowProps } from "../atoms/evidence-row";
 import type { RankRowItem, SignalWithSource, ThesisCard, LoadBearingClaim, ThesisAlert } from "./view-types";
 import { collectEvidence } from "./evidence-collector";
-import { presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
+import { isLegalRegistryUnavailableSignal, presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
 import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
 
 /**
@@ -147,6 +147,25 @@ function extractRanksFromQuestionMaster(results: ResultsMap | null | undefined):
   return ranks;
 }
 
+/**
+ * Blob texte d'un red flag (tous champs porteurs de provenance/signal), utilisé
+ * de façon UNIFORME par les 3 chemins du reframe « couverture légale » (#6) —
+ * skip des ranks, notice `detectLegalCoverageGap`, filtre des concerns — pour
+ * qu'un flag retiré des risques lève TOUJOURS la notice (jamais de troncature
+ * muette, même si la source registre n'est que dans `location`). Codex #2.
+ */
+function redFlagSignalBlob(rf: Record<string, unknown>): string {
+  return [
+    stringAt(rf, ["title"]),
+    stringAt(rf, ["description"]),
+    stringAt(rf, ["impact"]),
+    stringAt(rf, ["evidence"]),
+    stringAt(rf, ["location"]),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, limit: number): RankRowItem[] {
   if (!results) return [];
   const collected: Array<RankRowItem & { _rank: number }> = [];
@@ -164,6 +183,12 @@ function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, l
       const impact = stringAt(rf, ["impact"]);
       const location = stringAt(rf, ["location"]);
       const evidence = stringAt(rf, ["evidence"]);
+      // #6 : un flag « registre officiel indisponible » n'est pas un risque société —
+      // il est reclassé en notice « couverture légale à vérifier » (detectLegalCoverageGap),
+      // donc retiré des risques rangés (signature explicite, jamais un « légal » flou).
+      if (isLegalRegistryUnavailableSignal(redFlagSignalBlob(rf))) {
+        continue;
+      }
       // #5 : titre fourni (scrubé des noms d'agents — un title runtime peut en
       // contenir), sinon dérivé de description/impact, sinon générique en dernier recours.
       const cleanRawTitle = rawTitle ? scrubAgentNamesFromText(rawTitle) : "";
@@ -296,6 +321,24 @@ export function buildDecisionStripModel(deal: { id: string; name?: string | null
   };
 }
 
+/**
+ * #6 : détecte si AU MOINS un agent a signalé l'indisponibilité du registre
+ * officiel (Pappers/K-bis). Ces flags sont retirés des risques rangés et
+ * regroupés en UNE notice honnête « couverture légale à vérifier » (pas un
+ * risque société). Signature explicite (source registre ET indisponibilité).
+ */
+function detectLegalCoverageGap(results: ResultsMap | null | undefined): boolean {
+  if (!results) return false;
+  for (const entry of Object.values(results)) {
+    if (!entry?.success) continue;
+    for (const rf of arrayAt(entry.data, ["redFlags"])) {
+      if (!isRecord(rf)) continue;
+      if (isLegalRegistryUnavailableSignal(redFlagSignalBlob(rf))) return true;
+    }
+  }
+  return false;
+}
+
 export function buildDecisionSectionModel(results: ResultsMap | null | undefined) {
   return {
     favorable: extractPositiveSignals(results, 5),
@@ -303,6 +346,9 @@ export function buildDecisionSectionModel(results: ResultsMap | null | undefined
     // #21 : liste complète déduplicée (source unique consolidateRiskRanks),
     // plus de cap muet à 8 ni de doublons « valorisation ».
     ranks: consolidateRiskRanks(results),
+    // #6 : couverture légale (registre officiel indisponible) reclassée en notice
+    // honnête, hors des risques société.
+    legalCoverageGap: detectLegalCoverageGap(results),
     alertConvergence: countAlertSignalDistribution(results),
   };
 }
@@ -431,6 +477,12 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
         .filter((i) => i.length > 0)
         .slice(0, 3);
       const concerns = arrayAt(snap.data, ["redFlags"])
+        .filter((rf) => {
+          if (!isRecord(rf)) return false;
+          // #6 : un « registre indisponible » n'est pas une alerte de dimension —
+          // il est porté par la notice « couverture légale à vérifier ».
+          return !isLegalRegistryUnavailableSignal(redFlagSignalBlob(rf));
+        })
         .map((rf) => {
           if (!isRecord(rf)) return "";
           const t = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]) ?? stringAt(rf, ["impact"]) ?? "";
@@ -583,6 +635,14 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       // Titre dérivé de description, détail = evidence ; tout scrubé (le prompt mémo
       // enseignait « Source: <agent> »), source via presentableSource (null si agent).
       criticalRisks: arrayAt(memo, ["criticalRisks"])
+        .filter((r) => {
+          if (!isRecord(r)) return false;
+          // #6 : « registre officiel indisponible » sort des risques critiques du
+          // mémo (porté par la notice « couverture légale à vérifier »). « K-bis
+          // NON FOURNI » (sans token d'indisponibilité) reste un vrai item de diligence.
+          const blob = [stringAt(r, ["description"]), stringAt(r, ["title"]), stringAt(r, ["evidence"]), stringAt(r, ["detail"])].filter(Boolean).join(" ");
+          return !isLegalRegistryUnavailableSignal(blob);
+        })
         .map((r) => {
           if (!isRecord(r)) return null;
           const severity = severityToPill(stringAt(r, ["severity"]));

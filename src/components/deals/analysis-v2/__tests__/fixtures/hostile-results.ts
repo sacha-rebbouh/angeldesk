@@ -77,6 +77,50 @@ export const HOSTILE_RESULTS: ResultsMap = {
       ],
     },
   },
+  // #6 — devils-advocate (hors dimensions Tier 1) : un flag « registre Pappers
+  // INDISPONIBLE » (limite outil) DOIT être reclassé hors des risques société +
+  // déclencher la notice « couverture légale à vérifier ». Le décoy « Équipe non
+  // vérifiée » (token d'indisponibilité MAIS pas de token registre) DOIT rester
+  // un risque critique (vrai sujet de diligence).
+  "devils-advocate": {
+    success: true,
+    data: {
+      redFlags: [
+        {
+          severity: "CRITICAL",
+          title: "Absence de Vérification Légale (K-bis)",
+          description: "Le registre officiel français (Pappers.fr) est indisponible pour ce deal, empêchant la vérification du K-bis et des dirigeants légaux.",
+          evidence: "Source externe non vérifiée: 'Pappers.fr: Registre officiel FR indisponible: K-bis, dirigeants et données légales non vérifiés.'",
+        },
+        {
+          severity: "CRITICAL",
+          title: "Équipe Dirigeante Non Vérifiée",
+          description: "Les profils de la fondatrice et du CTO sont 'unverified' selon la recherche externe.",
+        },
+      ],
+    },
+  },
+  // #6 — legal-regulatory (dimension Tier 1, donc carté) : porte AUSSI un flag
+  // « registre indisponible » (filtré des concerns de la carte) + un décoy avec
+  // token registre MAIS sans indisponibilité (« procédure collective au greffe »
+  // = vrai risque) qui DOIT rester.
+  "legal-regulatory": {
+    success: true,
+    data: {
+      redFlags: [
+        {
+          severity: "CRITICAL",
+          title: "Vérification au registre du commerce impossible",
+          description: "Le greffe / registre officiel n'a pas pu être interrogé : K-bis non vérifié.",
+        },
+        {
+          severity: "CRITICAL",
+          title: "Procédure collective active au greffe",
+          description: "Une procédure collective active est inscrite pour la société.",
+        },
+      ],
+    },
+  },
   "contradiction-detector": {
     success: true,
     data: {

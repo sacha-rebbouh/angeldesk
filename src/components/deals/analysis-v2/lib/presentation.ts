@@ -154,3 +154,46 @@ export function capitalizeFirstMeaningfulChar(text: string | null | undefined): 
   if (idx === -1) return text;
   return text.slice(0, idx) + text.charAt(idx).toUpperCase() + text.slice(idx + 1);
 }
+
+// ---------------------------------------------------------------------------
+// Couverture légale / registre officiel — reframe doctrine (#6, Phase 8a)
+// ---------------------------------------------------------------------------
+// Un red flag dont la CAUSE est « notre outil n'a pas pu interroger le registre
+// officiel » (Pappers/K-bis indisponible) N'EST PAS un risque société critique :
+// c'est une LIMITE DE COUVERTURE. On le reclasse en « couverture légale à
+// vérifier » plutôt que de le présenter comme un risque avéré.
+//
+// Détection par SIGNATURE EXPLICITE (résolution Codex), JAMAIS une heuristique
+// floue. Il faut À LA FOIS :
+//  (1) un token de CONNECTEUR/REGISTRE = l'OUTIL interrogé (Pappers, registre
+//      officiel/du commerce, greffe, Societe.com, Companies House…). PAS un simple
+//      DOCUMENT : « K-bis » est EXCLU des sources, car « K-bis indisponible / non
+//      fourni / non vérifié » désigne un document manquant côté fondateur = vrai
+//      item de diligence, pas une limite de l'outil.
+//  (2) un token explicite d'ÉCHEC OUTIL : le connecteur n'a pu être interrogé
+//      (indisponible / impossible de vérifier|interroger|consulter / pas pu …).
+// La conjonction « le CONNECTEUR/REGISTRE est indisponible » isole l'échec outil
+// sans jamais déclasser un vrai risque (litige, requalification, procédure
+// collective au greffe, doc manquant). Volontairement EXCLUS (resserrements
+// Codex) : « non vérifié(s) », « absence de vérification », « n'a pas pu » non
+// contraint — états ambigus (côté fondateur possible). En cas de doute → on ne
+// reclasse pas.
+const LEGAL_REGISTRY_CONNECTOR =
+  /(pappers|registre\s+(?:officiel|du\s+commerce|national|des\s+soci[ée]t[ée]s)|greffe|infogreffe|companies\s+house|soci[ée]t[ée]\.com)/i;
+const REGISTRY_UNAVAILABLE =
+  /(indisponible|non\s+disponible|impossible\s+(?:de\s+)?(?:v[ée]rifi|interrog|consult)|pas\s+pu\s+(?:[êe]tre\s+)?(?:v[ée]rifi|interrog|consult))/i;
+
+/**
+ * Vrai SI le texte porte la signature explicite « registre officiel indisponible »
+ * (token source registre ET token indisponibilité, les deux requis). Sert à
+ * reclasser un faux risque critique en « couverture légale à vérifier ».
+ */
+export function isLegalRegistryUnavailableSignal(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return LEGAL_REGISTRY_CONNECTOR.test(text) && REGISTRY_UNAVAILABLE.test(text);
+}
+
+/** Libellés honnêtes de la notice « couverture légale à vérifier » (#6). */
+export const LEGAL_COVERAGE_GAP_TITLE = "Couverture légale à vérifier";
+export const LEGAL_COVERAGE_GAP_DETAIL =
+  "Le registre officiel des sociétés n'a pas pu être interrogé automatiquement pour ce dossier : la vérification du K-bis et des dirigeants reste à effectuer. Ceci reflète une limite de couverture de l'outil, pas un risque avéré sur la société.";
