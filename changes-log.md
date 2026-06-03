@@ -1,6 +1,19 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — infra/coûts — Reaper watchdog : cadence cron 5 min → 15 min (compute-hours Neon)
+
+### Contexte
+Compute-hours Neon passées de ~3-4h/MOIS à ~17h/4 JOURS. Cause racine : le cron Inngest `staleAnalysisReaperFunction` (introduit le 31/05, commit `773181f`) tournait à `*/5 * * * *` et exécutait un `prisma.analysis.findMany` INCONDITIONNEL à chaque tick → réveillait l'endpoint Neon ~288×/jour 24/7, empêchant l'autosuspend. Corrélation temporelle exacte (cron 4 j avant le report).
+
+### Changements
+- `src/lib/inngest.ts` : cadence reaper `*/5` → `*/15` + commentaire de rationale (seuil staleness `STALE_ANALYSIS_REAP_MS` = 20 min, donc 15 min détecte toute analyse figée dans sa fenêtre de seuil ; latence de détection ≤ 15 min < 20 min). 288 → 96 réveils/jour.
+- `src/app/api/cron/reap-stale-analyses/route.ts` : commentaires « toutes les 5 min » → « 15 min » (cohérence).
+
+### Vérif
+`tsc --noEmit` : seul rouge préexistant = `exit-strategist.ts` (hors périmètre, fichier WIP non-tracké). Aucun test n'assert la chaîne du cron. Gate Codex : **APPROVE** (cadence 15 min correcte vs seuil 20 min ; flip atomique + refund-once inchangés ; `*/15` = meilleur trade-off vs `*/10`/`*/20`). Shippé directement sur `main` (cherry-pick de `5c5696c`, hors commit doctrine `a052eed`).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 8c : Pappers MCP (décision argent → utilisateur)
 
 ### Décision

@@ -406,7 +406,11 @@ export const dealAnalysisFunction = inngest.createFunction(
  */
 export const staleAnalysisReaperFunction = inngest.createFunction(
   { id: 'stale-analysis-reaper', name: 'Stale Analysis Reaper', retries: 1 },
-  { cron: '*/5 * * * *' },
+  // Cadence 15 min : le seuil de staleness est de 20 min (STALE_ANALYSIS_REAP_MS),
+  // donc un tick toutes les 15 min détecte toute analyse figée dans sa fenêtre de
+  // seuil. Tourner toutes les 5 min réveillait l'endpoint Neon ~288×/j (findMany
+  // inconditionnel) et empêchait l'autosuspend → compute-hours inutiles.
+  { cron: '*/15 * * * *' },
   async () => reapStaleAnalyses()
 );
 
