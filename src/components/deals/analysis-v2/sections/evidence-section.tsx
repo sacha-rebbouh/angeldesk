@@ -55,8 +55,8 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceRowProps[] }) 
       )}
 
       <p className="av-note">
-        Chaque source est annotée par l'agent qui l'a consultée. Les preuves sont triées dans l'ordre de production
-        (fact-extractor → deck-forensics → contradiction-detector → deck-coherence-checker) — pas par jugement.
+        Chaque affirmation est rattachée à sa source documentaire. Les preuves sont listées dans leur ordre de
+        production, pas par ordre de jugement.
       </p>
     </section>
   );

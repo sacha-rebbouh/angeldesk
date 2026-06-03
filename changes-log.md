@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 6 : preuves consolidées (#18 troncatures/noms d'agents, #19 contradictions)
+
+### Changements
+- `lib/evidence-collector.ts` : sources sanitizées (`sanitizeSourceLabel`), troncatures `compactString` retirées (claim/note complets), textes scrubés. Contradictions reformatées (#19) : source rattachée INLINE à chaque énoncé (« Doc : "…" ↔ Doc : "…" »), implication = note (« Lecture »), `topic`/`s1`/`s2` scrubés ; colonne Source = « Recoupement de sources » seulement si une source inline est présentable, sinon fallback honnête.
+- `sections/evidence-section.tsx` : footer sans noms d'agents.
+- Guard : assertion VM evidence rows (claim/source/note sans nom d'agent ; « Recoupement » ⇒ source inline réelle).
+
+### Vérif
+33 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 6 : APPROVE (après 1 REQUEST_CHANGES : scrub topic/énoncés + source conditionnelle).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 5 : cartes signaux (étaye/alerte, score masqué, légende)
 
 ### Contexte

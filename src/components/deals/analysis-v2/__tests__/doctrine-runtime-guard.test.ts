@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_TECHNICAL_NAMES, sanitizeSourceLabel } from "../lib/presentation";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
-import { buildDecisionSectionModel, buildMemoSectionModel, buildSignalsSectionModel, buildThesisSectionModel } from "../lib/selectors";
+import {
+  buildDecisionSectionModel,
+  buildEvidenceSectionModel,
+  buildMemoSectionModel,
+  buildSignalsSectionModel,
+  buildThesisSectionModel,
+} from "../lib/selectors";
 import { HOSTILE_CATEGORIES, HOSTILE_RESULTS, HOSTILE_SOURCE_STRINGS, HOSTILE_THESIS } from "./fixtures/hostile-results";
 
 /**
@@ -76,6 +82,23 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
       for (const s of strings) {
         expectNoAgentName(s);
         expect(s, `"${s}" expose un score /100`).not.toMatch(/\/\s*100/); // #16 : pas de score chiffré dans le texte
+      }
+    }
+  });
+
+  // Phase 6 : la table de preuves (claim/source/note) ne contient aucun nom d'agent.
+  it("buildEvidenceSectionModel : claim/source/note sans nom d'agent", () => {
+    const rows = buildEvidenceSectionModel(HOSTILE_RESULTS);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expectNoAgentName(row.claim);
+      expectNoAgentName(row.source);
+      if (row.sourceDetail) expectNoAgentName(row.sourceDetail);
+      if (row.note) expectNoAgentName(row.note);
+      // Pas de fausse provenance : "Recoupement de sources" seulement si une source
+      // inline réelle (« Doc : … ») est présente dans le claim.
+      if (row.source === "Recoupement de sources") {
+        expect(row.claim, `"${row.claim}" annonce un recoupement sans source inline`).toMatch(/ : «/);
       }
     }
   });

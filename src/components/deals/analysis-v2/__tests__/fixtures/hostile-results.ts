@@ -59,6 +59,15 @@ export const HOSTILE_RESULTS: ResultsMap = {
             },
             implication: "Crédibilité du fondateur remise en cause. Le positionnement et le 'moat' ne peuvent être évalués de manière fiable.",
           },
+          {
+            // Les DEUX locations sont des noms d'agents → aucune source inline présentable
+            // → la colonne Source NE doit PAS afficher "Recoupement de sources" (fausse provenance).
+            topic: "Métriques financières",
+            severity: "HIGH",
+            statement1: { text: "Marge brute annoncée à 40%.", location: "financial-auditor outputs" },
+            statement2: { text: "Marge brute recalculée à 28%.", location: "deck-forensics analysis" },
+            implication: "Écart de marge non expliqué.",
+          },
         ],
       },
     },
