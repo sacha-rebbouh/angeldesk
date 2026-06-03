@@ -1,6 +1,28 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — analysis-v2 — Doctrine P0 : texte prescriptif « décision » + artefact LLM (post-prod)
+
+### Contexte
+Sur une analyse Avekapeti rendue en prod, l'utilisateur a vu deux défauts : (#1) rank « Score de consistance insuffisant » avec « l'analyse n'est pas suffisamment fiable **pour prendre une decision** » / « baser une **decision d'investissement** » → **violation frontale de « Angel Desk ne décide jamais »** ; (#2) « La société Avekapeti**.** parie… » (faux point dans le `reformulated` LLM). Aggravation : la Phase 4 (fin des troncatures) affichait désormais le texte prescriptif en entier, et les guards doctrine ne couvraient pas la classe « décision ».
+
+### Changements
+- `lib/presentation.ts` : `scrubPrescriptiveDecisionLanguage(text)` — reformule les tournures où l'outil/l'analyse est présenté comme le LIEU de la décision (« fiable pour prendre une décision », « baser une décision d'investissement », « capacité à prendre une décision éclairée »). Précis ; ne touche PAS « à vous de décider » / « la décision revient à l'investisseur » ni la typographie FR. + `fixFalseSentencePeriod(text)` (#2, display-only, ciblé « société {Nom}. minuscule »).
+- `lib/selectors.ts` : `cleanRenderedText` = scrub agents + anti-prescriptif, appliqué aux textes RENDUS (ranks title/description/evidence, QM, mémo criticalRisks/nextSteps/topPriorities/forNegotiation, signaux oneLiner/supports/concerns) → **corrige rétroactivement les analyses persistées** (pas de re-run).
+- `sections/thesis-section.tsx` : `fixFalseSentencePeriod` sur le corps des cartes thèse (#2).
+- Source (futures analyses) : `tier3/contradiction-detector.ts` (red flag reformulé, plus de « pour prendre une décision ») + `prompts/contradiction-detector-prompt.ts` (template l.128).
+- Guard : fixture hostile + assertion VM « zéro tournure prescriptive décision dans ranks/mémo/signaux » + unit tests scrub (phrases exactes + négatifs doctrine) + fixFalseSentencePeriod.
+
+### Couverture (corrections Codex F1-F4)
+- F1/F2 : scrub appliqué à TOUTES les surfaces rendues (favorable/vigilance, mémo généré+reconstitué, thèse cards/loadBearing/alerts, evidence-collector — passe finale anti-prescriptif seule, pour préserver l'espace FR « : » du claim de contradiction).
+- F3 : scrub SEGMENT-AWARE — ne reformule jamais un segment où l'INVESTISSEUR est le sujet de la décision (« l'investisseur conserve la capacité à prendre une décision » intact).
+- F4 : `fixFalseSentencePeriod` borné à 1-3 tokens capitalisés accolés au point (ne fusionne pas « société X opère en France. elle… »).
+- Guard : walk-all sur le view-model complet (zéro tournure prescriptive sur toutes surfaces).
+
+### Vérif
+analysis-v2 53 tests ; suite unit complète 4338 passed / 2 skipped ; tsc clean (hors `exit-strategist.ts`). Gate Codex : APPROVE (après 1 REQUEST_CHANGES — couverture P0 incomplète + sujet investisseur + period helper).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 8c : Pappers MCP (décision argent → utilisateur)
 
 ### Décision

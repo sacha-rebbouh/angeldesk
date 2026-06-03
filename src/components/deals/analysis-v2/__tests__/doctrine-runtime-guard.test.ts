@@ -4,6 +4,7 @@ import { AGENT_TECHNICAL_NAMES, isLegalRegistryUnavailableSignal, sanitizeSource
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
 import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
 import {
+  buildAnalysisV2ViewModel,
   buildDecisionSectionModel,
   buildEvidenceSectionModel,
   buildMemoSectionModel,
@@ -157,6 +158,35 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
       }
     }
     expect(kept, "le vrai risque légal aurait dû rester en concern").toBeGreaterThan(0);
+  });
+
+  // Doctrine (l'outil ne DÉCIDE jamais) : AUCUNE chaîne rendue du view-model complet
+  // ne présente l'outil/l'analyse comme le LIEU DE LA DÉCISION. Le fixture ne contient
+  // QUE des tournures à sujet OUTIL/DONNÉES (la préservation du sujet INVESTISSEUR est
+  // couverte par le unit test) → walk-all = zéro fuite attendue sur toutes les surfaces.
+  it("VM complet : zéro tournure prescriptive « décision » sur TOUTES les surfaces rendues", () => {
+    const vm = buildAnalysisV2ViewModel({
+      deal: { id: "d", name: "avekapeti" },
+      analysis: { results: HOSTILE_RESULTS, mode: "full_analysis" },
+      thesis: HOSTILE_THESIS,
+    });
+    const strings: string[] = [];
+    const walk = (v: unknown) => {
+      if (typeof v === "string") strings.push(v);
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    walk(vm);
+    for (const s of strings) {
+      expect(s, `"${s}" présente l'outil comme décideur`).not.toMatch(/pour\s+(?:prendre|baser)\s+(?:une|la|cette)\s+d[ée]cision/i);
+      expect(s).not.toMatch(/capacit[ée]\s+[àa]\s+prendre\s+(?:une|la|cette)\s+d[ée]cision/i);
+      expect(s).not.toMatch(/fiable\s+pour\s+(?:la\s+)?d[ée]cision\b/i);
+      expect(s).not.toMatch(/baser\s+(?:une|la|cette)\s+d[ée]cision/i);
+    }
+    // les ranks piégés restent VISIBLES (reformulés, pas filtrés silencieusement)
+    expect(vm.decisionSection.ranks.some((r) => /consistance/i.test(r.title))).toBe(true);
+    // la preuve prescriptive (deck-coherence) est bien présente, reformulée
+    expect(vm.evidenceSection.length).toBeGreaterThan(0);
   });
 
   // Phase 9c (#11) : la réconciliation déterministe (synthèse LLM indisponible) est

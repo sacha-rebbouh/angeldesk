@@ -29,7 +29,17 @@ import type { AgentCardSignal } from "../atoms/agent-card";
 import type { EvidenceRowProps } from "../atoms/evidence-row";
 import type { RankRowItem, SignalWithSource, ThesisCard, LoadBearingClaim, ThesisAlert } from "./view-types";
 import { collectEvidence } from "./evidence-collector";
-import { isLegalRegistryUnavailableSignal, presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
+import { isLegalRegistryUnavailableSignal, presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText, scrubPrescriptiveDecisionLanguage } from "./presentation";
+
+/**
+ * Nettoyage des textes d'agents RENDUS : retire les noms d'agents techniques ET
+ * reformule les tournures prescriptives « décision » (doctrine — l'outil ne
+ * décide jamais). Défense en profondeur appliquée au rendu (rétroactif sur les
+ * analyses persistées).
+ */
+function cleanRenderedText(raw: string | null | undefined): string {
+  return scrubPrescriptiveDecisionLanguage(scrubAgentNamesFromText(raw));
+}
 import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
 
 /**
@@ -135,8 +145,8 @@ function extractRanksFromQuestionMaster(results: ResultsMap | null | undefined):
     const timeToResolve = stringAt(item, ["timeToResolve"]);
     ranks.push({
       id: stringAt(item, ["id"]) ?? `qm-${ranks.length}`,
-      title: scrubAgentNamesFromText(condition) || "Condition critique",
-      description: scrubAgentNamesFromText(description ?? riskIf ?? "") || undefined,
+      title: cleanRenderedText(condition) || "Condition critique",
+      description: cleanRenderedText(description ?? riskIf ?? "") || undefined,
       severity,
       severityLabel: severityLabel(severity),
       // source = nom d'agent → pas de pastille (cohérence avec les ranks Tier 1).
@@ -191,12 +201,13 @@ function extractRanksFromTier1RedFlags(results: ResultsMap | null | undefined, l
       }
       // #5 : titre fourni (scrubé des noms d'agents — un title runtime peut en
       // contenir), sinon dérivé de description/impact, sinon générique en dernier recours.
-      const cleanRawTitle = rawTitle ? scrubAgentNamesFromText(rawTitle) : "";
-      const title = cleanRawTitle || deriveRiskTitle(description ?? impact) || "Risque identifié";
-      // #7/#4 : description complète (pas de troncature muette), scrubée des noms d'agents.
-      const fullDescription = scrubAgentNamesFromText([description, impact].filter(Boolean).join(" · ")) || null;
+      const cleanRawTitle = rawTitle ? cleanRenderedText(rawTitle) : "";
+      const title = cleanRawTitle || cleanRenderedText(deriveRiskTitle(description ?? impact) ?? "") || "Risque identifié";
+      // #7/#4 : description complète (pas de troncature muette), scrubée des noms d'agents
+      // ET reformulée des tournures prescriptives « décision » (doctrine).
+      const fullDescription = cleanRenderedText([description, impact].filter(Boolean).join(" · ")) || null;
       // #7 : preuve complète scrubée → rendue en détail repliable (plus de chip tronqué à 80c).
-      const cleanEvidence = scrubAgentNamesFromText(evidence) || null;
+      const cleanEvidence = cleanRenderedText(evidence) || null;
       // #7 : la "source" était le nom d'agent → pas de pastille ; la provenance utile
       // est la `location` sanitizée en tag.
       const locationTag = location ? sanitizeSourceLabel(location) : null;
@@ -236,7 +247,8 @@ function extractPositiveSignals(results: ResultsMap | null | undefined, limit: n
       if (!isString(insight)) continue;
       if (NEGATIVE_KEYWORDS.test(insight)) continue;
       if (POSITIVE_KEYWORDS.test(insight)) {
-        out.push({ text: insight, source: name });
+        const text = cleanRenderedText(insight);
+        if (text) out.push({ text, source: name });
       }
       if (out.length >= limit) break;
     }
@@ -254,7 +266,8 @@ function extractVigilanceSignals(results: ResultsMap | null | undefined, limit: 
     for (const insight of insights) {
       if (!isString(insight)) continue;
       if (!NEGATIVE_KEYWORDS.test(insight)) continue;
-      out.push({ text: insight, source: name });
+      const text = cleanRenderedText(insight);
+      if (text) out.push({ text, source: name });
       if (out.length >= limit) break;
     }
     if (out.length >= limit) break;
@@ -376,7 +389,9 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
     { key: "whyNow", title: "Why now", body: stringAt(thesis, ["whyNow"]) },
     { key: "moat", title: "Moat", body: stringAt(thesis, ["moat"]) },
     { key: "pathToExit", title: "Path-to-exit", body: stringAt(thesis, ["pathToExit"]) },
-  ].filter((c) => isString(c.body)) as ThesisCard[];
+  ]
+    .filter((c) => isString(c.body))
+    .map((c) => ({ ...c, body: cleanRenderedText(c.body as string) || (c.body as string) })) as ThesisCard[];
 
   const loadBearingRaw = arrayAt(thesis, ["loadBearing"]);
   const loadBearing: LoadBearingClaim[] = loadBearingRaw
@@ -387,10 +402,10 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
       if (!statement) return null;
       return {
         id: stringAt(item, ["id"]) ?? statement.slice(0, 40),
-        statement,
+        statement: cleanRenderedText(statement) || statement,
         status: status === "verified" || status === "contradicted" ? status : "declared",
-        impact: stringAt(item, ["impact"]),
-        validationPath: stringAt(item, ["validationPath"]),
+        impact: cleanRenderedText(stringAt(item, ["impact"]) ?? "") || null,
+        validationPath: cleanRenderedText(stringAt(item, ["validationPath"]) ?? "") || null,
       } satisfies LoadBearingClaim;
     })
     .filter((x): x is LoadBearingClaim => x !== null);
@@ -404,8 +419,8 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
       const sev = severityToPill(stringAt(item, ["severity"]));
       return {
         id: stringAt(item, ["id"]) ?? title.slice(0, 40),
-        title,
-        detail: stringAt(item, ["detail"]),
+        title: cleanRenderedText(title) || title,
+        detail: cleanRenderedText(stringAt(item, ["detail"]) ?? "") || null,
         // Label user-facing (jamais l'enum brut "ASSUMPTION_FRAGILE" → #13).
         category: thesisAlertCategoryLabel(stringAt(item, ["category"])),
         severity: sev,
@@ -480,7 +495,7 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
       // orientation d'alerte. Tout est scrubé des noms d'agents.
       const supports = flattenInsights(snap.data, 5)
         .filter((i) => !NEGATIVE_KEYWORDS.test(i))
-        .map((i) => scrubAgentNamesFromText(i))
+        .map((i) => cleanRenderedText(i))
         .filter((i) => i.length > 0)
         .slice(0, 3);
       const concerns = arrayAt(snap.data, ["redFlags"])
@@ -493,13 +508,13 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
         .map((rf) => {
           if (!isRecord(rf)) return "";
           const t = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]) ?? stringAt(rf, ["impact"]) ?? "";
-          return scrubAgentNamesFromText(t);
+          return cleanRenderedText(t);
         })
         .filter((t) => t.length > 0)
         .slice(0, 3);
-      // oneLiner scrubé des noms d'agents (cohérent avec supports/concerns).
+      // oneLiner scrubé des noms d'agents + reformulé anti-prescriptif (cohérent avec supports/concerns).
       const rawOneLiner = summarizeOneLiner(snap.data) ?? deriveFallbackOneLiner(snap.data);
-      const oneLiner = rawOneLiner ? scrubAgentNamesFromText(rawOneLiner) || null : null;
+      const oneLiner = rawOneLiner ? cleanRenderedText(rawOneLiner) || null : null;
       const redFlags = arrayAt(snap.data, ["redFlags"]).length;
       const questions = arrayAt(snap.data, ["questions"]).length;
       const score = numberAt(snap.data, ["score", "value"]);
@@ -617,9 +632,9 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       // Tous les champs RENDUS sont scrubés (action/rationale/deadline) — ils
       // viennent de Question Master et peuvent contenir des noms d'agents (Codex).
       return {
-        action: scrubAgentNamesFromText(stringAt(p, ["action"]) ?? "") || "Action prioritaire",
-        rationale: scrubAgentNamesFromText(stringAt(p, ["rationale"]) ?? "") || null,
-        deadline: scrubAgentNamesFromText(stringAt(p, ["deadline"]) ?? "") || null,
+        action: cleanRenderedText(stringAt(p, ["action"]) ?? "") || "Action prioritaire",
+        rationale: cleanRenderedText(stringAt(p, ["rationale"]) ?? "") || null,
+        deadline: cleanRenderedText(stringAt(p, ["deadline"]) ?? "") || null,
         priority: stringAt(p, ["priority"]),
       } satisfies MemoPriority;
     })
@@ -629,15 +644,17 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
   if (isRecord(memo)) {
     return {
       kind: "generated",
-      executiveSummary: stringAt(memo, ["executiveSummary", "oneLiner"]),
+      executiveSummary: cleanRenderedText(stringAt(memo, ["executiveSummary", "oneLiner"]) ?? "") || null,
       keyPoints: arrayAt(memo, ["executiveSummary", "keyPoints"])
         .map((kp) => (isString(kp) ? kp : isRecord(kp) ? stringAt(kp, ["text"]) : null))
         .filter((kp): kp is string => kp !== null)
-        .map((kp) => scrubAgentNamesFromText(kp) || kp),
-      companyOverview: stringAt(memo, ["companyOverview"]),
-      investmentThesis: isString(valueAt(memo, ["investmentThesis"]))
-        ? (valueAt(memo, ["investmentThesis"]) as string)
-        : stringAt(memo, ["investmentThesis", "summary"]),
+        .map((kp) => cleanRenderedText(kp) || kp),
+      companyOverview: cleanRenderedText(stringAt(memo, ["companyOverview"]) ?? "") || null,
+      investmentThesis: cleanRenderedText(
+        (isString(valueAt(memo, ["investmentThesis"]))
+          ? (valueAt(memo, ["investmentThesis"]) as string)
+          : stringAt(memo, ["investmentThesis", "summary"])) ?? "",
+      ) || null,
       // criticalRisks[] = {severity, description, evidence, source} (PAS de title).
       // Titre dérivé de description, détail = evidence ; tout scrubé (le prompt mémo
       // enseignait « Source: <agent> »), source via presentableSource (null si agent).
@@ -654,9 +671,9 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
           if (!isRecord(r)) return null;
           const severity = severityToPill(stringAt(r, ["severity"]));
           const rawTitle = stringAt(r, ["description"]) ?? stringAt(r, ["title"]);
-          const title = (rawTitle ? scrubAgentNamesFromText(rawTitle) : "") || "Risque identifié";
+          const title = (rawTitle ? cleanRenderedText(rawTitle) : "") || "Risque identifié";
           const rawDetail = stringAt(r, ["evidence"]) ?? stringAt(r, ["detail"]);
-          const detail = rawDetail ? scrubAgentNamesFromText(rawDetail) || null : null;
+          const detail = rawDetail ? cleanRenderedText(rawDetail) || null : null;
           return {
             title,
             detail,
@@ -670,7 +687,7 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
             r !== null,
         ),
       nextSteps: arrayAt(memo, ["nextSteps"])
-        .map((s) => (isString(s) ? scrubAgentNamesFromText(s) : null))
+        .map((s) => (isString(s) ? cleanRenderedText(s) : null))
         .filter((s): s is string => s !== null && s.length > 0),
       topPriorities,
       totalCriticalRisks,
@@ -685,7 +702,7 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
     for (const entry of Object.values(results)) {
       if (!entry?.success) continue;
       const items = arrayAt(entry.data, ["narrative", "forNegotiation"]);
-      for (const i of items) if (isString(i)) forNegotiation.push(scrubAgentNamesFromText(i) || i);
+      for (const i of items) if (isString(i)) forNegotiation.push(cleanRenderedText(i) || i);
     }
   }
 
@@ -703,7 +720,7 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
         if (!isRecord(it)) return null;
         const docs = arrayAt(it, ["documentsNeeded"]).filter(isString) as string[];
         return {
-          item: stringAt(it, ["item"]) ?? "Item de diligence",
+          item: cleanRenderedText(stringAt(it, ["item"]) ?? "") || "Item de diligence",
           documentsNeeded: docs,
           estimatedEffort: stringAt(it, ["estimatedEffort"]),
         };
@@ -713,9 +730,9 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
       .map((n) => {
         if (!isRecord(n)) return null;
         return {
-          point: stringAt(n, ["point"]) ?? "Point de négociation",
+          point: cleanRenderedText(stringAt(n, ["point"]) ?? "") || "Point de négociation",
           category: stringAt(n, ["category"]),
-          argument: stringAt(n, ["leverage", "argument"]) ?? stringAt(n, ["argument"]),
+          argument: cleanRenderedText(stringAt(n, ["leverage", "argument"]) ?? stringAt(n, ["argument"]) ?? "") || null,
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null),

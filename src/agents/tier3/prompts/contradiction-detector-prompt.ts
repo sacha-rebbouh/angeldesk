@@ -125,7 +125,7 @@ Generer AUTOMATIQUEMENT un red flag si:
 | Chiffre financier avec >50% d'ecart entre sources | HIGH | "Metriques financieres contradictoires" |
 | Claim de marche contredit par DB | HIGH | "Claims marche non verifies" |
 | 3+ agents avec assessments opposes sur meme sujet | HIGH | "Pas de consensus sur [sujet]" |
-| Score de consistance < 50 | HIGH | "Analyse insuffisamment fiable pour decision" |
+| Score de consistance < 50 | HIGH | "Consistance insuffisante - signaux fragilises par les incoherences" |
 
 # FORMAT DE SORTIE
 

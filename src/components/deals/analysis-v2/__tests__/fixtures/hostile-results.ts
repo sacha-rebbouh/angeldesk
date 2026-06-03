@@ -121,9 +121,34 @@ export const HOSTILE_RESULTS: ResultsMap = {
       ],
     },
   },
+  // deck-coherence-checker : alimente la table de preuves (evidence-collector) avec
+  // un texte PRESCRIPTIF « décision » (sujet = le deck/les données) → reformulé au rendu.
+  "deck-coherence-checker": {
+    success: true,
+    data: {
+      coherenceScore: 29,
+      issues: [
+        {
+          title: "Cohérence documentaire faible",
+          description: "Le deck est trop incohérent pour baser une décision d'investissement.",
+          severity: "critical",
+        },
+      ],
+    },
+  },
   "contradiction-detector": {
     success: true,
     data: {
+      // Red flag HARDCODÉ historique au texte PRESCRIPTIF « décision » (doctrine) →
+      // doit être reformulé au rendu (jamais « pour prendre une décision » en surface).
+      redFlags: [
+        {
+          severity: "HIGH",
+          title: "Score de consistance insuffisant",
+          description: "Score de consistance de 29/100 - l'analyse n'est pas suffisamment fiable pour prendre une decision.",
+          impact: "Les donnees du deal sont trop incoherentes pour baser une decision d'investissement.",
+        },
+      ],
       findings: {
         contradictions: [
           {
@@ -163,7 +188,8 @@ export const HOSTILE_THESIS: Record<string, unknown> = {
     { severity: "HIGH", category: "unit_economics", title: "Ratio LTV/CAC à valider", detail: "..." },
   ],
   loadBearing: [
-    { id: "lb1", statement: "Le ratio LTV/CAC de 16x reste durable à scale.", status: "declared", impact: "...", validationPath: "Demander les cohortes." },
+    // impact au texte PRESCRIPTIF (sujet = l'analyse/les données, PAS l'investisseur) → doit être reformulé au rendu
+    { id: "lb1", statement: "Le ratio LTV/CAC de 16x reste durable à scale.", status: "declared", impact: "Sans cohortes réelles, l'analyse n'est pas fiable pour prendre une décision.", validationPath: "Demander les cohortes." },
   ],
 };
 

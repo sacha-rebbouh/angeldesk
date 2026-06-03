@@ -143,6 +143,54 @@ export function scrubAgentNamesFromText(text: string | null | undefined): string
   return s;
 }
 
+// ---------------------------------------------------------------------------
+// Filet anti-prescriptif « décision » (doctrine — Angel Desk ne DÉCIDE JAMAIS)
+// ---------------------------------------------------------------------------
+// Un texte d'agent (hardcodé OU généré par LLM) ne doit JAMAIS présenter l'outil
+// ou l'analyse comme le LIEU DE LA DÉCISION (« pas fiable pour prendre une
+// décision », « baser une décision d'investissement », « capacité à prendre une
+// décision éclairée »). On REFORMULE ces tournures en constats analytiques au
+// rendu — défense en profondeur qui corrige AUSSI les analyses déjà persistées
+// (rétroactif). Ne touche PAS « à vous de décider » / « la décision revient à
+// l'investisseur » (qui RÉAFFIRMENT la doctrine), ni « décision d'investissement »
+// employé pour désigner la décision de l'INVESTISSEUR.
+const PRESCRIPTIVE_DECISION_REWRITES: Array<[RegExp, string]> = [
+  // « (la) capacité à prendre une décision (éclairée) (sur ce deal) » → fiabilité des signaux
+  [/(?:la\s+)?capacit[ée]\s+[àa]\s+prendre\s+(?:une|la|cette)\s+d[ée]cision(?:\s+[ée]clair[ée]e)?(?:\s+sur\s+ce\s+deal)?/gi, "la fiabilité des signaux"],
+  // « ... pour prendre/baser une décision (d'investissement|éclairée) (sur ce deal) » → finalité décisionnelle retirée
+  [/\s+pour\s+(?:prendre|baser)\s+(?:une|la|cette)\s+d[ée]cision(?:\s+d['’]investissement|\s+[ée]clair[ée]e)?(?:\s+sur\s+ce\s+deal)?/gi, ""],
+  // « prendre une décision (d'investissement|éclairée) (sur ce deal) » résiduel → exploiter les signaux
+  [/prendre\s+(?:une|la|cette)\s+d[ée]cision(?:\s+d['’]investissement|\s+[ée]clair[ée]e)?(?:\s+sur\s+ce\s+deal)?/gi, "exploiter les signaux"],
+  // « fiable pour (la) décision » → fiable
+  [/fiable\s+pour\s+(?:la\s+)?d[ée]cision\b/gi, "fiable"],
+];
+
+// La décision appartenant à l'INVESTISSEUR EST la doctrine (« à vous de décider »).
+// Un segment qui attribue la décision à l'investisseur ne doit JAMAIS être reformulé
+// (sinon « l'investisseur conserve la capacité à prendre une décision » serait mutilé).
+const INVESTOR_DECISION_SUBJECT = /investisseur|business\s+angel|\bBA\b|d[ée]cideur|[àa]\s+vous|vous\s+(?:de\s+|d['’])?d[ée]cid/i;
+
+/**
+ * Reformule les tournures prescriptives « décision » d'un texte d'agent rendu
+ * (doctrine — l'OUTIL/l'ANALYSE ne décide jamais). Traité par SEGMENT : un segment
+ * qui attribue la décision à l'INVESTISSEUR est conforme → laissé intact (Codex P1).
+ * On ne reformule que là où le sujet est l'outil / l'analyse / les données.
+ */
+export function scrubPrescriptiveDecisionLanguage(text: string | null | undefined): string {
+  if (!text) return text ?? "";
+  return text
+    .split(/(?<=[.;])\s+/)
+    .map((segment) => {
+      if (INVESTOR_DECISION_SUBJECT.test(segment)) return segment;
+      let s = segment;
+      for (const [re, repl] of PRESCRIPTIVE_DECISION_REWRITES) s = s.replace(re, repl);
+      return s;
+    })
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 /**
  * Majuscule du PREMIER caractère significatif uniquement (display-only).
  * Ne touche PAS aux autres phrases (évite de casser "vs.", acronymes, URLs,
@@ -153,6 +201,24 @@ export function capitalizeFirstMeaningfulChar(text: string | null | undefined): 
   const idx = text.search(/\p{L}/u);
   if (idx === -1) return text;
   return text.slice(0, idx) + text.charAt(idx).toUpperCase() + text.slice(idx + 1);
+}
+
+/**
+ * Corrige l'artefact LLM « La société {Nom}. {minuscule}… » (faux point de phrase
+ * après le nom de société, suivi d'une continuation en minuscule). Display-only,
+ * TRÈS ciblé : ne fire que sur « société {Capitale}… . {minuscule} » — n'altère
+ * jamais un vrai point de fin de phrase (continuation en majuscule = non touchée).
+ * Le fix de fond reste au thesis-extractor (génération) ; ceci corrige l'affichage.
+ */
+export function fixFalseSentencePeriod(text: string | null | undefined): string {
+  if (!text) return text ?? "";
+  // Le nom est borné à 1-3 tokens capitalisés ACCOLÉS au point (Codex P1) → ne
+  // fusionne jamais une vraie phrase (« société X opère en France. elle… » : après
+  // « X » vient un mot minuscule, donc pas de match).
+  return text.replace(
+    /(\bsoci[ée]t[ée]\s+[A-ZÀ-Ý][\p{L}\d&'’-]*(?:\s+[A-ZÀ-Ý0-9][\p{L}\d&'’-]*){0,2})\.\s+(?=\p{Ll})/u,
+    "$1 ",
+  );
 }
 
 // ---------------------------------------------------------------------------

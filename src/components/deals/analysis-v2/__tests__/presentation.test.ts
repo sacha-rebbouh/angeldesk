@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_TECHNICAL_NAMES,
   capitalizeFirstMeaningfulChar,
+  fixFalseSentencePeriod,
   humanizeInlineAgentNames,
   isLegalRegistryUnavailableSignal,
   presentableSource,
   sanitizeSourceLabel,
   scrubAgentNamesFromText,
+  scrubPrescriptiveDecisionLanguage,
 } from "../lib/presentation";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
 
@@ -156,6 +158,81 @@ describe("isLegalRegistryUnavailableSignal (#6 — signature explicite, jamais f
   it("entrée vide → false", () => {
     expect(isLegalRegistryUnavailableSignal(null)).toBe(false);
     expect(isLegalRegistryUnavailableSignal("")).toBe(false);
+  });
+});
+
+describe("fixFalseSentencePeriod (artefact LLM « société {Nom}. minuscule »)", () => {
+  it("retire le faux point après le nom de société suivi d'une minuscule", () => {
+    expect(fixFalseSentencePeriod("La société Avekapeti. parie qu'une marketplace peut capter")).toBe(
+      "La société Avekapeti parie qu'une marketplace peut capter",
+    );
+    expect(fixFalseSentencePeriod("La société Avekapeti SAS. propose une offre")).toBe(
+      "La société Avekapeti SAS propose une offre",
+    );
+  });
+
+  it("NE touche PAS un vrai point de fin de phrase (continuation en majuscule)", () => {
+    expect(fixFalseSentencePeriod("La société Avekapeti. Parie sur le marché.")).toBe("La société Avekapeti. Parie sur le marché.");
+    expect(fixFalseSentencePeriod("Le marché évolue. La société grandit.")).toBe("Le marché évolue. La société grandit.");
+  });
+
+  it("NE fusionne PAS une vraie phrase après une clause longue (Codex P1)", () => {
+    // le point suit une clause (« France »), pas le nom de société accolé → intact
+    expect(fixFalseSentencePeriod("La société Avekapeti opère en France. elle vise le corporate.")).toBe(
+      "La société Avekapeti opère en France. elle vise le corporate.",
+    );
+  });
+
+  it("entrée vide", () => {
+    expect(fixFalseSentencePeriod(null)).toBe("");
+    expect(fixFalseSentencePeriod("")).toBe("");
+  });
+});
+
+describe("scrubPrescriptiveDecisionLanguage (doctrine — l'outil ne décide jamais)", () => {
+  const noDecisionLocus = (s: string) => {
+    expect(s).not.toMatch(/pour\s+(?:prendre|baser)\s+(?:une|la|cette)\s+d[ée]cision/i);
+    expect(s).not.toMatch(/capacit[ée]\s+[àa]\s+prendre\s+(?:une|la|cette)\s+d[ée]cision/i);
+    expect(s).not.toMatch(/fiable\s+pour\s+(?:la\s+)?d[ée]cision\b/i);
+  };
+
+  it("reformule les tournures « décision » prescriptives (texte hardcodé contradiction-detector)", () => {
+    noDecisionLocus(
+      scrubPrescriptiveDecisionLanguage("Score de consistance de 29/100 - l'analyse n'est pas suffisamment fiable pour prendre une decision."),
+    );
+    noDecisionLocus(
+      scrubPrescriptiveDecisionLanguage("Les donnees du deal sont trop incoherentes pour baser une decision d'investissement."),
+    );
+    const r = scrubPrescriptiveDecisionLanguage("Ces incohérences limitent la capacité à prendre une décision éclairée sur ce deal.");
+    noDecisionLocus(r);
+    expect(r).toContain("fiabilité des signaux");
+    noDecisionLocus(scrubPrescriptiveDecisionLanguage("Analyse insuffisamment fiable pour decision"));
+  });
+
+  it("conserve « fiable » / le constat analytique (ne casse pas la phrase)", () => {
+    expect(scrubPrescriptiveDecisionLanguage("l'analyse n'est pas suffisamment fiable pour prendre une decision.")).toContain("fiable");
+  });
+
+  it("NE touche PAS les phrases qui réaffirment la doctrine", () => {
+    // « à vous de décider » / « la décision revient à l'investisseur » sont conformes → inchangés
+    expect(scrubPrescriptiveDecisionLanguage("La décision finale revient à l'investisseur.")).toBe("La décision finale revient à l'investisseur.");
+    expect(scrubPrescriptiveDecisionLanguage("Les signaux d'alerte dominent ; à vous de décider.")).toBe("Les signaux d'alerte dominent ; à vous de décider.");
+  });
+
+  it("NE mutile PAS un segment où l'INVESTISSEUR est le sujet de la décision (Codex P1)", () => {
+    // « l'investisseur ... prendre une décision » = la doctrine elle-même → intact
+    const r = scrubPrescriptiveDecisionLanguage("L'investisseur conserve la capacité à prendre une décision éclairée.");
+    expect(r).toContain("capacité à prendre une décision");
+    expect(r).toContain("investisseur");
+    // segment outil dans la même chaîne reformulé, segment investisseur préservé
+    const mixed = scrubPrescriptiveDecisionLanguage("L'analyse n'est pas fiable pour prendre une decision. L'investisseur garde la capacité à prendre une décision.");
+    expect(mixed).toMatch(/L'analyse n'est pas fiable\./);
+    expect(mixed).toContain("L'investisseur garde la capacité à prendre une décision");
+  });
+
+  it("entrée vide", () => {
+    expect(scrubPrescriptiveDecisionLanguage(null)).toBe("");
+    expect(scrubPrescriptiveDecisionLanguage("")).toBe("");
   });
 });
 

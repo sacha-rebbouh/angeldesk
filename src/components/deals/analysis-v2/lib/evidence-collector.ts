@@ -11,7 +11,7 @@ import {
   stringAt,
   valueAt,
 } from "./extractors";
-import { presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText } from "./presentation";
+import { presentableSource, sanitizeSourceLabel, scrubAgentNamesFromText, scrubPrescriptiveDecisionLanguage } from "./presentation";
 
 import type { EvidenceRowProps, EvidenceStatus } from "../atoms/evidence-row";
 
@@ -202,10 +202,18 @@ function collectFromContradictions(results: ResultsMap): EvidenceRowProps[] {
 
 export function collectEvidence(results: ResultsMap | null | undefined): EvidenceRowProps[] {
   if (!results) return [];
+  // Passe finale : claim/note rendus → anti-prescriptif « décision » (doctrine, Codex P0).
+  // UNIQUEMENT le scrub prescriptif (les noms d'agents sont déjà traités au niveau des
+  // champs ; ré-appliquer scrubAgentNamesFromText écraserait l'espace FR avant « : » du
+  // claim de contradiction « Doc : « énoncé » »). Idempotent.
   return [
     ...collectFromFactExtractor(results),
     ...collectFromDeckForensics(results),
     ...collectFromContradictions(results),
     ...collectFromDeckCoherence(results),
-  ];
+  ].map((row) => ({
+    ...row,
+    claim: scrubPrescriptiveDecisionLanguage(row.claim) || row.claim,
+    note: row.note ? scrubPrescriptiveDecisionLanguage(row.note) || null : null,
+  }));
 }

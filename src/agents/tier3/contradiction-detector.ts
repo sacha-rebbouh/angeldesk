@@ -1140,12 +1140,12 @@ Produis un JSON avec cette structure:
         category: "analysis_quality",
         severity: "HIGH",
         title: "Score de consistance insuffisant",
-        description: `Score de consistance de ${consistencyScore}/100 - l'analyse n'est pas suffisamment fiable pour prendre une decision.`,
+        description: `Score de consistance de ${consistencyScore}/100 - les incoherences relevees fragilisent la fiabilite des signaux analyses.`,
         location: "Analyse globale",
         evidence: `Score: ${consistencyScore}. Contradictions: ${contradictions.length}`,
-        impact: "Les donnees du deal sont trop incoherentes pour baser une decision d'investissement.",
+        impact: "Les donnees du deal sont trop incoherentes pour etre exploitees telles quelles : une verification s'impose avant de s'appuyer dessus.",
         question: "De nombreuses incoherences ont ete detectees. Pouvez-vous fournir des donnees plus coherentes?",
-        redFlagIfBadAnswer: "Ces incohérences limitent la capacité à prendre une décision éclairée sur ce deal.",
+        redFlagIfBadAnswer: "Ces incoherences limitent la fiabilite des signaux tant qu'elles ne sont pas clarifiees.",
       });
     }
   }

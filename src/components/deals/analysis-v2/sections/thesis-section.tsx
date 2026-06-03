@@ -2,7 +2,7 @@ import { CheckCircle2, CircleDashed, XCircle } from "lucide-react";
 
 import { PartialBanner } from "../atoms/partial-banner";
 import { StatusPill } from "../atoms/status-pill";
-import { capitalizeFirstMeaningfulChar } from "../lib/presentation";
+import { capitalizeFirstMeaningfulChar, fixFalseSentencePeriod } from "../lib/presentation";
 import type { ThesisSectionModel } from "../lib/selectors";
 
 // « declared » = annoncé par le fondateur, NON vérifié → c'est une zone
@@ -66,7 +66,7 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
               style={{ border: "1px solid var(--av-line)", boxShadow: "var(--av-shadow-soft)" }}
             >
               <span className="av-eyebrow">{card.title}</span>
-              <p className="text-[14px] leading-relaxed text-[var(--av-ink)]">{capitalizeFirstMeaningfulChar(formatLargeNumbersInText(card.body))}</p>
+              <p className="text-[14px] leading-relaxed text-[var(--av-ink)]">{capitalizeFirstMeaningfulChar(fixFalseSentencePeriod(formatLargeNumbersInText(card.body)))}</p>
             </article>
           ))}
         </div>
