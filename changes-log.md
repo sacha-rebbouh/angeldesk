@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 9a : réconciliateur de thèse DURABLE (#1/#11)
+
+### Contexte
+Le réconciliateur de thèse (cœur produit) timeoutait → `success:false` → l'UI montrait « réconciliation non effectuée ». Faits vérifiés en lisant le code : `base-agent.run()` CATCH en interne (jamais de throw) → la boucle retry orchestrateur ne se redéclenche pas ; `llmCompleteJSON` cap chaque modèle à 50s (chaîne 3×50≈150s < 180s agent timeout) ; `llmCompleteJSONValidated` renvoie le `terminalFallbackData` (resolution `terminal_fallback`, success:true) S'IL valide le schéma, sinon throw. Le `terminalFallbackData` de `getThesisCallOptions` était un no-op « keep initial verdict ».
+
+### Changements (`tier3/thesis-reconciler.ts`)
+- `buildDeterministicLLMReconciliation(thesis, guardrails): LLMReconcilerOutput` (PAS `ThesisReconcilerOutput`, Codex #1) : verdict = floor déterministe ; `reconciliationNotes` = challenges (TRI STABLE → idempotence replay 9b) ; `newRedFlags` PRUDENTS (Codex #2) — `THESIS_VS_REALITY` émis SEULEMENT si un champ de thèse est **confidemment matché** (`field` non-null) ET le claim porteur existe ; sinon `reconciliationNote`. Confiance basse.
+- `inferThesisField()` → `… | null` (Codex 9a) : RETIRÉ le défaut `loadBearing` qui fabriquait une association vers `loadBearing[0]` pour toute raison non classable. `DeterministicChallenge.field` nullable (propagé : clé dédup, prompt, tri).
+- `execute()` : passe le déterministe comme `terminalFallbackData` APRÈS le spread `getThesisCallOptions` (override le no-op) ; capture `resolution` → si `terminal_fallback`, note honnête « Réconciliation déterministe — synthèse LLM indisponible ».
+- `criticalSignals` dédup (Codex #2) : retiré `blockers.length +` (un blocker pousse déjà un challenge CRITICAL → double-compte). 1 blocker seul → `vigilance` (était `alert_dominant`). `ThesisReconcilerSchema` exporté pour test.
+
+### Vérif
+10 tests reconciler verts (schéma-valide, verdict=floor, newRedFlags prudents, field-null→note jamais fabriqué, déterministe, blocker-seul→vigilance). Suite agents+thesis+orchestrator : 701 passed. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9a : APPROVE (après 1 REQUEST_CHANGES : défaut loadBearing fabriqué → field null).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 8a/8b : Pappers / couverture légale (#6)
 
 ### Contexte
