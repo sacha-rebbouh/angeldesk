@@ -1,6 +1,12 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 8c : Pappers MCP (décision argent → utilisateur)
+
+### Décision
+MCP officiel Pappers vérifié réel (`mcp.pappers.fr/{clé}`, abonnement payant à crédits, essai 2 semaines). Décision argent posée à l'utilisateur (AskUserQuestion) → **« Rester au plancher »**. 8a/8b reste la solution livrée pour #6 ; ni clé REST ni MCP provisionnés maintenant. MCP scopé et différé (revisité quand budget tranché). Aucun changement de code (la notice « couverture légale à vérifier » couvre l'UX en attendant).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 9c : UI honnête réconciliation (#11)
 
 ### Contexte
