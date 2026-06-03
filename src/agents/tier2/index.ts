@@ -66,7 +66,8 @@ import { blockchainExpert } from "./blockchain-expert";
 import { generalExpert } from "./general-expert";
 import type { SectorExpertType, SectorExpertResult, SectorExpertData } from "./types";
 import type { EnrichedAgentContext } from "../types";
-import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
+import { setAgentContext } from "@/services/openrouter/router";
+import { completeSectorJSON } from "./complete-sector-json";
 import { SectorExpertOutputSchema, getDefaultSectorData } from "./base-sector-expert";
 
 // Type for any sector expert
@@ -145,21 +146,22 @@ Do not present unsourced or inferred claims as if they were sourced.
 
         setAgentContext(expertName);
 
-        const response = await complete(user, {
+        // completeSectorJSON : force response_format json_object + retry adaptatif + repair JSON
+        // tronqué + fallback modèle, puis Zod (fini le crash sur réponse en prose — post-mortem
+        // Avekapeti). Sur Zod-fail : raw conservé, defaults appliqués en aval.
+        const sectorResult = await completeSectorJSON(user, {
           systemPrompt: system + citationDemand + selfAudit + structuredUncertainty,
           complexity: "complex",
           temperature: 0.3,
-        });
+        }, SectorExpertOutputSchema);
 
-        // Parse and validate response
-        const parsed = SectorExpertOutputSchema.safeParse(JSON.parse(extractFirstJSON(response.content)));
-
-        if (!parsed.success) {
-          console.warn(`[${expertName}] Output validation failed:`, parsed.error.issues);
+        if (!sectorResult.valid) {
+          console.warn(`[${expertName}] Output validation failed (raw conservé, defaults en aval)`);
         }
 
-        // Transform SectorExpertOutput to SectorExpertData
-        const output = parsed.success ? parsed.data : JSON.parse(extractFirstJSON(response.content));
+        // Transform SectorExpertOutput to SectorExpertData (output large : annotations .map inline)
+        const output: any = sectorResult.data;
+        const llmCost = sectorResult.cost;
         const sectorData: SectorExpertData = {
           sectorName: expertName.replace("-expert", ""),
           sectorMaturity: output.sectorFit?.sectorMaturity ?? "growing",
@@ -212,7 +214,7 @@ Do not present unsourced or inferred claims as if they were sourced.
           agentName: expertName,
           success: true,
           executionTimeMs: Date.now() - startTime,
-          cost: response.cost ?? 0,
+          cost: llmCost,
           data: sectorData,
         };
 

@@ -26,7 +26,7 @@ import { z } from "zod";
 import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertResult, SectorExpertData, SectorExpertType, ExtendedSectorData } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
+import { completeJSON, setAgentContext } from "@/services/openrouter/router";
 
 // ============================================================================
 // SCHEMA DE SORTIE
@@ -841,17 +841,19 @@ export const blockchainExpert = {
       const citationDemand = "\n\n## Anti-Hallucination Directive — Citation Demand\nFor every factual claim in your response:\n1. Cite a specific, verifiable source (name, publication, date)\n2. If you cannot cite a specific source, mark the claim as [UNVERIFIED] and explain why you believe it to be true\n3. If you are relying on general training data rather than a specific source, say so explicitly\nDo not present unverified information as established fact.\n";
       const structuredUncertainty = "\n\n## Anti-Hallucination Directive — Evidence Solidity Classification\nStructure your response in three clearly labelled sections based on EVIDENCE SOLIDITY (not auto-evaluated confidence):\n**SOURCED:** Claims directly backed by a citable source (document, dataset, verified fact)\n**INFERRED:** Claims derived by reasoning from sourced evidence — mark the reasoning step\n**UNSOURCED:** Claims drawn from general knowledge or pattern-matching without specific source backing\nEvery claim must be placed in one of these three categories.\nDo not present unsourced or inferred claims as if they were sourced.\n";
 
-      const response = await complete(userPrompt, {
-        systemPrompt: buildBlockchainSystemPrompt(stage) + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
-        complexity: "complex",
-        temperature: 0.3,
-      });
-
-      // Parse and validate response
+      // completeJSON : force response_format json_object + retry adaptatif + repair JSON tronqué +
+      // fallback modèle (fini le crash sur réponse en prose — post-mortem Avekapeti). safeParse
+      // manuel conservé ici car parseValidationIssues alimente les limitations en aval.
       let parsedOutput: BlockchainExpertOutput;
       let parseValidationIssues: string[] = [];
+      let llmCost = 0;
       try {
-        const rawJson = JSON.parse(extractFirstJSON(response.content));
+        const { data: rawJson, cost } = await completeJSON<unknown>(userPrompt, {
+          systemPrompt: buildBlockchainSystemPrompt(stage) + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
+          complexity: "complex",
+          temperature: 0.3,
+        });
+        llmCost = cost;
         const parseResult = BlockchainExpertOutputSchema.safeParse(rawJson);
         if (parseResult.success) {
           parsedOutput = parseResult.data;
@@ -868,7 +870,7 @@ export const blockchainExpert = {
           agentName: "blockchain-expert",
           success: false,
           executionTimeMs: Date.now() - startTime,
-          cost: response.cost ?? 0,
+          cost: 0,
           error: `Failed to parse LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
           data: getDefaultBlockchainData(),
         };
@@ -1027,7 +1029,7 @@ export const blockchainExpert = {
         agentName: "blockchain-expert",
         success: true,
         executionTimeMs: Date.now() - startTime,
-        cost: response.cost ?? 0,
+        cost: llmCost,
         data: sectorData,
         _extended: extendedData,
       };

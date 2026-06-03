@@ -42,7 +42,7 @@ import {
 } from "./output-mapper";
 import { CLIMATE_STANDARDS } from "./sector-standards";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
+import { completeJSON, setAgentContext } from "@/services/openrouter/router";
 
 // =============================================================================
 // CLIMATE-SPECIFIC BENCHMARK DATA (Extended)
@@ -1141,14 +1141,14 @@ export const climateExpert = {
       const structuredUncertainty = "\n\n## Anti-Hallucination Directive — Evidence Solidity Classification\nStructure your response in three clearly labelled sections based on EVIDENCE SOLIDITY (not auto-evaluated confidence):\n**SOURCED:** Claims directly backed by a citable source (document, dataset, verified fact)\n**INFERRED:** Claims derived by reasoning from sourced evidence — mark the reasoning step\n**UNSOURCED:** Claims drawn from general knowledge or pattern-matching without specific source backing\nEvery claim must be placed in one of these three categories.\nDo not present unsourced or inferred claims as if they were sourced.\n";
       setAgentContext("climate-expert");
 
-      const response = await complete(user, {
+      // completeJSON : force response_format json_object + retry adaptatif + repair JSON tronqué +
+      // fallback modèle (fini le crash sur réponse en prose — post-mortem Avekapeti). Cast brut
+      // conservé (pas de safeParse) : comportement identique, juste robuste.
+      const { data: parsedOutput, cost: llmCost } = await completeJSON<SectorExpertOutput>(user, {
         systemPrompt: system + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
         complexity: "complex",
         temperature: 0.3,
       });
-
-      // Parse JSON from response
-      const parsedOutput = JSON.parse(extractFirstJSON(response.content)) as SectorExpertOutput;
 
       // -- Data completeness assessment & score capping --
       const completenessData = parsedOutput.dataCompleteness ?? {
@@ -1241,7 +1241,7 @@ export const climateExpert = {
         agentName: "climate-expert",
         success: true,
         executionTimeMs: Date.now() - startTime,
-        cost: response.cost ?? 0,
+        cost: llmCost,
         data: sectorData,
         // Extended data for UI wow effect
         _extended: {

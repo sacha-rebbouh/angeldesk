@@ -17,7 +17,8 @@
 import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertType, SectorExpertResult, SectorExpertData, ExtendedSectorData } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
+import { setAgentContext } from "@/services/openrouter/router";
+import { completeSectorJSON } from "./complete-sector-json";
 import { SectorExpertOutputSchema, getDefaultSectorData } from "./base-sector-expert";
 
 // ============================================================================
@@ -547,20 +548,23 @@ export const creatorExpert = {
 
       setAgentContext("creator-expert");
 
-      const response = await complete(user, {
+      // completeSectorJSON : force response_format json_object + retry adaptatif + repair JSON
+      // tronqué + fallback modèle, puis Zod (fini le crash sur réponse en prose — post-mortem
+      // Avekapeti). Sur Zod-fail : raw conservé, defaults appliqués en aval.
+      const sectorResult = await completeSectorJSON(user, {
         systemPrompt: system + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
         complexity: "complex",
         temperature: 0.3,
-      });
+      }, SectorExpertOutputSchema);
 
-      // Parse and validate response
-      const parsed = SectorExpertOutputSchema.safeParse(JSON.parse(extractFirstJSON(response.content)));
-
-      if (!parsed.success) {
-        console.warn("[creator-expert] Output validation warnings:", parsed.error.issues);
+      if (!sectorResult.valid) {
+        console.warn("[creator-expert] Output validation warnings (raw conservé, defaults en aval)");
       }
 
-      const output = parsed.success ? parsed.data : JSON.parse(extractFirstJSON(response.content));
+      // output large (any) : creator lit des champs hors schema (subSector,
+      // platformDependencyAnalysis, creatorEconomicsAnalysis) absents de SectorExpertOutput.
+      const output: any = sectorResult.data;
+      const llmCost = sectorResult.cost;
 
       
       // === SCORE CAPPING based on data completeness ===
@@ -661,7 +665,7 @@ export const creatorExpert = {
         agentName: "creator-expert",
         success: true,
         executionTimeMs: Date.now() - startTime,
-        cost: response.cost ?? 0,
+        cost: llmCost,
         data: sectorData,
         _extended: extendedData,
       };

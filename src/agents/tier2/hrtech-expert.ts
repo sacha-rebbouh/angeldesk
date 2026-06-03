@@ -26,7 +26,8 @@ import { z } from "zod";
 import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertData, SectorExpertResult, SectorExpertType } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
+import { setAgentContext } from "@/services/openrouter/router";
+import { completeSectorJSON } from "./complete-sector-json";
 
 // ============================================================================
 // OUTPUT SCHEMA
@@ -768,22 +769,25 @@ export const hrtechExpert = {
 
       setAgentContext("hrtech-expert");
 
-      const response = await complete(userPromptText, {
-        systemPrompt: systemPromptText + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
-        complexity: "complex",
-        temperature: 0.3,
-      });
-
-      // Parse and validate response
+      // Parse + validation via completeSectorJSON : force response_format json_object + retry
+      // adaptatif + repair JSON tronqué + fallback modèle (fini le crash sur réponse en prose —
+      // post-mortem Avekapeti).
       let parsedOutput: HRTechExpertOutput;
+      let llmCost = 0;
       try {
-        const rawJson = JSON.parse(extractFirstJSON(response.content));
-        const parseResult = HRTechOutputSchema.safeParse(rawJson);
-        if (parseResult.success) {
-          parsedOutput = parseResult.data;
-        } else {
-          console.warn(`[hrtech-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
-          parsedOutput = rawJson as HRTechExpertOutput;
+        const sectorResult = await completeSectorJSON(
+          userPromptText,
+          {
+            systemPrompt: systemPromptText + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
+            complexity: "complex",
+            temperature: 0.3,
+          },
+          HRTechOutputSchema,
+        );
+        llmCost = sectorResult.cost;
+        parsedOutput = sectorResult.data;
+        if (!sectorResult.valid) {
+          console.warn(`[hrtech-expert] Strict parse failed, using raw JSON with defaults`);
         }
       } catch (parseError) {
         console.error("[hrtech-expert] Parse error:", parseError);
@@ -791,7 +795,7 @@ export const hrtechExpert = {
           agentName: "hrtech-expert" as SectorExpertType,
           success: false,
           executionTimeMs: Date.now() - startTime,
-          cost: response.cost ?? 0,
+          cost: 0,
           error: `Failed to parse LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
           data: getDefaultData(),
         };
@@ -836,7 +840,7 @@ export const hrtechExpert = {
         agentName: "hrtech-expert" as SectorExpertType,
         success: true,
         executionTimeMs: Date.now() - startTime,
-        cost: response.cost ?? 0,
+        cost: llmCost,
         data: sectorData,
         // Include extended data for detailed display
         _extended: {

@@ -26,7 +26,8 @@ import { z } from "zod";
 import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertResult, SectorExpertData, SectorExpertType } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
-import { complete, setAgentContext, extractFirstJSON } from "@/services/openrouter/router";
+import { setAgentContext } from "@/services/openrouter/router";
+import { completeSectorJSON } from "./complete-sector-json";
 
 // ============================================================================
 // SCHEMA DE SORTIE
@@ -661,23 +662,25 @@ export const mobilityExpert = {
       // Set agent context for cost tracking
       setAgentContext("mobility-expert");
 
-      // Call LLM
-      const response = await complete(userPrompt, {
-        systemPrompt: systemPrompt + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
-        complexity: "complex",
-        temperature: 0.3, // Lower temperature for more consistent analysis
-      });
-
-      // Parse and validate response
+      // Parse + validation via completeSectorJSON : force response_format json_object + retry
+      // adaptatif + repair JSON tronqué + fallback modèle (fini le crash sur réponse en prose —
+      // post-mortem Avekapeti).
       let parsedOutput: MobilityExpertOutput;
+      let llmCost = 0;
       try {
-        const rawJson = JSON.parse(extractFirstJSON(response.content));
-        const parseResult = MobilityExpertOutputSchema.safeParse(rawJson);
-        if (parseResult.success) {
-          parsedOutput = parseResult.data;
-        } else {
-          console.warn(`[mobility-expert] Strict parse failed (${parseResult.error.issues.length} issues), using raw JSON with defaults`);
-          parsedOutput = rawJson as MobilityExpertOutput;
+        const sectorResult = await completeSectorJSON(
+          userPrompt,
+          {
+            systemPrompt: systemPrompt + dataReliability + analyticalTone + citationDemand + structuredUncertainty,
+            complexity: "complex",
+            temperature: 0.3,
+          },
+          MobilityExpertOutputSchema,
+        );
+        llmCost = sectorResult.cost;
+        parsedOutput = sectorResult.data;
+        if (!sectorResult.valid) {
+          console.warn(`[mobility-expert] Strict parse failed, using raw JSON with defaults`);
         }
       } catch (parseError) {
         console.error("[mobility-expert] Parse error:", parseError);
@@ -685,7 +688,7 @@ export const mobilityExpert = {
           agentName: "mobility-expert",
           success: false,
           executionTimeMs: Date.now() - startTime,
-          cost: response.cost ?? 0,
+          cost: 0,
           error: `Failed to parse LLM response: ${parseError instanceof Error ? parseError.message : "Unknown error"}`,
           data: getDefaultMobilityData(),
         };
@@ -790,7 +793,7 @@ export const mobilityExpert = {
         agentName: "mobility-expert",
         success: true,
         executionTimeMs: Date.now() - startTime,
-        cost: response.cost ?? 0,
+        cost: llmCost,
         data: sectorData,
         // Include extended data for detailed analysis
         _extended: {
