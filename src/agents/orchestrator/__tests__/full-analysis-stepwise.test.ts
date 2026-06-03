@@ -202,11 +202,24 @@ describe("d-2b — runFullAnalysis : routing EXACT (OFF strict + version de grap
     expect(callsOf(orch.runFullAnalysisStepwise)).toHaveLength(0);
   });
 
-  it("ON + version 3 → runFullAnalysisStepwiseV3 (graphe FIN Tier1 per-phase + post-tier1-glue)", async () => {
+  it("ON + version 3 → runFullAnalysisStepwiseV3 FROZEN (tier0Split=false : step tier0-thesis un-split)", async () => {
     const orch = makeRoutingOrchestrator(true);
     const r = await orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 3 });
     expect(r).toMatchObject({ sessionId: "a1-stepwise-v3" });
     expect(callsOf(orch.runFullAnalysisStepwiseV3)).toHaveLength(1);
+    // Cross-deploy compat (lock) : version 3 (runs en vol) → tier0Split=false → graphe v3 FIGÉ (mêmes step IDs).
+    expect((callsOf(orch.runFullAnalysisStepwiseV3)[0] as unknown[])[5]).toBe(false);
+    expect(callsOf(orch.runFullAnalysisStepwise)).toHaveLength(0);
+    expect(callsOf(orch.runFullAnalysisPipeline)).toHaveLength(0);
+  });
+
+  it("ON + version 4 → runFullAnalysisStepwiseV3 SPLIT (tier0Split=true : tier0-pre-context + tier0-thesis-extractor)", async () => {
+    const orch = makeRoutingOrchestrator(true);
+    const r = await orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 4 });
+    expect(r).toMatchObject({ sessionId: "a1-stepwise-v3" });
+    expect(callsOf(orch.runFullAnalysisStepwiseV3)).toHaveLength(1);
+    // version 4 (nouveaux runs) → tier0Split=true → split tier0-thesis (gate Codex Option B).
+    expect((callsOf(orch.runFullAnalysisStepwiseV3)[0] as unknown[])[5]).toBe(true);
     expect(callsOf(orch.runFullAnalysisStepwise)).toHaveLength(0);
     expect(callsOf(orch.runFullAnalysisPipeline)).toHaveLength(0);
   });
@@ -219,10 +232,10 @@ describe("d-2b — runFullAnalysis : routing EXACT (OFF strict + version de grap
     expect(callsOf(orch.runFullAnalysisStepwiseV3)).toHaveLength(0);
   });
 
-  it("ON + version inconnue (4, worker obsolète vs dispatch) → LÈVE, aucun graphe ne tourne", async () => {
+  it("ON + version inconnue (5, worker obsolète vs dispatch) → LÈVE, aucun graphe ne tourne", async () => {
     const orch = makeRoutingOrchestrator(true);
-    await expect(orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 4 })).rejects.toThrow(
-      /version de graphe 4 non supportée/,
+    await expect(orch.runFullAnalysis({}, "deal_1", undefined, { stepwiseGraphVersion: 5 })).rejects.toThrow(
+      /version de graphe 5 non supportée/,
     );
     expect(callsOf(orch.runFullAnalysisPipeline)).toHaveLength(0);
     expect(callsOf(orch.runFullAnalysisStepwise)).toHaveLength(0);

@@ -69,6 +69,8 @@ describe("AnalysisStateMachine.restoreFromStepState (D.5b b-4)", () => {
     ["init", "INITIALIZING"],
     ["tier0-facts", "INITIALIZING"],
     ["tier0-thesis", "GATHERING"],
+    ["tier0-pre-context", "GATHERING"],
+    ["tier0-thesis-extractor", "GATHERING"],
     ["tier1-phase-a", "ANALYZING"],
     ["tier1-phase-d", "ANALYZING"],
     ["post-tier1-glue", "DEBATING"],

@@ -344,17 +344,17 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
     stubHelpers(orchP, capPipeline);
     const rPipeline = await (orchP.runFullAnalysisPipeline as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit());
 
-    // v3 Inline (run sain).
+    // v4 Inline (run sain ; tier0Split=true = graphe split tier0-pre-context + tier0-thesis-extractor).
     const capInline: Captured[] = [];
     const orchI = new AgentOrchestrator() as unknown as Record<string, unknown>;
     stubHelpers(orchI, capInline);
-    const rInline = await (orchI.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new InlineStepRunner());
+    const rInline = await (orchI.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new InlineStepRunner(), true);
 
-    // v3 Fake (run sain, round-trip wire à chaque step).
+    // v4 Fake (run sain, round-trip wire à chaque step).
     const capFake: Captured[] = [];
     const orchF = new AgentOrchestrator() as unknown as Record<string, unknown>;
     stubHelpers(orchF, capFake);
-    const rFake = await (orchF.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new FakeStepRunner());
+    const rFake = await (orchF.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new FakeStepRunner(), true);
 
     expect(capPipeline).toHaveLength(1);
     expect(capInline).toHaveLength(1);
@@ -372,6 +372,32 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
     expect(rPipeline).toEqual(REST_RESULT);
   });
 
+  it("E1-v3-frozen — single-pass === v3 Fake (tier0Split=false) : graphe v3 FIGÉ (step `tier0-thesis` un-split) — compat cross-deploy des runs en vol", async () => {
+    // BUMP graphVersion 4 : le split tier0 ne doit PAS muter le graphe v3 (runs graphVersion=3 en vol).
+    // Ce test verrouille que tier0Split=false reproduit l'ANCIEN graphe (step ID `tier0-thesis`) byte-équiv.
+    const capPipeline: Captured[] = [];
+    const orchP = new AgentOrchestrator() as unknown as Record<string, unknown>;
+    stubHelpers(orchP, capPipeline);
+    const rPipeline = await (orchP.runFullAnalysisPipeline as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit());
+
+    const capFrozen: Captured[] = [];
+    const orchV3 = new AgentOrchestrator() as unknown as Record<string, unknown>;
+    stubHelpers(orchV3, capFrozen);
+    const fake = new FakeStepRunner();
+    const rFrozen = await (orchV3.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), fake, false);
+
+    // Byte-équiv : le graphe v3 FROZEN produit le MÊME état post-Tier1 + terminal que single-pass.
+    expect(capFrozen).toHaveLength(1);
+    expect(summarize(capFrozen[0])).toEqual(summarize(capPipeline[0]));
+    expect(effTotalCost(capFrozen[0])).toBeCloseTo(effTotalCost(capPipeline[0]), 9);
+    expect(rFrozen).toEqual(rPipeline);
+    // Cross-deploy compat (lock) : tier0Split=false garde le step ID `tier0-thesis` et NE crée PAS les
+    // step IDs v4 → un run graphVersion=3 en vol retrouve SES steps mémoïsés au replay (pas de mismatch).
+    expect(fake.executedIds).toContain("tier0-thesis");
+    expect(fake.executedIds).not.toContain("tier0-pre-context");
+    expect(fake.executedIds).not.toContain("tier0-thesis-extractor");
+  });
+
   it("E1-cost — totalCost global v3 == pré-Tier1 + costIncurred single-pass (shim costIncurred:0)", async () => {
     const capPipeline: Captured[] = [];
     const orchP = new AgentOrchestrator() as unknown as Record<string, unknown>;
@@ -381,7 +407,7 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
     const capInline: Captured[] = [];
     const orchI = new AgentOrchestrator() as unknown as Record<string, unknown>;
     stubHelpers(orchI, capInline);
-    await (orchI.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new InlineStepRunner());
+    await (orchI.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new InlineStepRunner(), true);
 
     // single-pass : costIncurred = délta Tier1 LOCAL (> 0) ; v3 : shim costIncurred = 0 (totalCost déjà global).
     expect(capPipeline[0].phasesResult.costIncurred).toBeGreaterThan(0);
@@ -419,7 +445,7 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
     });
 
     const result = await (orch.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<{ success: boolean }>)(
-      {}, "deal_1", undefined, makeInit(), new InlineStepRunner(),
+      {}, "deal_1", undefined, makeInit(), new InlineStepRunner(), true,
     );
 
     // Le run a atteint runFinalCompletion (REST_RESULT.success=true), PAS failFullAnalysis (success:false).
@@ -433,11 +459,12 @@ describe("d-3-5a — golden runFullAnalysisStepwiseV3 (E1)", () => {
   });
 });
 
-// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — d-6 ajoute tier3-post PER-AGENT :
-// 1 tier0-facts · 2 tier0-thesis · 3 tier1-a-agents · 4 tier1-a-finalize · 5 tier1-b-agents ·
-// 6 tier1-b-finalize · 7 tier1-c-agents · 8 tier1-c-reflexion-0 · 9 tier1-c-finalize ·
-// 10 tier1-d-agents · 11 tier1-d-finalize · 12 post-tier1-glue · 13 tier3-pre · 14 tier2-sector ·
-// 15 tier3-post-0 · 16 tier3-post-1 · 17 tier3-post-2 · 18 post-tier1.
+// Séquence de steps v3 (REFLECT_AGENTS={competitive-intel} en phase C) — Option B split tier0-thesis →
+// tier0-pre-context (1er snapshot) + tier0-thesis-extractor (thesis peelé), tout décale de +1 :
+// 1 tier0-facts · 2 tier0-pre-context · 3 tier0-thesis-extractor · 4 tier1-a-agents · 5 tier1-a-finalize ·
+// 6 tier1-b-agents · 7 tier1-b-finalize · 8 tier1-c-agents · 9 tier1-c-reflexion-0 · 10 tier1-c-finalize ·
+// 11 tier1-d-agents · 12 tier1-d-finalize · 13 post-tier1-glue · 14 tier3-pre · 15 tier2-sector ·
+// 16 tier3-post-0 · 17 tier3-post-1 · 18 tier3-post-2 · 19 post-tier1.
 describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydrate mid-Tier1)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -448,12 +475,13 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     loadResultsMock.fn.mockResolvedValue(REST_RESULT.results);
   });
 
-  // Référence v3 Inline (no-kill) puis v3 Fake tué après `killAfter` steps → resume → compare.
+  // Référence v4 Inline (no-kill) puis v4 Fake tué après `killAfter` steps → resume → compare.
+  // tier0Split=true = graphe split (tier0-pre-context + tier0-thesis-extractor).
   async function runE2(killAfter: number) {
     const capRef: Captured[] = [];
     const orchRef = new AgentOrchestrator() as unknown as Record<string, unknown>;
     stubHelpers(orchRef, capRef);
-    const rRef = await (orchRef.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new InlineStepRunner());
+    const rRef = await (orchRef.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), new InlineStepRunner(), true);
 
     snapshotStore.map.clear();
     const cap: Captured[] = [];
@@ -461,7 +489,7 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     stubHelpers(orch, cap);
     const fake = new FakeStepRunner();
     const { passes } = await runStepwiseUntilDone(
-      (runner) => (orch.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), runner),
+      (runner) => (orch.runFullAnalysisStepwiseV3 as (...a: unknown[]) => Promise<unknown>)({}, "deal_1", undefined, makeInit(), runner, true),
       fake,
       [killAfter, null],
     );
@@ -477,19 +505,32 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(vcGuard.nullSeen).toBe(0);
   }
 
-  it("E2-thesis — kill APRÈS tier0-thesis (step 2) → rehydrate vc=null→F1 REBUILD, Tier1 entier frais, ===ref", async () => {
+  it("E2-pre-context — kill APRÈS tier0-pre-context (step 2) → rehydrate depuis le 1er snapshot, tier0-thesis-extractor frais, ===ref", async () => {
     const { capRef, cap, passes, orch, orchRef } = await runE2(2);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
-    // TEETH F1 (REBUILD) : le snapshot tier0-thesis porte vc=null → au resume F1 RECONSTRUIT le vc.
-    // Run resumé = pass0 (build initial) + pass1 (REBUILD après rehydrate) = 2 ; ref no-kill = 1.
-    // Un guard `!rehydrated` au lieu de `vc == null` sauterait le rebuild → 1 (ce test serait rouge).
+    // Le kill (au step 3 = tier0-thesis-extractor) tombe AVANT le build vc initial (en tête de Tier1,
+    // après le step thesis). pass0 ne construit donc PAS le vc ; pass1 rehydrate (vc=null depuis le
+    // snapshot tier0-pre-context), re-tourne tier0-thesis-extractor frais, PUIS construit le vc (1×).
+    // Resume = 1 build ; ref no-kill = 1. Force le chemin !tier0PreContextBodyRan → ensureRehydrated.
+    expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    expect(orchRef.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+  });
+
+  it("E2-thesis-extractor — kill APRÈS tier0-thesis-extractor (step 3) → rehydrate vc=null→F1 REBUILD, Tier1 entier frais, ===ref", async () => {
+    const { capRef, cap, passes, orch, orchRef } = await runE2(3);
+    expect(passes).toBe(2);
+    assertResumeEqualsRef(capRef, cap);
+    // TEETH F1 (REBUILD) : le snapshot tier0-thesis-extractor porte vc=null → au resume F1 RECONSTRUIT le vc.
+    // pass0 construit le vc (après le step thesis, avant le kill au step 4 tier1-a-agents) ; pass1 rehydrate
+    // (vc=null) puis REBUILD = 2 ; ref no-kill = 1. Un guard `!rehydrated` au lieu de `vc == null` sauterait
+    // le rebuild → 1 (ce test serait rouge). Force le chemin !tier0ThesisBodyRan → ensureRehydrated.
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(2);
     expect(orchRef.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-agents — kill APRÈS tier1-a-agents (step 3) → rehydrate (vc carry non-null), finalize A+ frais, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(3);
+  it("E2-agents — kill APRÈS tier1-a-agents (step 4) → rehydrate (vc carry non-null), finalize A+ frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(4);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // TEETH F1 (CARRY) : le snapshot tier1-a-agents porte un vc NON-null → pas de rebuild au resume.
@@ -497,23 +538,23 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-reflexion — kill APRÈS tier1-c-reflexion-0 (step 8) → rehydrate après une reflexion individuelle, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(8);
+  it("E2-reflexion — kill APRÈS tier1-c-reflexion-0 (step 9) → rehydrate après une reflexion individuelle, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(9);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1); // CARRY
   });
 
-  it("E2-finalize — kill APRÈS tier1-c-finalize (step 9) → rehydrate profond, resume dans phase D, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(9);
+  it("E2-finalize — kill APRÈS tier1-c-finalize (step 10) → rehydrate profond, resume dans phase D, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(10);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // TEETH F1 (CARRY profond) : vc non-null porté par le snapshot c-finalize → pas de rebuild.
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-glue — kill APRÈS post-tier1-glue (step 12) → rehydrate depuis le snapshot glue, terminal frais, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(12);
+  it("E2-glue — kill APRÈS post-tier1-glue (step 13) → rehydrate depuis le snapshot glue, terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(13);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY : le snapshot post-tier1-glue porte un vc non-null → pas de rebuild au resume (le glue
@@ -521,8 +562,8 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-tier3-pre — kill APRÈS tier3-pre (step 13) → rehydrate depuis le snapshot tier3-pre, terminal frais, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(13);
+  it("E2-tier3-pre — kill APRÈS tier3-pre (step 14) → rehydrate depuis le snapshot tier3-pre, terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(14);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY (d-4) : le snapshot tier3-pre porte un vc non-null → pas de rebuild au resume (tier3-pre
@@ -532,8 +573,8 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-tier2-sector — kill APRÈS tier2-sector (step 14) → rehydrate depuis le snapshot tier2-sector, terminal frais, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(14);
+  it("E2-tier2-sector — kill APRÈS tier2-sector (step 15) → rehydrate depuis le snapshot tier2-sector, terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(15);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY (d-5) : le snapshot tier2-sector porte un vc non-null → pas de rebuild au resume (tier2-sector
@@ -542,8 +583,8 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-tier3-post-mid — kill APRÈS tier3-post-0 (step 15, 1er agent) → rehydrate, tier3-post-1/2 + terminal frais, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(15);
+  it("E2-tier3-post-mid — kill APRÈS tier3-post-0 (step 16, 1er agent) → rehydrate, tier3-post-1/2 + terminal frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(16);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY (d-6) : kill EN COURS du post-batch per-agent (après le 1er des 3 batches). Le snapshot
@@ -552,8 +593,8 @@ describe("d-3-5b — golden runFullAnalysisStepwiseV3 (E2-par-frontière, rehydr
     expect(orch.buildVerificationContext as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
   });
 
-  it("E2-tier3-post-all — kill APRÈS tier3-post-2 (step 17, dernier agent) → rehydrate, terminal final frais, ===ref", async () => {
-    const { capRef, cap, passes, orch } = await runE2(17);
+  it("E2-tier3-post-all — kill APRÈS tier3-post-2 (step 18, dernier agent) → rehydrate, terminal final frais, ===ref", async () => {
+    const { capRef, cap, passes, orch } = await runE2(18);
     expect(passes).toBe(2);
     assertResumeEqualsRef(capRef, cap);
     // CARRY (d-6) : kill après TOUS les batches tier3-post ; au resume seul le terminal final tourne frais.

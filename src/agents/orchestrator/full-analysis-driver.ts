@@ -31,14 +31,18 @@ import { buildTerminalEnvelope, reviveTerminalEnvelope } from "./full-analysis-s
  *     runFullAnalysisStepwise.
  *   - 3 (d-3)   : graphe FIN — tier0-facts / tier0-thesis / Tier1 PER-PHASE (agents/reflexion-i/
  *     finalize) / post-tier1-glue / terminal post-tier1 (rest) ; split tier3-pre/tier2/tier3-post/
- *     terminal-final à venir d-4..d-7 (raffinent le graphe v3 EN PLACE, pas de run déployé en vol
- *     tant que DEEP_DIVE_STEPWISE est OFF) — runFullAnalysisStepwiseV3.
+ *     terminal-final ajoutés d-4..d-7 (ont raffiné le graphe v3 EN PLACE, sûr car DEEP_DIVE_STEPWISE
+ *     était OFF) — runFullAnalysisStepwiseV3(tier0Split=false).
+ *   - 4         : graphe v3 + split tier0-thesis → tier0-pre-context (1er snapshot) + tier0-thesis-
+ *     extractor (thèse ~280s peelée, gate Codex Option B). BUMP REQUIS (pas EN PLACE) : DEEP_DIVE_STEPWISE
+ *     est désormais ON → des runs graphVersion=3 en vol existent et doivent reprendre sur le graphe v3
+ *     FROZEN (mêmes step IDs) — runFullAnalysisStepwiseV3(tier0Split=true).
  * Routing EXACT côté orchestrateur (runFullAnalysis) : `undefined|1` → driver 1-step ; `2` →
- * runFullAnalysisStepwise ; `3` → runFullAnalysisStepwiseV3 ; version inconnue → LÈVE. On N'UTILISE
- * PAS cette constante dans l'égalité de routing (littéraux) — elle ne sert qu'à STAMPER la version
- * courante au dispatch.
+ * runFullAnalysisStepwise ; `3` → runFullAnalysisStepwiseV3(false) ; `4` → runFullAnalysisStepwiseV3(true) ;
+ * version inconnue → LÈVE. On N'UTILISE PAS cette constante dans l'égalité de routing (littéraux) — elle
+ * ne sert qu'à STAMPER la version courante au dispatch.
  */
-export const STEPWISE_GRAPH_VERSION = 3 as const;
+export const STEPWISE_GRAPH_VERSION = 4 as const;
 
 export interface TerminalStepwiseDriverParams {
   /** Runner d'unité : InlineStepRunner (OFF/single-pass) ou InngestStepRunner/FakeStepRunner. */

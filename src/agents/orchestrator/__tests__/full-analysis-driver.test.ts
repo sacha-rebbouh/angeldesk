@@ -154,7 +154,7 @@ describe("runTerminalStepwiseDriver (golden driver D.5d-1c)", () => {
 });
 
 describe("STEPWISE_GRAPH_VERSION", () => {
-  it("vaut 3 (graphe FIN Tier1 per-phase + post-tier1-glue) à d-3", () => {
-    expect(STEPWISE_GRAPH_VERSION).toBe(3);
+  it("vaut 4 (v3 + split tier0-thesis → tier0-pre-context + tier0-thesis-extractor)", () => {
+    expect(STEPWISE_GRAPH_VERSION).toBe(4);
   });
 });

@@ -52,11 +52,19 @@ export const FULL_ANALYSIS_STEP_STATE_VERSION = 4 as const;
  * Identifiants d'unités du pipeline stepwise (ordre d'exécution). `tier0-facts` est
  * ISOLÉ de `tier0-thesis` (D.5d, gate Codex) pour confiner la ré-exécution du
  * `createFactEventsBatch` non idempotent à sa propre unité durable.
+ *
+ * Le graphe v4 SPLIT `tier0-thesis` en `tier0-pre-context` (doc-extractor + deck-coherence +
+ * context-engine = 1er SNAPSHOT) et `tier0-thesis-extractor` (thesis-extractor ~280s peelé,
+ * gate Codex Option B) : on isole le thesis-extractor SANS frontière durable avant le 1er
+ * snapshot, pour éviter le re-chargement de `evidenceToday` (wall-clock, loadEvidenceContextSafe)
+ * qui driverait au replay. `tier0-thesis` reste utilisé par les graphes v2 ET v3 (frozen).
  */
 export type FullAnalysisUnit =
   | "init"
   | "tier0-facts"
   | "tier0-thesis"
+  | "tier0-pre-context"
+  | "tier0-thesis-extractor"
   | "tier1-phase-a"
   | "tier1-phase-b"
   | "tier1-phase-c"
@@ -70,6 +78,8 @@ export const FULL_ANALYSIS_UNITS: readonly FullAnalysisUnit[] = [
   "init",
   "tier0-facts",
   "tier0-thesis",
+  "tier0-pre-context",
+  "tier0-thesis-extractor",
   "tier1-phase-a",
   "tier1-phase-b",
   "tier1-phase-c",
