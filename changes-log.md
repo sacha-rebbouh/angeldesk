@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 9c : UI honnête réconciliation (#11)
+
+### Contexte
+9a fait que le réconciliateur RÉUSSIT (terminal_fallback → `success:true`) même quand les LLM échouent → il n'apparaît plus dans le bandeau « agents non aboutis » (#1 résolu par 9a, fin du cadrage « 1 petit agent »). Reste à signaler honnêtement le NOUVEL état : réconciliation aboutie MAIS en mode déterministe (synthèse LLM indisponible).
+
+### Changements
+- `thesis/types.ts` : champ STRUCTURÉ optionnel `synthesisDegraded?` sur `ThesisReconcilerOutput` (rétrocompat).
+- `tier3/thesis-reconciler.ts` `execute()` : `synthesisDegraded = (resolution === "terminal_fallback")` — marqueur structuré, jamais une heuristique texte.
+- `analysis-v2/lib/selectors.ts` `buildThesisSectionModel` : `reconciliationDegraded` (= reconciled && `data.synthesisDegraded`) ajouté au `ThesisSectionModel`.
+- `analysis-v2/sections/thesis-section.tsx` : bandeau honnête (tone info) « Réconciliation en mode déterministe » — verdict + frictions viennent des signaux structurés, sans rédaction par modèle. Le bandeau « non effectuée » reste pour les vrais échecs. page-shell NON touché (le réconciliateur réussit → plus « agent non abouti »).
+
+### Vérif
+12 tests reconciler (dont « Test clé » end-to-end : completeJSON rejette tous les modèles → `execute()` success déterministe + `synthesisDegraded` ; + « Contrat PROD » : `run()` → `success:true`) + test selector `reconciliationDegraded`. Suite agents+thesis+analysis-v2+lib : 1473 passed. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9c : APPROVE.
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 9b : idempotence persistence du réconciliateur
 
 ### Contexte

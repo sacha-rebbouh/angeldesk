@@ -159,6 +159,35 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
     expect(kept, "le vrai risque légal aurait dû rester en concern").toBeGreaterThan(0);
   });
 
+  // Phase 9c (#11) : la réconciliation déterministe (synthèse LLM indisponible) est
+  // surfacée honnêtement via le marqueur STRUCTURÉ `synthesisDegraded` (pas une
+  // heuristique texte) ; jamais quand l'agent a échoué ou tourné en mode LLM normal.
+  it("buildThesisSectionModel : reconciliationDegraded reflète le marqueur structuré synthesisDegraded", () => {
+    const degraded = buildThesisSectionModel(
+      HOSTILE_THESIS,
+      { "thesis-reconciler": { success: true, data: { synthesisDegraded: true } } },
+      "full_analysis",
+    );
+    expect(degraded.reconciled).toBe(true);
+    expect(degraded.reconciliationDegraded).toBe(true);
+
+    const normal = buildThesisSectionModel(
+      HOSTILE_THESIS,
+      { "thesis-reconciler": { success: true, data: { synthesisDegraded: false } } },
+      "full_analysis",
+    );
+    expect(normal.reconciled).toBe(true);
+    expect(normal.reconciliationDegraded).toBe(false);
+
+    const failed = buildThesisSectionModel(
+      HOSTILE_THESIS,
+      { "thesis-reconciler": { success: false, error: "timed out" } },
+      "full_analysis",
+    );
+    expect(failed.reconciled).toBe(false);
+    expect(failed.reconciliationDegraded).toBe(false);
+  });
+
   // Phase 4 (finding Codex) : le mémo reconstitué ne fabrique pas de provenance
   // factice ("Tier 1") ni de nom d'agent dans la source des risques critiques.
   it("buildMemoSectionModel : pas de provenance factice dans les risques critiques", () => {

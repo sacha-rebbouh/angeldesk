@@ -263,6 +263,9 @@ LANGUE: Francais.`;
       updatedVerdict: finalVerdict,
       updatedConfidence: data.updatedConfidence,
       verdictChanged: finalChanged,
+      // 9c : la réconciliation a-t-elle été produite en mode déterministe (chaîne
+      // LLM épuisée) ? L'UI le signale honnêtement.
+      synthesisDegraded: resolution === "terminal_fallback",
       newRedFlags: data.newRedFlags,
       reconciliationNotes,
       hiddenStrengths: data.hiddenStrengths,

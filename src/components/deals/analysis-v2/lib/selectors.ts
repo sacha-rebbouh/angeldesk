@@ -358,6 +358,8 @@ export type ThesisSectionModel = {
   loadBearing: LoadBearingClaim[];
   alerts: ThesisAlert[];
   reconciled: boolean;
+  /** #11 (9c) : réconciliation aboutie MAIS en mode déterministe (synthèse LLM indisponible). */
+  reconciliationDegraded: boolean;
   reconciliationReason: string | null;
   verdict: string | null;
   confidence: number | null;
@@ -365,7 +367,7 @@ export type ThesisSectionModel = {
 
 export function buildThesisSectionModel(thesis: Record<string, unknown> | null, results: ResultsMap | null | undefined, analysisMode?: string | null): ThesisSectionModel {
   if (!thesis) {
-    return { cards: [], loadBearing: [], alerts: [], reconciled: false, reconciliationReason: "Aucune thèse enregistrée pour ce dossier.", verdict: null, confidence: null };
+    return { cards: [], loadBearing: [], alerts: [], reconciled: false, reconciliationDegraded: false, reconciliationReason: "Aucune thèse enregistrée pour ce dossier.", verdict: null, confidence: null };
   }
   const cards: ThesisCard[] = [
     { key: "reformulated", title: "Reformulation", body: stringAt(thesis, ["reformulated"]) },
@@ -418,6 +420,10 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
   // Le message « n'a pas tourné » était faux quand l'agent avait timeout.
   const reconcilerEntry = results?.["thesis-reconciler"];
   const reconciled = reconcilerEntry?.success === true;
+  // 9c : réconciliation aboutie mais en mode déterministe (marqueur structuré
+  // posé par l'agent quand la chaîne LLM est épuisée — pas une heuristique texte).
+  const reconciliationDegraded =
+    reconciled && isRecord(reconcilerEntry?.data) && valueAt(reconcilerEntry.data, ["synthesisDegraded"]) === true;
   let reconciliationReason: string | null = null;
   if (!reconciled) {
     const reconcilerError = reconcilerEntry && isString(reconcilerEntry.error) ? reconcilerEntry.error : null;
@@ -441,6 +447,7 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
     loadBearing,
     alerts,
     reconciled,
+    reconciliationDegraded,
     reconciliationReason,
     verdict: stringAt(thesis, ["verdict"]),
     confidence: numberAt(thesis, ["confidence"]),

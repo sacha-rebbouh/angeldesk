@@ -45,6 +45,14 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
         </PartialBanner>
       ) : null}
 
+      {model.reconciled && model.reconciliationDegraded ? (
+        <PartialBanner tone="info" title="Réconciliation en mode déterministe">
+          La synthèse rédigée par modèle était indisponible. Le verdict et les points de friction ci-dessous ont été
+          établis à partir des signaux structurés des agents (plancher de verdict + contradictions), sans rédaction par
+          un modèle.
+        </PartialBanner>
+      ) : null}
+
       {model.cards.length === 0 ? (
         <PartialBanner tone="info" title="Aucune thèse enregistrée">
           Le module thèse n'a pas produit de contenu pour ce dossier.

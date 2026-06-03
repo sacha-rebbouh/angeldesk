@@ -9,9 +9,15 @@ vi.mock("@/services/openrouter/router", () => ({
   completeJSONValidated: vi.fn(),
   completeJSONStream: vi.fn(),
   completeStream: vi.fn(),
+  // Contexte LLM utilisé par BaseAgent.run() (test « contrat prod » 9c).
+  getAnalysisContext: vi.fn(() => undefined),
+  runWithLLMContext: vi.fn((_ctx: unknown, fn: () => unknown) => fn()),
+  setAgentContext: vi.fn(),
 }));
 
+import { completeJSON } from "@/services/openrouter/router";
 import { ThesisReconcilerAgent, ThesisReconcilerSchema } from "../thesis-reconciler";
+import type { ThesisReconcilerOutput } from "@/agents/thesis/types";
 
 type DeterministicChallenge = {
   field: "problem" | "solution" | "whyNow" | "moat" | "loadBearing" | null;
@@ -287,6 +293,52 @@ describe("ThesisReconcilerAgent — réconciliation déterministe (Phase 9a, ter
     expect(out.newRedFlags).toHaveLength(0);
     expect(out.reconciliationNotes.length).toBeGreaterThan(0);
     expect(ThesisReconcilerSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("Test clé : chaîne LLM épuisée → execute() success déterministe (verdict floor + synthesisDegraded)", async () => {
+    // Tous les modèles échouent → terminalFallbackData déterministe (pas de throw → success).
+    vi.mocked(completeJSON).mockRejectedValue(new Error("model timeout"));
+    const context = {
+      previousResults: {
+        "thesis-extractor": { success: true, data: buildThesis() },
+        "competitive-intel": {
+          success: true,
+          data: { alertSignal: { hasBlocker: true, blockerReason: "Moat non defendable face a la concurrence" } },
+        },
+      },
+    } as unknown as AgentContext;
+
+    const internals = new ThesisReconcilerAgent() as unknown as {
+      execute: (c: AgentContext) => Promise<ThesisReconcilerOutput>;
+    };
+    const out = await internals.execute(context);
+
+    expect(out.synthesisDegraded).toBe(true);
+    expect(out.updatedVerdict).toBe("vigilance"); // 1 blocker → floor vigilance
+    expect(out.reconciliationNotes.some((n) => /déterministe/i.test(n.title))).toBe(true);
+    vi.mocked(completeJSON).mockReset();
+  });
+
+  it("Contrat PROD : run() renvoie success:true sur chaîne LLM épuisée (pas de step kill)", async () => {
+    vi.mocked(completeJSON).mockRejectedValue(new Error("model timeout"));
+    const context = {
+      previousResults: {
+        "thesis-extractor": { success: true, data: buildThesis() },
+        "competitive-intel": {
+          success: true,
+          data: { alertSignal: { hasBlocker: true, blockerReason: "Moat non defendable face a la concurrence" } },
+        },
+      },
+    } as unknown as AgentContext;
+
+    const result = (await new ThesisReconcilerAgent().run(context)) as {
+      success: boolean;
+      data?: ThesisReconcilerOutput;
+    };
+    expect(result.success).toBe(true); // terminalFallbackData → pas de throw → success
+    expect(result.data?.synthesisDegraded).toBe(true);
+    expect(result.data?.updatedVerdict).toBe("vigilance");
+    vi.mocked(completeJSON).mockReset();
   });
 
   it("Codex #2 : un blocker SEUL → floor vigilance (plus de double-compte → alert_dominant)", () => {
