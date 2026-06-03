@@ -298,6 +298,13 @@ export interface CompletionOptions {
   } | undefined;
   /** Interne (completeJSON) : marque qu'une tentative de fallback modèle a déjà eu lieu. */
   _fallbackAttempted?: boolean;
+  /**
+   * Désactive le fallback model-aware implicite de completeJSON (JSON_FALLBACK_MODEL). Pour les
+   * appelants qui pilotent EUX-MÊMES une chaîne de fallback explicite (ex. llmCompleteJSONValidated
+   * avec fallbackChain) : le fallback implicite par-modèle ferait double emploi et casserait l'ordre
+   * + le budget de la chaîne (ex. HAIKU appelé avant SONNET, ou un modèle hors chaîne).
+   */
+  disableModelFallback?: boolean;
 }
 
 export interface CompletionResult {
@@ -843,7 +850,7 @@ export async function completeJSON<T>(
     // (empty_response reste dans isRetryableError) ; on ne RAJOUTE simplement pas la
     // bascule de modèle par-dessus. Le timeout/parse/5xx gardent le fallback.
     const isEmptyResponse = err instanceof Error && err.message.includes("empty_response");
-    if (options._fallbackAttempted !== true && !isEmptyResponse) {
+    if (options._fallbackAttempted !== true && options.disableModelFallback !== true && !isEmptyResponse) {
       const primaryKey = options.model ?? selectModel(options.complexity ?? "medium", getAgentContext() ?? undefined);
       const fallbackKey = JSON_FALLBACK_MODEL[primaryKey];
       if (fallbackKey && fallbackKey !== primaryKey) {

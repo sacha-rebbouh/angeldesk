@@ -36,6 +36,18 @@ const ROLE_TIMEOUTS_MS: Partial<Record<ThesisRole, number>> = {
   "yc-lens": 75_000,
   "thiel-lens": 75_000,
   "angel-desk-lens": 75_000,
+  // reconciler : cap PAR MODÈLE (llmCompleteJSONValidated wrappe chaque appel modèle dans
+  // withTimeout(timeoutMs)). 50s × chaîne 3 modèles (GEMINI_PRO→SONNET→HAIKU) ≈ 150s, sous le
+  // cap run() (config.timeoutMs 180s) → échec plus rapide + coût borné. HAIKU gardé en dernier
+  // recours (dégradation gracieuse > terminal "reconciliation indisponible"). Décision produit.
+  reconciler: 50_000,
+};
+
+// maxRetries PAR RÔLE (override de config.maxRetries, levier effectif côté appel LLM). reconciler:0
+// → 1 tentative par modèle (pas de retry interne) ; la diversité vient de la chaîne de fallback, pas
+// des retries (sinon 3 modèles × retries × 50s exploserait). NB : 0 est falsy → tester `!== undefined`.
+const ROLE_MAX_RETRIES: Partial<Record<ThesisRole, number>> = {
+  reconciler: 0,
 };
 
 function getFrameworkDefaults(role: "yc-lens" | "thiel-lens" | "angel-desk-lens"):
@@ -173,13 +185,24 @@ export function getThesisCallOptions<T>(
   if (defaults) baseOptions.fallbackDefaults = defaults;
   if (terminalFallback !== undefined) baseOptions.terminalFallbackData = terminalFallback;
   if (ROLE_TIMEOUTS_MS[role]) baseOptions.timeoutMs = ROLE_TIMEOUTS_MS[role];
+  if (ROLE_MAX_RETRIES[role] !== undefined) baseOptions.maxRetries = ROLE_MAX_RETRIES[role];
 
   if (isLegacy) {
+    // Legacy : pas de chaîne explicite → le fallback model-aware implicite de completeJSON reste le
+    // SEUL failover, on ne le désactive donc pas (même pour reconciler).
     return baseOptions;
   }
 
-  return {
+  const upgraded: Partial<ValidatedLLMCallOptions<T>> = {
     ...baseOptions,
     fallbackChain: UPGRADED_CHAINS[role],
   };
+  // reconciler : la chaîne explicite (GEMINI_PRO → CLAUDE_SONNET_45 → HAIKU, 3 familles) EST le
+  // failover. Désactiver le fallback model-aware implicite de completeJSON, sinon GEMINI_PRO→HAIKU
+  // (HAIKU avant SONNET) ou HAIKU→GEMINI_3_FLASH (modèle hors chaîne) casseraient l'ordre « HAIKU
+  // dernier recours » + le budget borné (gate Codex). Les autres rôles gardent le fallback implicite.
+  if (role === "reconciler") {
+    upgraded.disableModelFallback = true;
+  }
+  return upgraded;
 }

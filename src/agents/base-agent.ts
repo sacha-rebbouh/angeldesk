@@ -57,6 +57,12 @@ export interface LLMCallOptions {
   maxRetries?: number;
   model?: ModelKey;
   fallbackChain?: ModelKey[];
+  /**
+   * Désactive le fallback model-aware implicite de `completeJSON` (cf. router CompletionOptions).
+   * À activer quand l'appelant pilote une chaîne de fallback EXPLICITE (`fallbackChain` via
+   * `llmCompleteJSONValidated`) : le fallback implicite ferait double emploi et casserait l'ordre/budget.
+   */
+  disableModelFallback?: boolean;
 
   /**
    * Phase C slice C1c — REL-006 truncation fail-closed.
@@ -522,6 +528,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
         model: options.model,
         maxRetries: options.maxRetries,
         timeoutMs,
+        disableModelFallback: options.disableModelFallback,
       }),
       timeoutMs,
       `LLM JSON call timed out after ${timeoutMs}ms`

@@ -90,6 +90,11 @@ describe("getThesisCallOptions", () => {
     });
 
     expect(options.fallbackChain).toEqual(["GEMINI_PRO", "CLAUDE_SONNET_45", "HAIKU"]);
+    // Cap par modèle 50s × 3 ≈ 150s < run() 180s ; 0 retry interne (diversité = chaîne, pas retries).
+    expect(options.timeoutMs).toBe(50_000);
+    expect(options.maxRetries).toBe(0);
+    // Chaîne explicite = failover → fallback model-aware implicite de completeJSON désactivé (ordre/budget).
+    expect(options.disableModelFallback).toBe(true);
     expect(options.fallbackDefaults).toMatchObject({
       updatedVerdict: "vigilance",
       updatedConfidence: 42,
@@ -135,6 +140,11 @@ describe("getThesisCallOptions", () => {
     expect(YcLensSchema.safeParse(yc.terminalFallbackData).success).toBe(true);
 
     expect(reconciler.fallbackChain).toBeUndefined();
+    // Le cap de timeout + maxRetries du rôle s'appliquent AUSSI en legacy (role-safe degradation).
+    expect(reconciler.timeoutMs).toBe(50_000);
+    expect(reconciler.maxRetries).toBe(0);
+    // Legacy : PAS de chaîne explicite → le fallback implicite reste le seul failover (non désactivé).
+    expect(reconciler.disableModelFallback).toBeUndefined();
     expect(reconciler.fallbackDefaults).toMatchObject({ updatedVerdict: "favorable" });
     expect(reconciler.terminalFallbackData).toMatchObject({ updatedVerdict: "favorable" });
 
