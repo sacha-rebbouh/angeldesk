@@ -302,3 +302,77 @@ Chaque déclaration du deck (concurrence, valorisation, marché) doit être conf
 ```
 dbagents.md           → Maintenance DB
 ```
+
+---
+
+## Gate Codex par étape (plans multi-étapes) — via `codex exec`, read-only, continuité sur disque
+
+Pour tout plan en plusieurs étapes sur ce projet, faire auditer **chaque étape par Codex avant de passer à la suivante**. Codex est relecteur, jamais éditeur. **Ne jamais demander à l'utilisateur de copier-coller vers Codex** : la gate s'en charge automatiquement.
+
+### Périmètre — quand faire intervenir Codex (pas seulement les plans)
+
+Décider par **risque**, pas par « plan ou pas » :
+
+- **Gate obligatoire** (plan OU changement standalone) — tout ce qui peut corrompre l'état silencieusement ou violer la doctrine : durabilité / byte-equivalence, formules de scoring, auth / sécurité, migrations Prisma, prompts doctrine (sanitizers anti-prescriptifs), refacto ou logique non triviale. Via `codex-gate-drive.sh` (diff-based, cf. protocole ci-dessous).
+- **Second regard diagnostic** — quand l'utilisateur partage une **capture d'un bug**, signale une **incompréhension**, ou demande de **comprendre un comportement** : demander aussi l'avis de Codex en read-only. Ici PAS de gate diff-based (souvent aucun changement encore) → appeler directement `codex exec -s read-only [-i <capture>] "<symptôme + question + code pertinent>"` (le flag `-i` joint l'image ; si la capture n'est pas un fichier exploitable, résumer le symptôme). Codex sert de second diagnostic, pas de décideur.
+- **Sounding board sur idées de features / produit** — quand l'utilisateur lance une **idée de feature** : la faire critiquer par Codex en read-only **avant** de s'engager à la construire → faisabilité technique, ce que ça touche (agents / schema / coût), **risques** (dérive oraculaire ou prescriptive, impact durabilité/scoring), **alternatives plus simples** (YAGNI), inconnues. Appeler `codex exec -s read-only "<idée + contexte produit + code concerné>"`. Codex **analyse et alerte, ne décide pas** : le choix produit/feature reste à l'utilisateur (cf. § Routing des décisions). C'est le miroir de la doctrine produit elle-même (« analyse et guide, ne décide jamais »).
+- **Pas de gate** — changements **UI**, **petits fix** triviaux, typos, commentaires, formatage, doc pure. La review marginale ne justifie ni le coût/latence ni le bruit qui érode l'attention sur les verdicts qui comptent.
+
+### Indépendance d'abord, confrontation ensuite (anti-ancrage)
+
+Pour les contextes d'**idéation / diagnostic** (sounding board feature, second regard diagnostic — **pas** la review de diff) : fournir à Codex la **demande ORIGINALE de l'utilisateur (verbatim) + contexte neutre** (code/doctrine pertinents), **SANS la solution, l'hypothèse ou la conclusion de Claude**. Lui demander de produire son **propre** raisonnement / idée / diagnostic d'abord. **Ensuite seulement** confronter les deux avis et exposer explicitement les divergences. But : éviter l'ancrage — **les deux raisonnent indépendamment, puis se confrontent**, et l'idée utile peut venir de l'un comme de l'autre (Codex peut avoir une bonne idée que Claude n'aurait pas eue, **et inversement**). Si on sert d'abord la conclusion de Claude, Codex critique dans le cadre de Claude au lieu de penser frais — la valeur de la confrontation s'effondre. La confrontation peut se faire par une 2ᵉ relance (`codex exec resume` du même thread, en lui montrant alors l'avis de Claude) ou par une synthèse Claude des deux vues — mais **jamais** d'avis Claude dans le 1er prompt.
+> Exception : la **review de diff** (gate `codex-gate-drive.sh`) montre forcément le diff de Claude — l'ancrage y est inhérent et acceptable.
+
+> **Pourquoi `codex exec` et plus MCP `codex`/`codex-reply`** : le handle de thread MCP est scopé au process `codex mcp-server`. Il meurt à tout redémarrage de process (relais de session via `codex-relay.sh`, réinit du MCP) → `codex-reply` répond *"thread expired"* → on repart sur un thread neuf en perdant le contexte des étapes précédentes. `codex exec resume <id>` reprend le rollout **sur disque** (`~/.codex/sessions/…/rollout-*-<id>.jsonl`), donc la continuité survit aux relais. (Vérifié : reprise cross-process d'une session, même UUID conservé.)
+
+Un seul helper pilote tout : **`~/.claude/bin/codex-gate-drive.sh "<question de validation>"`**. Il (a) construit le payload d'audit via `codex-gate.sh` (HEAD, fichiers touchés, diff vs HEAD, `tsc --noEmit`, `vitest run`, question) ; (b) **crée** la session Codex au 1er appel ou la **reprend** (`resume`) ensuite ; (c) force read-only + effort `xhigh` (override : `CODEX_GATE_EFFORT`) ; (d) persiste l'UUID dans `.codex-gate-thread` ; (e) **append le ledger** `.codex-gate-log.md` (1 bloc par tour : étape + verdict) ; (f) imprime la réponse de Codex sur stdout. Codex n'écrit jamais dans le repo.
+
+Protocole :
+1. **Au DÉBUT du plan** : repartir d'une session propre → `rm -f .codex-gate-thread .codex-gate-log.md .codex-gate-relay-count` (sinon le 1er appel reprendrait le thread du plan précédent ; la RAZ du compteur de relais reste requise, cf. § Relais autonome de session). Passer le plan global + étape 1 dans la question du 1er appel.
+2. **Chaque étape** : `~/.claude/bin/codex-gate-drive.sh "<question de validation>"`. Le helper reprend automatiquement le MÊME thread → Codex garde le contexte de toutes les étapes précédentes, **même après un relais de session**. Lire le `VERDICT:` sur la dernière ligne de stdout.
+3. **Verdict explicite** exigé en dernière ligne de la réponse Codex : `VERDICT: APPROVE | REQUEST_CHANGES | NEEDS_INFO`.
+   - `APPROVE` → passer à l'étape suivante.
+   - `REQUEST_CHANGES` → appliquer `receiving-code-review` (vérifier chaque point, push back si faux), corriger dans un **micro-commit**, puis re-soumettre via un nouvel appel `codex-gate-drive.sh` (il reprend le même thread).
+   - `NEEDS_INFO` → re-soumettre la réponse via `codex-gate-drive.sh` (même thread), sans avancer d'étape.
+4. **Cap** : après 3 `REQUEST_CHANGES` sur la même étape → STOP, demander l'arbitrage de l'utilisateur (pas de 4e tour automatique).
+
+Filet de continuité (`.codex-gate-log.md`) : si le rollout disque est perdu (nettoyage, corruption, UUID égaré), le helper retombe sur un cold start **re-seedé par le ledger** pour reconstruire le fil. Le ledger sert aussi de journal lisible inter-sessions des verdicts par étape.
+
+Pré-requis : `codex` CLI dans le PATH avec `codex exec resume` (vérifié sur `codex-cli 0.135.0`) et `~/.claude/bin/codex-gate-drive.sh` exécutable. Le serveur MCP `codex` n'est plus nécessaire pour la gate elle-même (il reste disponible pour usage ad-hoc).
+
+## Anti-veille machine pendant un travail long (`caffeinate`)
+Au démarrage de **tout travail long ou autonome** sur ce projet (gate Codex par étape, exécution jusqu'à un point donné du plan, boucle autonome), lancer **en arrière-plan** `caffeinate -dimsu` (Bash `run_in_background`) AVANT d'attaquer la première micro-étape, et le laisser tourner toute la durée du travail. But : la machine ne se met pas en veille pendant une session longue potentiellement non surveillée (sinon le travail s'interrompt). macOS uniquement ; sans objet ailleurs.
+
+## Routing des décisions : Codex décide le technique, l'utilisateur décide l'argent/produit
+**Pour toute question qui se poserait normalement à l'utilisateur, la poser à CODEX, et c'est Codex qui décide**, dès lors qu'elle est **technique, architecture, refactor, implémentation, trade-off d'ingénierie ou similaire**. Ne PAS interrompre l'utilisateur pour ces choix : les soumettre au gate Codex (via `codex-gate-drive.sh`, même thread) et suivre son verdict.
+
+**Les SEULES questions à poser à l'utilisateur** (pas à Codex) sont celles qui ont un impact sur :
+1. **l'argent** — coûts ou revenus (pricing, dépenses, quotas payants, facturation crédits) ;
+2. **les choix de modèles** (quel LLM/modèle utiliser) ;
+3. **les choix de features et liés au produit** — fonctionnalités, UX, UI, parcours, positionnement.
+
+Exception déjà prévue : le **Cap 3 `REQUEST_CHANGES`** (ci-dessus) reste le seul cas où un blocage TECHNIQUE remonte à l'utilisateur — c'est un deadlock, pas une décision ordinaire.
+
+## Obéissance stricte à la consigne de périmètre + arrêt unique toléré
+**Écouter et respecter OBLIGATOIREMENT la consigne de périmètre de l'utilisateur — c'est un ordre, pas une suggestion.** Si l'utilisateur demande d'exécuter **automatiquement jusqu'à un point précis** du plan (ex. « ne t'arrête pas avant la phase G ») :
+1. **NE PAS s'arrêter** entre les micro-étapes pour demander une validation, donner un statut non demandé, ou poser « est-ce que je continue ? ». Enchaîner les micro-étapes gatées (gate Codex + tsc relu + commit) sans pause jusqu'au point demandé.
+2. **Le SEUL arrêt toléré** avant ce point est l'**avertissement de scope** : prévenir qu'un **gros morceau à risque** arrive (refactor lourd du cœur, étape byte-equivalence-critique, étape qui mérite un contexte frais) où **repartir d'une session propre vaut mieux que continuer dégradé**. C'est un avertissement, PAS une demande de permission déguisée.
+3. **À cet arrêt UNIQUEMENT**, fournir **OBLIGATOIREMENT, tout en fin de message, le bloc exact à copier-coller** pour relancer la prochaine session (consigne de reprise + pointeurs mémoire / PLAN / `.codex-gate-thread`). **Sans ce bloc de reprise, l'arrêt n'est pas valide.**
+
+Toute autre forme d'arrêt (pause pour confirmation, statut intermédiaire non sollicité, « je continue ? ») VIOLE cette consigne = erreur agentique à appender dans `agentic-mistakes.md` (catégorie `ARRET NON AUTORISE`).
+
+## Relais autonome de session au point d'arrêt (auto-handoff iTerm2)
+Au point d'arrêt unique toléré ci-dessus (avertissement de scope), **automatiser le passage de relais vers une session fraîche** au lieu d'attendre que l'utilisateur ferme/rouvre/colle à la main. But : enchaîner les sessions sans intervention jusqu'à la fin du plan ou une question utilisateur. Le relais se fait via iTerm2 ; macOS uniquement.
+
+À ce point d'arrêt, dans l'ordre :
+1. **Écrire le recap dans `.codex-gate-resume.md`** à la racine = exactement le contenu du bloc de reprise (consigne de reprise + point cible + pointeurs PLAN / `.codex-gate-thread` / mémoire). C'est ce fichier que la session suivante lira.
+2. **Afficher quand même le bloc copier-coller en fin de message** (exigence du point 3 ci-dessus maintenue) : il sert de **fallback** si le relais auto échoue.
+3. **Dernière action : lancer `~/.claude/bin/codex-relay.sh`** depuis la racine du projet, avec un **timeout Bash ≥ 150000 ms** (le helper attend la confirmation de démarrage de la nouvelle session + 60 s de latence avant de fermer le pane courant). Le helper spawn un pane iTerm2 frais qui relance `claude --effort max --permission-mode bypassPermissions` sur le fichier de reprise. **Ne jamais utiliser `--print`** : le relais reste interactif pour pouvoir poser une question utilisateur.
+
+Garde-fous (détaillés dans l'en-tête du helper) :
+- **`--effort max`** forcé — PAS `ultracode` : les workflows multi-agents sont incompatibles avec le gate séquentiel mono-thread (fan-out parallèle vs `git diff HEAD` + un verdict/étape).
+- **Kill-switch manuel** : poser un fichier `STOP` à la racine coupe la chaîne au relais suivant. Il ne se déclenche **jamais** seul.
+- **Cap absolu** `CODEX_RELAY_CAP` (défaut 10) : **seul arrêt automatique**. Compteur `.codex-gate-relay-count`, **par plan** (RAZ au début du plan, cf. § Gate Codex point 2). Le relever via `export CODEX_RELAY_CAP=N` quand un plan en a besoin.
+- **Échec du relais** (helper code ≠ 0 : STOP, cap atteint, nouvelle session non démarrée, Automation/TCC non autorisée) → le pane courant est **conservé** et l'utilisateur reprend via le bloc copier-coller. L'arrêt reste donc valide (le bloc est présent).
+
+Setup une fois (machine) : accorder l'autorisation Automation « iTerm contrôle iTerm » au 1er `osascript` ; si le 1er lancement `bypassPermissions` affiche un écran de confirmation, l'accepter une fois ; régler iTerm (Profils → Session → « Prompt before closing ») pour ne pas bloquer la fermeture auto d'un pane avec job actif.

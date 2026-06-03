@@ -1,6 +1,65 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Gate Codex : indépendance d'abord, confrontation ensuite (anti-ancrage, symétrique)
+
+### Contexte
+Sur les contextes d'idéation/diagnostic, Codex était susceptible d'être **ancré** par l'analyse de Claude (« voici ma solution, t'es d'accord ? ») → il critique dans le cadre de Claude au lieu de penser frais. Perte de la valeur des deux avis indépendants. Demande utilisateur : Codex doit réfléchir **seul à partir de la demande originale d'abord**, puis confrontation — l'idée utile peut venir de l'un comme de l'autre (symétrique).
+
+### Changements
+- `CLAUDE.md` § Gate Codex → sous-section « Indépendance d'abord, confrontation ensuite (anti-ancrage) ». Pour idéation/diagnostic (feature, diagnostic — **pas** la review de diff) : fournir à Codex la **demande originale verbatim + contexte neutre, SANS la solution/conclusion de Claude** ; Codex produit son propre raisonnement d'abord ; confrontation ensuite (2ᵉ relance `codex exec resume` montrant l'avis de Claude, ou synthèse Claude). Exception : review de diff = ancrage inhérent OK.
+
+### Vérif
+Doc/doctrine uniquement. Cohérent avec § Routing (décision produit = utilisateur) et la doctrine produit Board AI (désaccords exposés).
+
+---
+## 2026-06-03 — Gate Codex : périmètre risk-tiered + second regard diagnostic (captures / incompréhension)
+
+### Contexte
+Étendre Codex au-delà des seuls plans multi-étapes, sans tomber dans le « Codex sur tout » (coût/latence + bruit qui érode l'attention). Décision utilisateur (impacte le coût → arbitrage utilisateur, pas Codex).
+
+### Changements
+- `CLAUDE.md` § Gate Codex : nouvelle sous-section « Périmètre — quand faire intervenir Codex ». **Gate obligatoire** sur changements à risque (durabilité/byte-equiv, scoring, auth/sécu, migrations, prompts doctrine, refacto/logique non triviale), plan ou standalone, via `codex-gate-drive.sh`. **Second regard diagnostic** sur captures de bug / incompréhension via `codex exec -s read-only -i <capture>` (hors gate diff-based, car souvent pas de changement). **Sounding board** sur idées de features/produit via `codex exec -s read-only` (Codex critique faisabilité/risques/alternatives, **ne décide pas** — la décision produit reste à l'utilisateur, cf. § Routing). **Skip** : UI, petits fix, typos/commentaires/format/doc.
+
+### Vérif
+Flag `-i/--image` de `codex exec` confirmé dans `codex exec --help`. Doc/doctrine uniquement, aucun code exécutable modifié.
+
+---
+## 2026-06-03 — Gate Codex : migration MCP → `codex exec resume` (continuité survit aux relais) + ledger
+
+### Contexte
+Une session relayée affichait *« The thread expired (Codex sessions are ephemeral). I'll start a fresh thread… »* → le gate repartait d'un thread neuf en perdant le contexte des étapes précédentes. Cause racine : le handle de thread MCP (`mcp__codex__codex-reply`) est scopé au process `codex mcp-server` ; il meurt à tout redémarrage de process (relais via `codex-relay.sh`). Le rollout de la conversation existe pourtant **sur disque** (`~/.codex/sessions/…/rollout-*-<id>.jsonl`, source `mcp`), et `codex exec resume <id>` sait le reprendre cross-process.
+
+### Changements
+- `~/.claude/bin/codex-gate-drive.sh` (nouveau, global) : pilote UNE étape de gate. **Create** via `codex exec -s read-only --json` (capture `thread.started.thread_id`), **resume** ensuite via `codex exec resume <id> -c sandbox_mode=read-only` (reprend le rollout disque). Effort `xhigh` forcé (override `CODEX_GATE_EFFORT`). Persiste `.codex-gate-thread`, append le ledger `.codex-gate-log.md` (1 bloc/tour : étape + verdict). Payload passé en **stdin** (`-`) pour éviter ARG_MAX sur gros diffs. Fallback : si `resume` échoue (rollout perdu), cold start **re-seedé par le ledger**. `codex-gate.sh` (builder de payload) inchangé.
+- `CLAUDE.md` : § « Gate Codex par étape » réécrit (MCP → drive script ; protocole 1 appel/étape ; RAZ `.codex-gate-thread` + `.codex-gate-log.md` au début du plan) ; § « Routing des décisions » parenthèse « thread MCP » → `codex-gate-drive.sh`.
+- `.gitignore` : `+ /.codex-gate-log.md` (artefact local, hors payload du gate).
+
+### Vérif
+Mécanisme testé **bout-en-bout** dans un repo git temp isolé (effort `low`, jamais dans angeldesk) : `create` capture l'UUID ; `resume` rappelle un mot-clé du tour précédent **thread inchangé** (`mode=resume`) = continuité réelle via rollout disque (pas via seed). Deux bugs trouvés et corrigés en cours de test : (1) `printf '- …'` lu comme option par bash → format `%s` + tiret dans la donnée ; (2) `codex exec resume` rejette `--color` (que `create` accepte) → retiré de la branche resume. `bash -n` OK ; `git check-ignore .codex-gate-log.md` OK ; `codex-cli 0.135.0`.
+
+### Reste
+1er run réel en plan multi-étapes sur angeldesk (notamment à travers un vrai relais) pour confirmer en conditions. NB : `.codex-gate-thread` d'angeldesk a changé pendant cette session (activité d'une autre session concurrente) — les edits de fichiers trackés ci-dessus (CLAUDE.md, .gitignore) apparaîtront dans le `git diff HEAD` d'un éventuel gate concurrent en cours.
+
+---
+## 2026-06-02 — Relais autonome de session (auto-handoff iTerm2) au point d'arrêt de scope
+
+### Contexte
+Éviter le cycle manuel fermer/rouvrir Claude + coller le recap toutes les ~20 min. Au point d'arrêt « avertissement de scope » (CLAUDE.md § Obéissance stricte), la session spawn elle-même une session fraîche et se ferme.
+
+### Changements
+- `~/.claude/bin/codex-relay.sh` (nouveau, global) : spawn d'un pane iTerm2 frais via AppleScript natif (`split` + `write text` + `close`, pas de keystrokes/System Events), relance `claude --effort max --permission-mode bypassPermissions` sur `.codex-gate-resume.md`. Sentinelle de démarrage `.codex-relay-up` + 60 s de latence + check `.codex-relay-dead`/pane-existe avant de fermer le pane courant. Cible le pane via `${ITERM_SESSION_ID#*:}` et l'app iTerm par **bundle id** `com.googlecode.iterm2` (insensible au nom iTerm/iTerm2). Flag **`--dry-run`** : B lance `echo+sleep` au lieu de claude (valide iTerm/TCC/fermeture sans session autonome ; ignore le cap).
+- `CLAUDE.md` : section « Relais autonome de session au point d'arrêt » + RAZ compteur au début du plan (gate Codex point 2).
+- `.gitignore` : ignore les artefacts relais (`.codex-gate-resume.md`, `.codex-gate-relay-count`, `.codex-relay-up/-dead`, `STOP`) + `.codex-gate-thread` (sinon inclus comme untracked dans le payload `codex-gate.sh`).
+- Garde-fous : `STOP` file (kill manuel, jamais auto) ; cap `CODEX_RELAY_CAP` (défaut 10) via `.codex-gate-relay-count` (par plan).
+
+### Vérif
+`bash -n` OK ; gardes STOP/cap/non-iTerm testées en sandbox (exit 3/4/2) ; gitignore 6/6 ignorés ; flags `--effort max` + `--permission-mode bypassPermissions` confirmés via `claude --help`. NON testé en réel : spawn/close osascript (exige iTerm + Automation/TCC au 1er run ; le 1er `bypassPermissions` peut demander une confirmation à accepter une fois).
+
+### Reste
+Valider le 1er relais réel : autoriser « iTerm contrôle iTerm » (Automation), accepter le bypass une fois, régler iTerm « Prompt before closing » pour ne pas bloquer la fermeture auto.
+
+---
 ## 2026-06-02 — Durabilité Deep Dive d-3-1 (DTO FullAnalysisStepState v4 — carry intra-Tier1, additif byte-inert)
 
 ### Contexte

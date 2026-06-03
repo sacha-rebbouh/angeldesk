@@ -22,6 +22,7 @@
 | 2026-05-28 | DIAGNOSTIC | Diagnostic "zombie analyse" sans lire le code du mode thesis-first (pause = state attendu, pas un crash) — action destructive (status FAILED + refund) prise sur faux diagnostic, rollbackée |
 | 2026-05-28 | DIAGNOSTIC | Récidive : 3e occurrence du même pattern "conclure depuis un champ DB / pattern observable sans lire le code" dans la même session (zombie, userPlan=FREE depuis User.subscriptionStatus, incohérence UI/DB non vérifiée) |
 | 2026-06-03 | DIAGNOSTIC | Fix Bug 1 conçu depuis la FORME du crash avant de lire l'exception exacte (pourtant dans analysis.summary) ; gate Codex REQUEST_CHANGES a recadré avant toute implémentation |
+| 2026-06-03 | PRÉCONDITION | Reconduit le pattern "raffiner le graphe stepwise EN PLACE" (splits d-4..d-7) sans réévaluer sa précondition (flag OFF) — désormais ON ; risque cross-deploy noté tôt PUIS écarté, Codex l'a escaladé en blocking |
 
 ---
 
@@ -180,3 +181,11 @@
 - **Comment corrigé** : Codex (gate read-only) a rendu REQUEST_CHANGES sur le plan (« the exact exception text is required »). J'ai lu failFullAnalysis → vu le summary → query DB → exception exacte → fix recadré (robustesse de sérialisation, pas dégradation) → APPROVE.
 - **Impact** : 1 tour de gate Codex sur un plan à côté, rattrapé AVANT toute implémentation (le gate a fait son travail) ; zéro code erroné écrit.
 - **Lesson** : pour un CRASH, récupérer le message d'exception EXACT AVANT de concevoir le fix. Sur Angel Desk, `failFullAnalysis` le persiste dans `analysis.summary` — 1re chose à lire avant de raisonner sur les chemins de throw. Le gate Codex pré-implémentation est le filet qui a évité le fix erroné.
+
+### 2026-06-03 — PRÉCONDITION — Reconduit "raffiner le graphe stepwise en place" sans réévaluer sa précondition (flag OFF → ON)
+- **Contexte** : split tier0-thesis (durabilité Deep Dive, suivi post-mortem #2). Les splits précédents (d-4..d-7) modifiaient le graphe stepwise v3 EN PLACE sans bumper la version.
+- **Erreur** : j'ai d'abord codé le split EN PLACE dans le graphe v3, par mimétisme des splits précédents, sans bumper `STEPWISE_GRAPH_VERSION`. J'avais pourtant NOTÉ le risque cross-deploy plus tôt dans mon analyse (« changer le step graph pour la même version est unsafe pour les runs en vol ») puis je l'ai ÉCARTÉ (« same as prior splits, accepted »). Codex (gate impl) l'a rendu en REQUEST_CHANGES blocking : avec le flag ON, des runs `graphVersion=3` en vol replayent sur des step IDs qui n'existent plus → rerun Tier0 + régression de snapshot.
+- **Cause racine du raisonnement** : pattern-matching sur les splits précédents (« d-4..d-7 ont fait en place → je fais pareil ») sans vérifier que LEUR précondition (flag OFF, aucun run en vol) tenait encore. La précondition avait changé (flag ON depuis avekapeti). J'ai traité une règle CONTEXTUELLE comme absolue. Aggravant : j'avais explicitement repéré le risque puis l'avais rationalisé en « accepté comme avant ».
+- **Comment corrigé** : gate Codex impl REQUEST_CHANGES → bump version 4, route v3 → graphe FROZEN (mêmes step IDs), v4 → split. APPROVE au re-gate.
+- **Impact** : 1 tour de gate (REQUEST_CHANGES → fix → APPROVE), rattrapé AVANT merge/deploy ; zéro run cassé en prod.
+- **Lesson** : (1) quand un pattern n'est sûr que SOUS une précondition (ici « flag OFF / pas de run en vol »), re-vérifier la précondition à CHAQUE réutilisation — un flag qui bascule ON invalide les raccourcis pris quand il était OFF. (2) Quand j'ai DÉJÀ noté un risque dans l'analyse puis que je l'écarte, traiter cet écartement comme suspect : l'avoir écrit signifie qu'une part du raisonnement l'a jugé réel ; exiger une justification explicite (preuve que la précondition tient), pas un « comme avant ».

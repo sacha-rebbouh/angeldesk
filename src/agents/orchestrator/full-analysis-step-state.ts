@@ -52,17 +52,36 @@ export const FULL_ANALYSIS_STEP_STATE_VERSION = 4 as const;
  * Identifiants d'unités du pipeline stepwise (ordre d'exécution). `tier0-facts` est
  * ISOLÉ de `tier0-thesis` (D.5d, gate Codex) pour confiner la ré-exécution du
  * `createFactEventsBatch` non idempotent à sa propre unité durable.
+ *
+ * Le graphe v4 SPLIT `tier0-thesis` en `tier0-pre-context` (doc-extractor + deck-coherence +
+ * context-engine = 1er SNAPSHOT) et `tier0-thesis-extractor` (thesis-extractor ~280s peelé,
+ * gate Codex Option B) : on isole le thesis-extractor SANS frontière durable avant le 1er
+ * snapshot, pour éviter le re-chargement de `evidenceToday` (wall-clock, loadEvidenceContextSafe)
+ * qui driverait au replay. `tier0-thesis` reste utilisé par les graphes v2 ET v3 (frozen).
+ *
+ * Le graphe v4 SPLIT aussi le batch tier3-pré (conditions/contradiction/devils, parallèle en
+ * single-pass) en steps per-agent durables : `tier3-setup` (startSynthesis + DealTerms/Structure/
+ * BAPrefs) puis `tier3-pre-conditions` / `tier3-pre-contradiction` / `tier3-pre-devils`. L'écriture
+ * `previousResults` des 3 est DIFFÉRÉE sur le step devils (les 3 agents tournent contre la baseline
+ * post-glue, byte-équiv du parallèle). `tier3-pre` (step unique) reste utilisé par v2/v3 (frozen).
+ * Ajouter des lastUnit ne change PAS la forme du snapshot → pas de bump de version.
  */
 export type FullAnalysisUnit =
   | "init"
   | "tier0-facts"
   | "tier0-thesis"
+  | "tier0-pre-context"
+  | "tier0-thesis-extractor"
   | "tier1-phase-a"
   | "tier1-phase-b"
   | "tier1-phase-c"
   | "tier1-phase-d"
   | "post-tier1-glue"
   | "tier3-pre"
+  | "tier3-setup"
+  | "tier3-pre-conditions"
+  | "tier3-pre-contradiction"
+  | "tier3-pre-devils"
   | "tier2-sector"
   | "tier3-post";
 
@@ -70,12 +89,18 @@ export const FULL_ANALYSIS_UNITS: readonly FullAnalysisUnit[] = [
   "init",
   "tier0-facts",
   "tier0-thesis",
+  "tier0-pre-context",
+  "tier0-thesis-extractor",
   "tier1-phase-a",
   "tier1-phase-b",
   "tier1-phase-c",
   "tier1-phase-d",
   "post-tier1-glue",
   "tier3-pre",
+  "tier3-setup",
+  "tier3-pre-conditions",
+  "tier3-pre-contradiction",
+  "tier3-pre-devils",
   "tier2-sector",
   "tier3-post",
 ];

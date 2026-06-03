@@ -31,6 +31,15 @@ yarn-error.log*
 .pnpm-debug.log*
 /.codex-temp/
 
+# gate Codex + relais autonome de session (artefacts locaux, hors payload du gate)
+/.codex-gate-thread
+/.codex-gate-log.md
+/.codex-gate-resume.md
+/.codex-gate-relay-count
+/.codex-relay-up
+/.codex-relay-dead
+/STOP
+
 # env files (can opt-in for committing if needed)
 .env*
 

@@ -46,9 +46,13 @@ export interface StateTransition {
  * Mapping unité stepwise -> AnalysisState restauré (D.5b b-4). L'état reflète le startX
  * déjà effectué quand l'unité s'est terminée, de sorte que la transition validée du
  * step SUIVANT parte d'un état légal (cf. graphe isValidTransition) :
- *   init -> INITIALIZING (start()) ; tier0-thesis -> GATHERING (startGathering au
- *   context-engine ; thesis ne transitionne pas) ; tier1-* -> ANALYZING (startAnalysis) ;
+ *   init -> INITIALIZING (start()) ; tier0-thesis / tier0-pre-context / tier0-thesis-extractor ->
+ *   GATHERING (startGathering au context-engine ; thesis ne transitionne pas — le graphe v4 split le
+ *   step tier0-thesis en tier0-pre-context + tier0-thesis-extractor, même état GATHERING) ;
+ *   tier1-* -> ANALYZING (startAnalysis) ;
  *   post-tier1-glue -> DEBATING (startDebate dans le consensus global) ; tier3-pre /
+ *   tier3-setup / tier3-pre-conditions / tier3-pre-contradiction / tier3-pre-devils (split v4 du
+ *   batch tier3-pré en steps per-agent durables ; startSynthesis a lieu dans tier3-setup) /
  *   tier2-sector / tier3-post -> SYNTHESIZING (startSynthesis ; aucun retour ANALYZING).
  * Continuations valides : GATHERING->ANALYZING, ANALYZING->DEBATING, DEBATING->SYNTHESIZING,
  * SYNTHESIZING->COMPLETED. (Gate Codex : tier2-sector NE DOIT PAS mapper ANALYZING, sinon
@@ -58,12 +62,18 @@ const UNIT_TO_STATE: Record<FullAnalysisUnit, AnalysisState> = {
   "init": "INITIALIZING",
   "tier0-facts": "INITIALIZING",
   "tier0-thesis": "GATHERING",
+  "tier0-pre-context": "GATHERING",
+  "tier0-thesis-extractor": "GATHERING",
   "tier1-phase-a": "ANALYZING",
   "tier1-phase-b": "ANALYZING",
   "tier1-phase-c": "ANALYZING",
   "tier1-phase-d": "ANALYZING",
   "post-tier1-glue": "DEBATING",
   "tier3-pre": "SYNTHESIZING",
+  "tier3-setup": "SYNTHESIZING",
+  "tier3-pre-conditions": "SYNTHESIZING",
+  "tier3-pre-contradiction": "SYNTHESIZING",
+  "tier3-pre-devils": "SYNTHESIZING",
   "tier2-sector": "SYNTHESIZING",
   "tier3-post": "SYNTHESIZING",
 };
