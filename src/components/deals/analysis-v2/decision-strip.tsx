@@ -64,11 +64,20 @@ export function DecisionStrip({ model }: { model: Model }) {
     return `${STOP} alerte${STOP > 1 ? "s" : ""} · ${INVESTIGATE_FURTHER} investigation${INVESTIGATE_FURTHER > 1 ? "s" : ""} · ${PROCEED_WITH_CAUTION} vigilance · ${PROCEED} conforme${PROCEED > 1 ? "s" : ""}`;
   })();
 
-  const thesisLabel = thesisVerdict ? THESIS_VERDICT_CONFIG[thesisVerdict]?.label ?? thesisVerdict : "Thèse non qualifiée";
+  // #3 : ne PAS présenter le verdict thèse INITIAL comme abouti quand la
+  // réconciliation n'a pas tourné (hors thesis_only). Le verdict initial n'a
+  // pas été confronté aux findings → afficher un état honnête, pas "Thèse
+  // contrastée" qui contredit le détail "non aboutie".
+  const thesisConfronted = completion.hasThesisReconciler || model.coverage.isThesisOnly;
+  const thesisLabel = !thesisConfronted
+    ? "Thèse non réconciliée"
+    : thesisVerdict
+      ? THESIS_VERDICT_CONFIG[thesisVerdict]?.label ?? thesisVerdict
+      : "Thèse non qualifiée";
   const thesisDetail = (() => {
     if (completion.hasThesisReconciler) return "Réconciliation thèse effectuée.";
     if (model.coverage.isThesisOnly) return "Réconciliation non applicable (analyse arrêtée à la thèse).";
-    return "Réconciliation thèse vs findings non aboutie.";
+    return "Verdict initial non confronté aux findings (réconciliation non aboutie).";
   })();
 
   const { coverage } = model;
@@ -98,7 +107,7 @@ export function DecisionStrip({ model }: { model: Model }) {
         <MetricCard
           eyebrow="Verdict thèse"
           primary={thesisLabel}
-          tone={thesisVerdict === "alert_dominant" ? "alert" : thesisVerdict === "vigilance" ? "info" : thesisVerdict === "contrasted" ? "vigilance" : thesisVerdict ? "favorable" : "neutral"}
+          tone={!thesisConfronted ? "neutral" : thesisVerdict === "alert_dominant" ? "alert" : thesisVerdict === "vigilance" ? "info" : thesisVerdict === "contrasted" ? "vigilance" : thesisVerdict ? "favorable" : "neutral"}
           detail={thesisDetail}
         />
         <MetricCard

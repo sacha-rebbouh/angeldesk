@@ -2,10 +2,13 @@ import { CheckCircle2, CircleDashed, XCircle } from "lucide-react";
 
 import { PartialBanner } from "../atoms/partial-banner";
 import { StatusPill } from "../atoms/status-pill";
+import { capitalizeFirstMeaningfulChar } from "../lib/presentation";
 import type { ThesisSectionModel } from "../lib/selectors";
 
+// « declared » = annoncé par le fondateur, NON vérifié → c'est une zone
+// d'incertitude, pas un état neutre. On le rend en tonalité vigilance (#12).
 const STATUS_ICON = {
-  declared: { icon: CircleDashed, label: "Déclaré", color: "var(--av-muted)" },
+  declared: { icon: CircleDashed, label: "Déclaré · non vérifié", color: "var(--av-vigilance)" },
   verified: { icon: CheckCircle2, label: "Vérifié", color: "var(--av-favorable)" },
   contradicted: { icon: XCircle, label: "Contredit", color: "var(--av-alert)" },
 };
@@ -55,7 +58,7 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
               style={{ border: "1px solid var(--av-line)", boxShadow: "var(--av-shadow-soft)" }}
             >
               <span className="av-eyebrow">{card.title}</span>
-              <p className="text-[14px] leading-relaxed text-[var(--av-ink)]">{formatLargeNumbersInText(card.body)}</p>
+              <p className="text-[14px] leading-relaxed text-[var(--av-ink)]">{capitalizeFirstMeaningfulChar(formatLargeNumbersInText(card.body))}</p>
             </article>
           ))}
         </div>
@@ -76,12 +79,20 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
                   <li key={lb.id} className="grid items-start gap-3 px-4 py-3 sm:grid-cols-[24px_minmax(0,1fr)_auto]">
                     <Icon size={18} aria-hidden="true" style={{ color: meta.color, marginTop: 2 }} />
                     <div className="min-w-0">
-                      <p className="text-[14px] font-medium text-[var(--av-ink)]">{formatLargeNumbersInText(lb.statement)}</p>
+                      <p className="text-[14px] font-medium text-[var(--av-ink)]">{capitalizeFirstMeaningfulChar(formatLargeNumbersInText(lb.statement))}</p>
                       {lb.impact ? (
                         <p className="mt-1 text-[12px] text-[var(--av-muted)]">Impact : {formatLargeNumbersInText(lb.impact)}</p>
                       ) : null}
                       {lb.validationPath ? (
-                        <p className="mt-1 text-[12px] text-[var(--av-muted)]">À vérifier : {formatLargeNumbersInText(lb.validationPath)}</p>
+                        <p className="mt-1.5 flex flex-wrap items-baseline gap-1.5 text-[12px] leading-relaxed text-[var(--av-ink)]">
+                          <span
+                            className="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                            style={{ color: "var(--av-vigilance)", background: "var(--av-vigilance-soft)", border: "1px solid var(--av-vigilance-edge)" }}
+                          >
+                            À vérifier
+                          </span>
+                          <span>{formatLargeNumbersInText(lb.validationPath)}</span>
+                        </p>
                       ) : null}
                     </div>
                     <span
@@ -114,7 +125,9 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
                   </div>
                   {alert.detail ? <p className="text-[12px] leading-relaxed text-[var(--av-muted)]">{formatLargeNumbersInText(alert.detail)}</p> : null}
                   {alert.category ? (
-                    <span className="text-[11px] uppercase tracking-wide text-[var(--av-muted)]">{alert.category}</span>
+                    <span className="inline-flex w-fit items-center rounded-md bg-[var(--av-surface-muted)] px-2 py-0.5 text-[11px] font-medium text-[var(--av-muted)]" style={{ border: "1px solid var(--av-line)" }}>
+                      {alert.category}
+                    </span>
                   ) : null}
                 </article>
               </li>

@@ -1,6 +1,20 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phases 0b/2/3 : guard runtime + section thèse + verdict honnête
+
+### Contexte
+Suite refonte analysis-v2. 0b = filet de tests ; 2 = section thèse (#10 capitalisation, #12 statut/à-vérifier visibles, #13 enum → label) ; 3 = decision-strip (#3 cohérence verdict thèse).
+
+### Changements
+- 0b : `__tests__/fixtures/hostile-results.ts` (fixture réutilisable) + `__tests__/doctrine-runtime-guard.test.ts` (guard data-driven, helpers + VM thèse).
+- 2 : `sections/thesis-section.tsx` — `capitalizeFirstMeaningfulChar` (card bodies + load-bearing), statut `declared` en tonalité vigilance (« Déclaré · non vérifié »), bloc « À vérifier » en badge visible, catégorie en chip lisible. `lib/selectors.ts` (`buildThesisSectionModel`) — `category` mappée via `thesisAlertCategoryLabel` (VM expose le label, jamais l'enum).
+- 3 : `decision-strip.tsx` — `thesisConfronted` : verdict thèse affiché « Thèse non réconciliée » (tonalité neutre) quand la réconciliation n'a pas abouti (hors `thesis_only`), au lieu du verdict initial présenté comme abouti.
+
+### Vérif
+26 tests verts (analysis-v2). `tsc --noEmit` propre (hors `exit-strategist.ts` préexistant). Gate Codex Phases 2+3 : APPROVE.
+
+---
 ## 2026-06-03 — Refonte analysis-v2 (22 pts) — Phase 0a : helpers de présentation + labels doctrine
 
 ### Contexte

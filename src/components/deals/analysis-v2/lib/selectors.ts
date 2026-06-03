@@ -1,4 +1,5 @@
 import type { EvidenceSolidity, Orientation } from "@/lib/ui-configs";
+import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
 
 import {
   agentData,
@@ -319,7 +320,8 @@ export function buildThesisSectionModel(thesis: Record<string, unknown> | null, 
         id: stringAt(item, ["id"]) ?? title.slice(0, 40),
         title,
         detail: stringAt(item, ["detail"]),
-        category: stringAt(item, ["category"]),
+        // Label user-facing (jamais l'enum brut "ASSUMPTION_FRAGILE" → #13).
+        category: thesisAlertCategoryLabel(stringAt(item, ["category"])),
         severity: sev,
         severityLabel: severityLabel(sev),
       } satisfies ThesisAlert;

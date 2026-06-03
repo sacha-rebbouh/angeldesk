@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_TECHNICAL_NAMES, sanitizeSourceLabel } from "../lib/presentation";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
-import { HOSTILE_CATEGORIES, HOSTILE_SOURCE_STRINGS } from "./fixtures/hostile-results";
+import { buildThesisSectionModel } from "../lib/selectors";
+import { HOSTILE_CATEGORIES, HOSTILE_RESULTS, HOSTILE_SOURCE_STRINGS, HOSTILE_THESIS } from "./fixtures/hostile-results";
 
 /**
  * Guard doctrine RUNTIME (data-driven) — complète le source-scan de
@@ -36,6 +37,17 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
       expect(label).not.toBeNull();
       expect(label!).not.toMatch(/_/); // pas d'underscore
       expect(label!).not.toBe(cat.toUpperCase()); // pas l'enum brut
+    }
+  });
+
+  // Phase 2 : le view-model thèse expose la catégorie en LABEL, jamais l'enum brut.
+  it("buildThesisSectionModel.alerts[].category est un label, pas un enum brut", () => {
+    const model = buildThesisSectionModel(HOSTILE_THESIS, HOSTILE_RESULTS, "full_analysis");
+    expect(model.alerts.length).toBeGreaterThan(0);
+    for (const alert of model.alerts) {
+      if (alert.category == null) continue;
+      expect(alert.category).not.toMatch(/_/);
+      expect(alert.category).not.toMatch(/^[A-Z_]+$/); // pas un enum SCREAMING_CASE
     }
   });
 });
