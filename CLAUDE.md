@@ -309,6 +309,14 @@ dbagents.md           → Maintenance DB
 
 Pour tout plan en plusieurs étapes sur ce projet, faire auditer **chaque étape par Codex avant de passer à la suivante**. Codex est relecteur, jamais éditeur. **Ne jamais demander à l'utilisateur de copier-coller vers Codex** : la gate s'en charge automatiquement.
 
+### Périmètre — quand faire intervenir Codex (pas seulement les plans)
+
+Décider par **risque**, pas par « plan ou pas » :
+
+- **Gate obligatoire** (plan OU changement standalone) — tout ce qui peut corrompre l'état silencieusement ou violer la doctrine : durabilité / byte-equivalence, formules de scoring, auth / sécurité, migrations Prisma, prompts doctrine (sanitizers anti-prescriptifs), refacto ou logique non triviale. Via `codex-gate-drive.sh` (diff-based, cf. protocole ci-dessous).
+- **Second regard diagnostic** — quand l'utilisateur partage une **capture d'un bug**, signale une **incompréhension**, ou demande de **comprendre un comportement** : demander aussi l'avis de Codex en read-only. Ici PAS de gate diff-based (souvent aucun changement encore) → appeler directement `codex exec -s read-only [-i <capture>] "<symptôme + question + code pertinent>"` (le flag `-i` joint l'image ; si la capture n'est pas un fichier exploitable, résumer le symptôme). Codex sert de second diagnostic, pas de décideur.
+- **Pas de gate** — changements **UI**, **petits fix** triviaux, typos, commentaires, formatage, doc pure. La review marginale ne justifie ni le coût/latence ni le bruit qui érode l'attention sur les verdicts qui comptent.
+
 > **Pourquoi `codex exec` et plus MCP `codex`/`codex-reply`** : le handle de thread MCP est scopé au process `codex mcp-server`. Il meurt à tout redémarrage de process (relais de session via `codex-relay.sh`, réinit du MCP) → `codex-reply` répond *"thread expired"* → on repart sur un thread neuf en perdant le contexte des étapes précédentes. `codex exec resume <id>` reprend le rollout **sur disque** (`~/.codex/sessions/…/rollout-*-<id>.jsonl`), donc la continuité survit aux relais. (Vérifié : reprise cross-process d'une session, même UUID conservé.)
 
 Un seul helper pilote tout : **`~/.claude/bin/codex-gate-drive.sh "<question de validation>"`**. Il (a) construit le payload d'audit via `codex-gate.sh` (HEAD, fichiers touchés, diff vs HEAD, `tsc --noEmit`, `vitest run`, question) ; (b) **crée** la session Codex au 1er appel ou la **reprend** (`resume`) ensuite ; (c) force read-only + effort `xhigh` (override : `CODEX_GATE_EFFORT`) ; (d) persiste l'UUID dans `.codex-gate-thread` ; (e) **append le ledger** `.codex-gate-log.md` (1 bloc par tour : étape + verdict) ; (f) imprime la réponse de Codex sur stdout. Codex n'écrit jamais dans le repo.
