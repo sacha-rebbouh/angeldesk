@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { AGENT_TECHNICAL_NAMES, sanitizeSourceLabel } from "../lib/presentation";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
-import { buildDecisionSectionModel, buildMemoSectionModel, buildThesisSectionModel } from "../lib/selectors";
+import { buildDecisionSectionModel, buildMemoSectionModel, buildSignalsSectionModel, buildThesisSectionModel } from "../lib/selectors";
 import { HOSTILE_CATEGORIES, HOSTILE_RESULTS, HOSTILE_SOURCE_STRINGS, HOSTILE_THESIS } from "./fixtures/hostile-results";
 
 /**
@@ -64,6 +64,19 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
       expectNoAgentName(r.title); // un title runtime peut contenir un nom d'agent → doit être scrubé
       // le red flag du fixture a un `impact` mais pas de `title` → titre dérivé, pas générique
       expect(r.title).not.toBe("Risque identifié");
+    }
+  });
+
+  // Phase 5 : les cartes signaux (étaye/alerte) ne contiennent aucun nom d'agent.
+  it("buildSignalsSectionModel.cards : oneLiner/supports/concerns sans nom d'agent ni score /100", () => {
+    const model = buildSignalsSectionModel(HOSTILE_RESULTS);
+    expect(model.cards.length).toBeGreaterThan(0);
+    for (const c of model.cards) {
+      const strings = [c.oneLiner ?? "", ...c.supports, ...c.concerns];
+      for (const s of strings) {
+        expectNoAgentName(s);
+        expect(s, `"${s}" expose un score /100`).not.toMatch(/\/\s*100/); // #16 : pas de score chiffré dans le texte
+      }
     }
   });
 

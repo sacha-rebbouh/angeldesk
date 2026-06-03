@@ -407,8 +407,25 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
           ? intensityToOrientation(intensity)
           : null;
       const solidity = isString(solidityFromContribution) ? (solidityFromContribution as EvidenceSolidity) : null;
-      const insights = flattenInsights(snap.data, 3);
-      const oneLiner = summarizeOneLiner(snap.data) ?? deriveFallbackOneLiner(snap.data);
+      // #14/#15 : séparer « ce qui étaye » (insights non négatifs) de « ce qui
+      // alerte » (red flags structurés) — plus de puces positives sous une
+      // orientation d'alerte. Tout est scrubé des noms d'agents.
+      const supports = flattenInsights(snap.data, 5)
+        .filter((i) => !NEGATIVE_KEYWORDS.test(i))
+        .map((i) => scrubAgentNamesFromText(i))
+        .filter((i) => i.length > 0)
+        .slice(0, 3);
+      const concerns = arrayAt(snap.data, ["redFlags"])
+        .map((rf) => {
+          if (!isRecord(rf)) return "";
+          const t = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]) ?? stringAt(rf, ["impact"]) ?? "";
+          return scrubAgentNamesFromText(t);
+        })
+        .filter((t) => t.length > 0)
+        .slice(0, 3);
+      // oneLiner scrubé des noms d'agents (cohérent avec supports/concerns).
+      const rawOneLiner = summarizeOneLiner(snap.data) ?? deriveFallbackOneLiner(snap.data);
+      const oneLiner = rawOneLiner ? scrubAgentNamesFromText(rawOneLiner) || null : null;
       const redFlags = arrayAt(snap.data, ["redFlags"]).length;
       const questions = arrayAt(snap.data, ["questions"]).length;
       const score = numberAt(snap.data, ["score", "value"]);
@@ -419,7 +436,8 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
         orientation,
         solidity,
         scoreValue: score != null ? Math.round(score) : null,
-        insights,
+        supports,
+        concerns,
         redFlagCount: redFlags,
         questionCount: questions,
       });
@@ -451,18 +469,16 @@ function deriveFallbackOneLiner(data: unknown): string | null {
     const t = stringAt(rf, ["title"]) ?? stringAt(rf, ["description"]);
     if (t) return compactString(`Signal d'alerte : ${t}`, 180);
   }
-  const score = numberAt(data, ["score", "value"]);
-  if (typeof score === "number") {
-    const intensity = stringAt(data, ["signalIntensity"]);
-    const intl = intensity
-      ? ({
-          low: "signal favorable",
-          elevated: "signal contrasté",
-          high: "vigilance requise",
-          critical: "signal d'alerte",
-        } as Record<string, string>)[intensity]
-      : null;
-    return `Score ${Math.round(score)}/100${intl ? ` · ${intl}` : ""}`;
+  // #16 : pas de score chiffré dans le oneLiner — uniquement un libellé d'intensité non numérique.
+  const intensity = stringAt(data, ["signalIntensity"]);
+  if (intensity) {
+    const intl = ({
+      low: "Signal favorable",
+      elevated: "Signal contrasté",
+      high: "Vigilance requise",
+      critical: "Signal d'alerte",
+    } as Record<string, string>)[intensity];
+    if (intl) return intl;
   }
   return null;
 }

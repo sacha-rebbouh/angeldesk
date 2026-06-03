@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-03 — Refonte analysis-v2 — Phase 5 : cartes signaux (étaye/alerte, score masqué, légende)
+
+### Contexte
+Section 3 « Signaux par dimension » : #14/#15 puces positives sous orientation d'alerte, #16 score /100 biaisant, #17/#2 orientations peu différenciées.
+
+### Changements
+- `atoms/agent-card.tsx` : deux mini-listes « Ce qui étaye » / « Ce qui alerte » ; score /100 **masqué** (conservé en modèle).
+- `lib/selectors.ts` (`buildSignalsSectionModel`) : `supports` (insights non-négatifs scrubés) + `concerns` (red flags title/description/impact scrubés) remplacent `insights[]` ; `oneLiner` scrubé ; `deriveFallbackOneLiner` ne renvoie plus de « Score X/100 » (libellé d'intensité non numérique).
+- `sections/signals-section.tsx` : légende compacte des 4 orientations (#17/#2).
+- Guard : assertion VM cards (oneLiner/supports/concerns sans nom d'agent ni `/100`).
+
+### Vérif
+32 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 5 : APPROVE (après 1 REQUEST_CHANGES : score /100 dans oneLiner fallback + oneLiner non scrubé).
+
+---
 ## 2026-06-03 — Refonte analysis-v2 — Phase 4 : Section 1 (provenance, troncatures, flèche, convergence)
 
 ### Contexte

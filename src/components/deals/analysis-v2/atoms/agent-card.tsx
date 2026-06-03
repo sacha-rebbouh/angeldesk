@@ -8,11 +8,40 @@ export type AgentCardSignal = {
   oneLiner: string | null;
   orientation: Orientation | null;
   solidity: EvidenceSolidity | null;
+  /** Score interne /100 — conservé mais MASQUÉ par défaut (#16 : biais de lecture). */
   scoreValue: number | null;
-  insights: string[];
+  /** Ce qui étaye la thèse (insights non négatifs). */
+  supports: string[];
+  /** Ce qui alerte (red flags structurés). */
+  concerns: string[];
   redFlagCount: number;
   questionCount: number;
 };
+
+function MiniList({
+  title,
+  items,
+  dotColor,
+}: {
+  title: string;
+  items: string[];
+  dotColor: string;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--av-muted)]">{title}</span>
+      <ul className="flex flex-col gap-1 text-[13px] text-[var(--av-ink)]">
+        {items.map((item, idx) => (
+          <li key={idx} className="flex gap-2">
+            <span aria-hidden="true" className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full" style={{ background: dotColor }} />
+            <span className="leading-snug">{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export function AgentCard({ signal }: { signal: AgentCardSignal }) {
   return (
@@ -29,18 +58,15 @@ export function AgentCard({ signal }: { signal: AgentCardSignal }) {
         <p className="text-[13px] leading-relaxed text-[var(--av-ink)]">{signal.oneLiner}</p>
       ) : (
         <p className="text-[13px] leading-relaxed text-[var(--av-muted)]">
-          Synthèse textuelle non fournie par le modèle — voir le score et les signaux ci-dessous.
+          Synthèse textuelle non fournie par le modèle — voir les signaux ci-dessous.
         </p>
       )}
-      {signal.insights.length > 0 ? (
-        <ul className="flex flex-col gap-1.5 text-[13px] text-[var(--av-ink)]">
-          {signal.insights.slice(0, 3).map((insight, idx) => (
-            <li key={idx} className="flex gap-2">
-              <span aria-hidden="true" className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--av-line-strong)]" />
-              <span className="leading-snug">{insight}</span>
-            </li>
-          ))}
-        </ul>
+      {/* #14/#15 : séparer ce qui étaye vs ce qui alerte (plus de puces positives sous une orientation d'alerte). */}
+      {signal.supports.length > 0 || signal.concerns.length > 0 ? (
+        <div className="flex flex-col gap-2.5">
+          <MiniList title="Ce qui étaye" items={signal.supports} dotColor="var(--av-favorable)" />
+          <MiniList title="Ce qui alerte" items={signal.concerns} dotColor="var(--av-alert)" />
+        </div>
       ) : null}
       <footer
         className="mt-auto flex items-center justify-between border-t pt-2 text-[12px] text-[var(--av-muted)]"
@@ -50,14 +76,6 @@ export function AgentCard({ signal }: { signal: AgentCardSignal }) {
           {signal.redFlagCount} alerte{signal.redFlagCount > 1 ? "s" : ""} · {signal.questionCount} question
           {signal.questionCount > 1 ? "s" : ""}
         </span>
-        {signal.scoreValue != null ? (
-          <span className="av-tabular text-[var(--av-ink)]">
-            <strong className="font-semibold">{signal.scoreValue}</strong>
-            <span className="text-[var(--av-muted)]"> /100</span>
-          </span>
-        ) : (
-          <span className="text-[var(--av-muted)]">Score interne indisponible</span>
-        )}
       </footer>
     </article>
   );
