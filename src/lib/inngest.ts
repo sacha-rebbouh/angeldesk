@@ -23,6 +23,7 @@ import {
 import { prisma } from '@/lib/prisma'
 import { logger } from '@/lib/logger'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
+import { sendAnalysisReadyNotification, type AnalysisReadyStep } from '@/services/notifications/analysis-ready-email'
 import type { SourceStats } from '@/agents/maintenance/types'
 import { inngest } from '@/lib/inngest-client'
 import { compensateFailedAnalysis, reapStaleAnalyses, reapStaleAnalysisById, reapStaleAnalysisByDispatchEventId } from '@/lib/analysis-compensation'
@@ -393,6 +394,23 @@ export const dealAnalysisFunction = inngest.createFunction(
       await step.run('refund-on-failure', async () => {
         await compensateFailedAnalysis({ analysisId: analysisResult.sessionId, userId, dealId, type });
       });
+    } else if (analysisResult.sessionId) {
+      // Phase 4 — notifier l'utilisateur que l'analyse est prête (email idempotent, côté
+      // Inngest, UNIQUEMENT sur succès). Best-effort : un échec d'envoi persistant (après
+      // le retry Inngest du step `send`) ne doit pas marquer une analyse réussie comme échouée.
+      try {
+        await sendAnalysisReadyNotification({
+          analysisId: analysisResult.sessionId,
+          userId,
+          dealId,
+          step: step as unknown as AnalysisReadyStep,
+        });
+      } catch (notifyError) {
+        logger.warn(
+          { notifyError, analysisId: analysisResult.sessionId },
+          '[deal-analysis] notification « analyse prête » best-effort échouée'
+        );
+      }
     }
 
     return analysisResult;
@@ -512,6 +530,22 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
 
       if (!result.success) {
         await compensateResumeFailure('compensate-resume-failure');
+      } else {
+        // Phase 4 — notifier que l'analyse (reprise) est prête. Même claim idempotent que la
+        // 1ʳᵉ complétion : la ligne Analysis est la même → un seul email même après resume.
+        try {
+          await sendAnalysisReadyNotification({
+            analysisId,
+            userId,
+            dealId,
+            step: step as unknown as AnalysisReadyStep,
+          });
+        } catch (notifyError) {
+          logger.warn(
+            { notifyError, analysisId },
+            '[deal-analysis-resume] notification « analyse prête » best-effort échouée'
+          );
+        }
       }
 
       return result;

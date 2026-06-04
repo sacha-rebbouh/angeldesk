@@ -1,6 +1,26 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — UX/infra — Phase 4 (refonte 5-sujets) : masque « analyse en cours » + email idempotent
+
+### Contexte
+Refonte 5-sujets (S4, Phase 1 seule). Une analyse Deep Dive est longue ; rien n'empêchait l'utilisateur de naviguer ailleurs en croyant l'analyse perdue. Objectif : masque plein écran au niveau page/onglets pendant qu'une analyse tourne + email « analyse prête » à la complétion. PAS de cancel, PAS de refund.
+
+### Changements
+- `prisma/schema.prisma` : 2 colonnes nullable sur `Analysis` — `analysisReadyEmailClaimedAt` / `analysisReadyEmailSentAt` (idempotence email). Client régénéré (`prisma generate`, sans DB). **Migration NON appliquée** (Neon capé) → générée en Phase 6.
+- `src/services/notifications/analysis-ready-email.ts` (NEW) : `sendAnalysisReadyNotification()` — **claim ATOMIQUE** (`updateMany where {id, sentAt:null, claimedAt:null}` → `count===1`) puis send Resend, `sentAt` au succès / reset `claimedAt`+throw à l'échec (retry Inngest). Claim ET send en `step.run` distincts. URL deal via env SERVEUR (`APP_URL`/`VERCEL_URL`).
+- `src/services/notifications/email.ts` : `isEmailConfigured()` + `sendAnalysisReadyEmail()` (template HTML doctrine-safe, aucun langage prescriptif).
+- `src/lib/inngest.ts` : appel best-effort sur succès de `dealAnalysisFunction` ET `dealAnalysisResumeFunction` (try/catch : un échec d'email ne fait pas échouer une analyse réussie). FAILED → pas d'email.
+- `src/components/deals/analysis-v2/analysis-running-overlay.tsx` (NEW) : masque plein écran `fixed inset-0 z-[60]`, dérivé du statut RUNNING serveur (poll, même queryKey que AnalysisV2Live), `beforeunload` informatif + verrou de scroll.
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` : monte l'overlay au niveau page (au-dessus des onglets + chat).
+
+### Hardening idempotence (gate Codex round 1 → REQUEST_CHANGES, corrigé)
+Codex a trouvé 2 fenêtres de double-envoi : (1) concurrence — claim mémoïsé `true` au retry après reset+throw alors qu'un autre run a envoyé ; (2) succès Resend puis échec de l'`update(sentAt)` → replay renvoie. Root cause : le step send renvoyait sans condition. Fix : **clé d'idempotence provider** `Idempotency-Key: analysis-ready/${analysisId}` (Resend dédoublonne 24h — doc vérifiée) + **re-check `sentAt`** en tête du step send. Exactly-once garanti au niveau provider.
+
+### Vérif
+`tsc` clean (hors baseline `exit-strategist.ts` untracked). Tests notif 8/8 : `analysis-ready-email` 6/6 (claim gagnant/perdu, re-check skip concurrent, échec Resend→reset+throw, non-configuré, destinataire absent, assert clé idempotence) + `email-idempotency` 2/2 (header `Idempotency-Key` atteint `fetch`). `doctrine-guard` 10/10 (reword « bloquant »→« plein écran »). Suite complète : aucune régression introduite — 11 fichiers rouges = 6 `*-integration` (Neon capé) + 5 coaching/live (fallout Phase 3, rouges aussi à HEAD, vérifié par stash). Gate Codex : **APPROVE** (round 2).
+
+---
 ## 2026-06-04 — UI/infra — Phase 3 (refonte 5-sujets) : archivage du Live Coaching
 
 ### Contexte

@@ -24,6 +24,14 @@ function getConfig() {
   return { apiKey, adminEmail }
 }
 
+/**
+ * true si le service email (Resend) est configuré. Permet aux appelants de distinguer
+ * « non configuré » (dev/local — no-op, pas de retry) d'un échec d'envoi réel.
+ */
+export function isEmailConfigured(): boolean {
+  return !!process.env.RESEND_API_KEY
+}
+
 // ============================================================================
 // CORE API
 // ============================================================================
@@ -37,7 +45,8 @@ interface ResendResponse {
  * Envoie un email via Resend
  */
 export async function sendEmail(
-  message: EmailMessage
+  message: EmailMessage,
+  options?: { idempotencyKey?: string }
 ): Promise<{ success: boolean; id?: string; error?: string }> {
   const config = getConfig()
   if (!config) {
@@ -45,12 +54,19 @@ export async function sendEmail(
   }
 
   try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
+    }
+    // Idempotence côté provider (Resend) : même clé au replay/retry → réponse identique
+    // SANS renvoyer l'email (TTL 24h). Garantit l'exactly-once même si l'appel est rejoué.
+    if (options?.idempotencyKey) {
+      headers['Idempotency-Key'] = options.idempotencyKey
+    }
+
     const response = await fetch(`${RESEND_API_BASE}/emails`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         from: 'Angel Desk <maintenance@angeldesk.app>',
         to: message.to,
@@ -357,6 +373,86 @@ Action requise: ${alert.action}
 `
 
   return sendToAdmin(`🚨 [CRITIQUE] ${alert.agent} - Intervention requise`, html, text)
+}
+
+/**
+ * Notifie l'investisseur que l'analyse d'un deal est prête à être consultée (Phase 4).
+ * Transactionnel : envoyé à la complétion d'une analyse longue lancée depuis l'app. Ton
+ * analytique conforme à la doctrine — aucun langage prescriptif (pas de décision suggérée).
+ */
+export async function sendAnalysisReadyEmail(params: {
+  to: string
+  dealName: string
+  dealUrl: string | null
+  /** Clé d'idempotence Resend (≤256 car.) — déduplique les renvois sur 24h. */
+  idempotencyKey?: string
+}): Promise<{ success: boolean; id?: string; error?: string }> {
+  const { to, dealName, dealUrl } = params
+  const safeName = escapeHtml(dealName)
+  const safeUrl = dealUrl ? escapeHtml(dealUrl) : null
+
+  const cta = safeUrl
+    ? `<div style="text-align: center; margin: 28px 0;">
+        <a href="${safeUrl}" class="btn">Consulter l'analyse</a>
+      </div>`
+    : ''
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1f2937; line-height: 1.6; }
+    .container { max-width: 600px; margin: 0 auto; padding: 24px; }
+    .header { text-align: center; padding: 16px 0 8px; }
+    .title { font-size: 22px; font-weight: 700; color: #111827; margin: 0; }
+    .card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px; margin: 20px 0; }
+    .deal { font-weight: 600; color: #111827; }
+    .btn { display: inline-block; background: #111827; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 600; font-size: 15px; }
+    .footer { text-align: center; padding: 20px; color: #6b7280; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="title">Votre analyse est prête</h1>
+    </div>
+
+    <div class="card">
+      <p style="margin: 0 0 12px;">
+        L'analyse de <span class="deal">${safeName}</span> est terminée.
+      </p>
+      <p style="margin: 0; color: #374151;">
+        Retrouvez les signaux, les preuves sourcées, les contradictions détectées et les zones
+        d'incertitude consolidés par Angel Desk.
+      </p>
+      ${cta}
+    </div>
+
+    <div class="footer">
+      <p>Angel Desk consolide signaux, preuves, contradictions et zones d'incertitude. Il ne décide pas à votre place.</p>
+    </div>
+  </div>
+</body>
+</html>
+`
+
+  const text = `Votre analyse est prête
+
+L'analyse de ${dealName} est terminée. Retrouvez les signaux, les preuves sourcées, les contradictions détectées et les zones d'incertitude consolidés par Angel Desk.
+${dealUrl ? `\nConsulter l'analyse : ${dealUrl}\n` : ''}
+Angel Desk consolide signaux, preuves, contradictions et zones d'incertitude. Il ne décide pas à votre place.
+`
+
+  return sendEmail(
+    {
+      to,
+      subject: `Votre analyse Angel Desk est prête — ${dealName}`,
+      html,
+      text,
+    },
+    params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : undefined
+  )
 }
 
 // ============================================================================

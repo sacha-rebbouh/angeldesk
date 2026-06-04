@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { AnalysisPanelWrapper } from "@/components/deals/analysis-panel-wrapper";
 import { AnalysisV2Live } from "@/components/deals/analysis-v2/analysis-v2-live";
+import { AnalysisRunningOverlay } from "@/components/deals/analysis-v2/analysis-running-overlay";
 import { buildAnalysisV2ViewModel } from "@/components/deals/analysis-v2/lib/selectors";
 import type { ResultsMap } from "@/components/deals/analysis-v2/lib/extractors";
 import { ScoreGrid } from "@/components/deals/score-display";
@@ -262,7 +263,13 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
 
 
   const content = (
-    <div className="space-y-6">
+    <>
+      {/* Phase 4 — masque plein écran page/onglets pendant qu'une analyse tourne (statut serveur). */}
+      <AnalysisRunningOverlay
+        dealId={deal.id}
+        initialActive={deal.analyses.some((a) => a.status === "RUNNING")}
+      />
+      <div className="space-y-6">
       {/* Breadcrumb */}
       <nav aria-label="Fil d'Ariane" className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <Link href="/deals" className="hover:text-foreground transition-colors">Deals</Link>
@@ -501,7 +508,8 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
       </DealDetailTabs>
 
       {/* Chat IA - split view on desktop (F86) */}
-    </div>
+      </div>
+    </>
   );
 
   return (

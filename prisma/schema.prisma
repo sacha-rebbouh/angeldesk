@@ -667,6 +667,15 @@ model Analysis {
   // Nullable + additif : analyses existantes / non-stepwise restent a null.
   dispatchEventId String?
 
+  // Phase 4 (masque « analyse en cours » + notification) — idempotence ATOMIQUE de l'email
+  // « analyse prête ». `claimedAt` est posé par un updateMany conditionnel (claim) AVANT
+  // l'envoi Resend ; `sentAt` est posé APRÈS succès Resend. La garde (claimed=null AND
+  // sent=null) garantit un seul envoi même si plusieurs invocations Inngest complètent la
+  // même analyse (retry worker, resume). Nullable + additif : analyses existantes restent à
+  // null. Migration générée en Phase 6 (migrate dev quand Neon up).
+  analysisReadyEmailClaimedAt DateTime?
+  analysisReadyEmailSentAt    DateTime?
+
   // Relations to sub-models (cascade delete)
   scoredFindings     ScoredFinding[]
   reasoningTraces    ReasoningTrace[]
