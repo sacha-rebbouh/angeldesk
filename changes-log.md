@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — UI/produit — Phase 1 (refonte 5-sujets) : archivage de l'onglet Conditions
+
+### Contexte
+Refonte 5-sujets (plan agréé avec Codex). L'onglet « Conditions » (conçu pour un BA solo saisissant les conditions) est devenu une usine à gaz hors cœur de cible → archivé mais réactivable, sans casser l'agent `conditions-analyst` (dont `synthesis-deal-scorer` + `memo-generator` dépendent).
+
+### Changements
+- `src/lib/feature-flags.ts` (nouveau) : `isConditionsTabEnabled()` — flag SERVEUR runtime (pas `NEXT_PUBLIC` ; `page.tsx` est Server Component `force-dynamic` → toggle sans redeploy). Défaut `false` = archivé.
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` : gate du `TabsTrigger` + `TabsContent` « conditions » + retrait du champ `conditions` du `ScoreGrid` (Vue d'ensemble) quand off ; calcule `allowedTabs` passé à `DealDetailTabs`. Agent `conditions-analyst` CONSERVÉ.
+- `src/components/deals/score-display.tsx` : ligne « Conditions » rendue seulement si `scores.conditions !== undefined` (`page.tsx` est le seul caller de `ScoreGrid`).
+- `src/components/deals/deal-detail-tabs.tsx` : prop `allowedTabs` (onglets réellement rendus) → une URL `?tab=conditions` avec flag off retombe sur `analysis` (plus de vue vide). Couvre aussi `live` (Phase 3).
+
+### Vérif
+`tsc --noEmit` : aucune nouvelle erreur (seule baseline = `exit-strategist.ts`, untracked, hors périmètre). Choix flag-gating vs suppression d'imports : confirmé par Codex (imports non morts, référencés dans le JSX gaté). Gate Codex Phase 1 : **APPROVE** (après correction du cas URL `?tab=conditions` via `allowedTabs`).
+
+---
 ## 2026-06-04 — infra/coûts — Reaper watchdog : cadence cron 5 min → 15 min (compute-hours Neon)
 
 ### Contexte

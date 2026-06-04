@@ -161,9 +161,11 @@ export const ScoreGrid = React.memo(function ScoreGrid({ scores, stage }: ScoreG
         <ScoreDisplay label="Marché" score={scores.market} size="sm" />
         <ScoreDisplay label="Produit" score={scores.product} size="sm" />
         <ScoreDisplay label="Financiers" score={scores.financials} size="sm" />
-        <div className="col-span-2">
-          <ScoreDisplay label="Conditions" score={scores.conditions ?? null} size="sm" />
-        </div>
+        {scores.conditions !== undefined && (
+          <div className="col-span-2">
+            <ScoreDisplay label="Conditions" score={scores.conditions ?? null} size="sm" />
+          </div>
+        )}
       </div>
     </div>
   );

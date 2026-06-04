@@ -1,24 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { Tabs } from "@/components/ui/tabs";
 
-const VALID_TABS = new Set(["analysis", "overview", "docs-team", "conditions", "live"]);
-
-function resolveTab(tab: string | null | undefined, fallback = "analysis"): string {
-  return tab && VALID_TABS.has(tab) ? tab : fallback;
-}
+const ALL_TABS = ["analysis", "overview", "docs-team", "conditions", "live"] as const;
 
 interface DealDetailTabsProps {
   initialTab: string;
+  /**
+   * Onglets réellement rendus (selon les feature flags serveur). Par défaut : tous.
+   * Empêche une URL `?tab=<archivé>` (bookmark/ancien lien) d'activer un onglet
+   * sans `TabsTrigger`/`TabsContent` correspondant → vue vide. Voir
+   * isConditionsTabEnabled() / isLiveCoachingEnabled() côté page.tsx.
+   */
+  allowedTabs?: readonly string[];
   children: ReactNode;
 }
 
-export function DealDetailTabs({ initialTab, children }: DealDetailTabsProps) {
+export function DealDetailTabs({ initialTab, allowedTabs, children }: DealDetailTabsProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const validTabs = useMemo(() => new Set<string>(allowedTabs ?? ALL_TABS), [allowedTabs]);
+  const resolveTab = useCallback(
+    (tab: string | null | undefined, fallback = "analysis"): string =>
+      tab && validTabs.has(tab) ? tab : fallback,
+    [validTabs]
+  );
+
   const [activeTab, setActiveTab] = useState(() =>
     resolveTab(searchParams.get("tab"), resolveTab(initialTab))
   );
@@ -29,11 +39,11 @@ export function DealDetailTabs({ initialTab, children }: DealDetailTabsProps) {
       setActiveTab((currentTab) => currentTab === nextTab ? currentTab : nextTab);
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [initialTab, searchParams]);
+  }, [initialTab, searchParams, resolveTab]);
 
   const handleTabChange = useCallback(
     (nextTab: string) => {
-      if (!VALID_TABS.has(nextTab)) return;
+      if (!validTabs.has(nextTab)) return;
       setActiveTab(nextTab);
       const params = new URLSearchParams(searchParams.toString());
       if (nextTab === "analysis") {
@@ -44,7 +54,7 @@ export function DealDetailTabs({ initialTab, children }: DealDetailTabsProps) {
       const query = params.toString();
       window.history.replaceState(null, "", query ? `${pathname}?${query}` : pathname);
     },
-    [pathname, searchParams]
+    [pathname, searchParams, validTabs]
   );
 
   return (

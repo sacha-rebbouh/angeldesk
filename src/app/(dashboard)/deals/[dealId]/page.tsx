@@ -26,6 +26,7 @@ import { ConditionsTab } from "@/components/deals/conditions/conditions-tab";
 import type { TermsResponse } from "@/components/deals/conditions/types";
 import type { ConditionsAnalystData } from "@/agents/types";
 import { normalizeTranche, buildTermsResponse } from "@/services/terms-normalization";
+import { isConditionsTabEnabled } from "@/lib/feature-flags";
 import { DealInfoCard } from "@/components/deals/deal-info-card";
 import { ChatWrapper } from "@/components/chat/chat-wrapper";
 import LiveTabLoader from "@/components/deals/live-tab-loader";
@@ -147,6 +148,14 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
   const user = await requireAuth();
   const { dealId } = await params;
   const { tab } = await searchParams;
+  const conditionsTabEnabled = isConditionsTabEnabled();
+  const allowedTabs = [
+    "analysis",
+    "overview",
+    "docs-team",
+    ...(conditionsTabEnabled ? ["conditions"] : []),
+    "live",
+  ];
   const deal = await getDeal(dealId, user.id);
 
   if (!deal) {
@@ -311,7 +320,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
       </div>
 
       {/* Thesis-first: ouvrir l'analyse IA par defaut pour montrer la these avant tout score */}
-      <DealDetailTabs initialTab={tab || "analysis"}>
+      <DealDetailTabs initialTab={tab || "analysis"} allowedTabs={allowedTabs}>
         <TabsList className="flex w-full overflow-x-auto">
           <TabsTrigger value="analysis" className="whitespace-nowrap">
             <Brain className="mr-1 h-4 w-4" />
@@ -321,10 +330,12 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           <TabsTrigger value="docs-team" className="whitespace-nowrap">
             Documents & Team
           </TabsTrigger>
-          <TabsTrigger value="conditions" className="whitespace-nowrap">
-            <Handshake className="mr-1 h-4 w-4" />
-            Conditions
-          </TabsTrigger>
+          {conditionsTabEnabled && (
+            <TabsTrigger value="conditions" className="whitespace-nowrap">
+              <Handshake className="mr-1 h-4 w-4" />
+              Conditions
+            </TabsTrigger>
+          )}
           <TabsTrigger value="live" className="whitespace-nowrap">
             <Radio className="mr-1 h-4 w-4" />
             Live
@@ -352,7 +363,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                     scores={{
                       global: canonicalDeal.globalScore,
                       fundamentals: deal.fundamentalsScore,
-                      conditions: deal.conditionsScore,
+                      ...(conditionsTabEnabled ? { conditions: deal.conditionsScore } : {}),
                       team: canonicalDeal.teamScore,
                       market: canonicalDeal.marketScore,
                       product: canonicalDeal.productScore,
@@ -454,7 +465,8 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           />
         </TabsContent>
 
-        {/* Tab 4: Conditions & Negociation */}
+        {/* Tab 4: Conditions & Negociation (archivé — réactivable via SHOW_CONDITIONS_TAB) */}
+        {conditionsTabEnabled && (
         <TabsContent value="conditions">
           <ConditionsTab
             dealId={deal.id}
@@ -470,6 +482,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
             })()}
           />
         </TabsContent>
+        )}
 
         {/* Tab 5: Live Coaching */}
         <TabsContent value="live">
