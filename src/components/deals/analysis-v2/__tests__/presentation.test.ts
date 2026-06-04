@@ -100,6 +100,13 @@ describe("préfixe 'agent:' / 'source:' (finding Codex Phase 4)", () => {
     const cleaned = scrubAgentNamesFromText("competitive-intel: Omission de concurrents majeurs");
     expect(cleaned).toBe("Omission de concurrents majeurs");
   });
+
+  it("retire le résidu « Source: » orphelin MID-string après scrub d'agent (Phase 5b)", () => {
+    const r = scrubAgentNamesFromText("Le BP montre un écart. Source: deck-forensics.");
+    expect(r).not.toMatch(/source\s*:/i);
+    expect(r.toLowerCase()).not.toContain("deck-forensics");
+    expect(r).toContain("Le BP montre un écart");
+  });
 });
 
 describe("capitalizeFirstMeaningfulChar", () => {
@@ -233,6 +240,47 @@ describe("scrubPrescriptiveDecisionLanguage (doctrine — l'outil ne décide jam
   it("entrée vide", () => {
     expect(scrubPrescriptiveDecisionLanguage(null)).toBe("");
     expect(scrubPrescriptiveDecisionLanguage("")).toBe("");
+  });
+});
+
+describe("scrubPrescriptiveDecisionLanguage — classe « verdict » (Phase 5b)", () => {
+  it("neutralise « (non) investissable » sur un sujet deal", () => {
+    expect(scrubPrescriptiveDecisionLanguage("Ce deal est investissable malgré tout.")).not.toMatch(/investissable/i);
+    expect(scrubPrescriptiveDecisionLanguage("Cette société n'est pas investissable.")).not.toMatch(/investissable/i);
+    expect(scrubPrescriptiveDecisionLanguage("Ce deal est investissable.")).toMatch(/signal/i);
+  });
+
+  it("neutralise les impératifs d'investissement", () => {
+    expect(scrubPrescriptiveDecisionLanguage("Recommandation : ne pas investir.")).not.toMatch(/ne pas investir/i);
+    expect(scrubPrescriptiveDecisionLanguage("Il faut investir maintenant.")).not.toMatch(/il faut\s+investir/i);
+  });
+
+  it("neutralise rejeter/passer + objet deal, dealbreaker, go/no-go", () => {
+    expect(scrubPrescriptiveDecisionLanguage("Rejeter ce deal sans hésiter.")).not.toMatch(/rejeter ce deal/i);
+    expect(scrubPrescriptiveDecisionLanguage("Passer ce deal en l'état.")).not.toMatch(/passer ce deal/i);
+    const db = scrubPrescriptiveDecisionLanguage("C'est un dealbreaker structurel.");
+    expect(db).not.toMatch(/dealbreaker/i);
+    expect(db).toMatch(/risque critique/i);
+    expect(scrubPrescriptiveDecisionLanguage("Verdict : GO/NO-GO.")).not.toMatch(/go\/no-go/i);
+  });
+
+  it("NE touche PAS les usages légitimes (hypothèse, étape, thèse d'investissement)", () => {
+    expect(scrubPrescriptiveDecisionLanguage("Il faut rejeter cette hypothèse fragile.")).toContain("rejeter cette hypothèse");
+    expect(scrubPrescriptiveDecisionLanguage("Passer à l'étape suivante de la due diligence.")).toContain("Passer à l'étape");
+    expect(scrubPrescriptiveDecisionLanguage("La thèse d'investissement repose sur le NRR.")).toContain("thèse d'investissement");
+  });
+
+  it("préserve le segment où l'INVESTISSEUR est sujet (cohérence avec la classe décision)", () => {
+    const r = scrubPrescriptiveDecisionLanguage("Selon l'investisseur, ce deal reste investissable.");
+    expect(r).toContain("investisseur");
+    expect(r).toContain("investissable"); // segment investisseur conforme → intact
+  });
+
+  it("n'INVERSE JAMAIS la polarité : « non investissable » ne devient pas « favorable » (Codex 5b)", () => {
+    const r = scrubPrescriptiveDecisionLanguage("Société non investissable au prix actuel.");
+    expect(r).not.toMatch(/investissable/i);
+    expect(r).not.toMatch(/favorable/i); // constat NEUTRE, pas d'inversion négatif → favorable
+    expect(r).toMatch(/signal/i);
   });
 });
 

@@ -11,7 +11,19 @@ import {
   buildSignalsSectionModel,
   buildThesisSectionModel,
 } from "../lib/selectors";
-import { HOSTILE_CATEGORIES, HOSTILE_RESULTS, HOSTILE_SOURCE_STRINGS, HOSTILE_THESIS } from "./fixtures/hostile-results";
+import { HOSTILE_CATEGORIES, HOSTILE_MEMO_VERDICT, HOSTILE_RESULTS, HOSTILE_SOURCE_STRINGS, HOSTILE_THESIS } from "./fixtures/hostile-results";
+
+// Tournures « verdict » prescriptives bannies en surface (doctrine). Les test
+// files ne sont PAS scannés par doctrine-guard → littéraux autorisés ici.
+function expectNoVerdict(value: string) {
+  expect(value, `"${value}" : « investissable »`).not.toMatch(/investissable/i);
+  expect(value, `"${value}" : verdict rédhibitoire`).not.toMatch(/deal[\s_-]?breaker/i);
+  expect(value, `"${value}" : abstention impérative`).not.toMatch(/\bne\s+pas\s+investir\b/i);
+  expect(value, `"${value}" : impératif « il faut investir »`).not.toMatch(/\bil\s+faut\s+investir\b/i);
+  expect(value, `"${value}" : go/no-go`).not.toMatch(/\bgo\s*\/\s*no[\s_-]*go\b/i);
+  expect(value, `"${value}" : rejet impératif d'un deal`).not.toMatch(/\brejet(?:er|ez)\s+(?:ce\s+|le\s+|la\s+|l['’]|cette\s+)?(?:deal|dossier|opportunit|soci[ée]t)/i);
+  expect(value, `"${value}" : passer ce deal`).not.toMatch(/\bpasser\s+ce\s+deal\b/i);
+}
 
 /**
  * Guard doctrine RUNTIME (data-driven) — complète le source-scan de
@@ -182,6 +194,8 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
       expect(s).not.toMatch(/capacit[ée]\s+[àa]\s+prendre\s+(?:une|la|cette)\s+d[ée]cision/i);
       expect(s).not.toMatch(/fiable\s+pour\s+(?:la\s+)?d[ée]cision\b/i);
       expect(s).not.toMatch(/baser\s+(?:une|la|cette)\s+d[ée]cision/i);
+      // Défense en profondeur : la classe « verdict » est aussi proscrite sur le VM complet.
+      expectNoVerdict(s);
     }
     // les ranks piégés restent VISIBLES (reformulés, pas filtrés silencieusement)
     expect(vm.decisionSection.ranks.some((r) => /consistance/i.test(r.title))).toBe(true);
@@ -243,6 +257,34 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
     // la métrique propre reste présente, le nom d'agent est retiré du label piégé
     expect(metrics.some((m) => m.label === "Croissance")).toBe(true);
     expect(metrics.some((m) => /arr/i.test(m.label))).toBe(true);
+  });
+
+  // Phase 5b : un mémo GÉNÉRÉ truffé de tournures « verdict » prescriptives est
+  // scrubé sur TOUTES les surfaces rendues (oneLiner, keyPoints, overview, thèse,
+  // highlights, keyRisks, financialSummary, dealTerms, dueDiligence, criticalRisks,
+  // nextSteps). Non-vacuous : les champs riches sont peuplés (les verdicts ont bien
+  // transité par le scrub) — sinon l'assertion ne prouverait rien.
+  it("buildMemoSectionModel (generated) : zéro tournure « verdict » sur toutes les surfaces", () => {
+    const memo = buildMemoSectionModel(HOSTILE_MEMO_VERDICT);
+    expect(memo.kind).toBe("generated");
+    if (memo.kind !== "generated") return;
+    // Non-vacuous : les blocs riches ont bien été construits depuis le fixture hostile.
+    expect(memo.keyRisks.length).toBeGreaterThan(0);
+    expect(memo.companyOverview).toBeTruthy();
+    expect(memo.dealTerms).toBeTruthy();
+
+    const strings: string[] = [];
+    const walk = (v: unknown) => {
+      if (typeof v === "string") strings.push(v);
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    walk(memo);
+    expect(strings.length).toBeGreaterThan(5);
+    for (const s of strings) {
+      expectNoAgentName(s);
+      expectNoVerdict(s);
+    }
   });
 
   // Phase 4 (finding Codex) : le mémo reconstitué ne fabrique pas de provenance

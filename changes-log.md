@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — Doctrine/UI — Phase 5b (refonte 5-sujets) : scrub doctrine classe « verdict » + résidu Source
+
+### Contexte
+Suite Phase 5a : le mémo enrichi surface plus de texte LLM rendu. Le scrub doctrine au rendu (`scrubPrescriptiveDecisionLanguage`) ne couvrait que la classe « décision » (« prendre une décision »…). La classe **verdict binaire** (investissable, GO/NO-GO, « ne pas investir »/« il faut investir », rejeter/passer le deal, rédhibitoire) n'était pas neutralisée. Plus un résidu « Source: » orphelin après scrub d'un nom d'agent mid-string.
+
+### Changements (5b — gate Codex APPROVE round 2)
+- `analysis-v2/lib/presentation.ts` : `scrubPrescriptiveDecisionLanguage` ÉTENDU à la classe VERDICT (même boucle SEGMENT + même préservation du sujet INVESTISSEUR que la classe décision). Cible des CONSTRUCTIONS (verbe + objet deal), pas des mots nus → « thèse d'investissement », le rejet d'une hypothèse, « passer à l'étape », « montant investissable » NON touchés. `investissable` réécrit en constat **NEUTRE** dans les 2 formes (copule / objet-deal) — jamais de polarité (« non investissable » ne devient PAS « favorable », finding Codex round 1).
+- **Contrainte source-scan** : `doctrine-guard.test.ts` scanne `presentation.ts` et bannit ces littéraux en clair. Les regex sont écrites avec `\s+`/classes pour ne pas inscrire les littéraux contigus, et les commentaires évitent de les épeler (round 0 local : commentaires épelaient les littéraux → corrigés). `doctrine-guard` 10/10.
+- `analysis-v2/lib/presentation.ts` : `scrubAgentNamesFromText` retire le résidu « Source: »/« Sources: »/« Analyse: » mid-string suivi UNIQUEMENT de ponctuation/fin (LEADING_LABEL_PREFIX ne gère que la TÊTE). Edge cosmétique connu (double point possible), mais le label orphelin est retiré.
+- Tests : `presentation.test.ts` (+7 : réécritures verdict, non-inversion polarité, préservation hypothèse/étape/thèse, préservation segment investisseur, résidu Source) ; fixture DÉDIÉE `HOSTILE_MEMO_VERDICT` (memo-generator généré, shape persisté, verdicts dans 11 champs rendus, séparée pour ne pas basculer la branche reconstituted) ; `doctrine-runtime-guard` test NON-VACUOUS (champs riches peuplés + walk-all zéro verdict/agent) + walk-all VM étendu.
+
+### Vérif
+`tsc` clean (hors baseline `exit-strategist.ts` untracked). 250 tests verts (analysis-v2 + tier3 + shared) ; 62 ciblés (presentation 37, doctrine-runtime-guard 15, doctrine-guard 10). Gate Codex : round 1 REQUEST_CHANGES (inversion polarité investissable) → constat neutre + test anti-inversion → **APPROVE** round 2.
+
+---
 ## 2026-06-04 — Mémo/UI — Phase 5a (refonte 5-sujets) : enrichissement du mémo (Option B) + filet déterministe
 
 ### Contexte

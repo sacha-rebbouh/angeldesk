@@ -193,6 +193,74 @@ export const HOSTILE_THESIS: Record<string, unknown> = {
   ],
 };
 
+/**
+ * Phase 5b — fixture DÉDIÉE : un `memo-generator` GÉNÉRÉ truffé de tournures
+ * « verdict » prescriptives dans des CHAMPS RENDUS (oneLiner, keyPoints,
+ * companyOverview, thèse, highlights, keyRisks, financialSummary, dealTerms,
+ * dueDiligence, criticalRisks, nextSteps). Séparée de HOSTILE_RESULTS pour ne
+ * pas basculer la branche mémo (reconstituted) des guards existants. Aucune
+ * chaîne n'est en segment « investisseur » → toutes DOIVENT être scrubées.
+ */
+export const HOSTILE_MEMO_VERDICT: ResultsMap = {
+  "memo-generator": {
+    success: true,
+    // Shape = MemoGeneratorData PERSISTÉ (lu par le sélecteur) : teamAssessment /
+    // marketOpportunity / competitiveLandscape sont des STRINGS, dealTerms (pas
+    // dealStructure), nextSteps un string[].
+    data: {
+      executiveSummary: {
+        oneLiner: "Ce deal est clairement investissable malgré les écarts financiers.",
+        recommendation: "contrasted",
+        keyPoints: ["Il faut investir vite", "C'est un dealbreaker sur la gouvernance"],
+      },
+      companyOverview: {
+        description: "Marketplace BtoB. Verdict : GO/NO-GO à trancher rapidement.",
+        problem: "Prestataires traditionnels en retard.",
+        solution: "Connecte chefs et entreprises.",
+        businessModel: "Commission par commande.",
+        traction: "ARR 1M€ déclaré.",
+      },
+      investmentThesis: "Recommandation : ne pas investir tant que la cap table n'est pas clarifiée.",
+      investmentHighlights: [
+        { highlight: "NRR 130% (P85 secteur)", evidence: "Source: financial-auditor", dbComparable: "", source: "financial-auditor" },
+      ],
+      keyRisks: [
+        {
+          risk: "Rejeter ce deal si la dette convertible n'est pas purgée",
+          severity: "CRITICAL",
+          category: "financials",
+          mitigation: "Passer ce deal en l'absence de garanties",
+          residualRisk: "high",
+          source: "devils-advocate",
+        },
+      ],
+      financialSummary: {
+        currentMetrics: { ARR: "1M€" },
+        projections: "Projections jugées optimistes.",
+        valuationAssessment: "Société non investissable au prix actuel.",
+      },
+      teamAssessment: "Équipe solide mais c'est un dealbreaker si le CTO part.",
+      marketOpportunity: "Marché porteur, timing favorable.",
+      competitiveLandscape: "Concurrence intense mais différenciée.",
+      dealTerms: {
+        valuation: "8M€ pre-money",
+        roundSize: "1.5M€",
+        keyTerms: ["Il faut investir avant juin"],
+        negotiationPoints: ["Rejeter le dossier sinon"],
+      },
+      dueDiligenceFindings: {
+        completed: ["Audit financier partiel"],
+        outstanding: ["Trancher le GO/NO-GO final avec le comité"],
+        redFlags: [],
+      },
+      nextSteps: ["[IMMEDIATE] [INVESTOR] Ne pas investir avant clarification de la cap table"],
+      criticalRisks: [
+        { riskId: "cr-1", severity: "CRITICAL", description: "Passer ce deal serait risqué sans audit", evidence: "synthesis-deal-scorer", source: "synthesis-deal-scorer" },
+      ],
+    },
+  },
+};
+
 /** Liste plate des chaînes "source"/"location" piégées du fixture (pour les guards). */
 export const HOSTILE_SOURCE_STRINGS = [
   "Fact Store & deck-forensics",

@@ -138,6 +138,10 @@ export function scrubAgentNamesFromText(text: string | null | undefined): string
   s = s.replace(LEADING_LABEL_PREFIX, "");
   s = s.replace(AGENT_SCRUB_REGEX, " ");
   s = s.replace(/\b(?:outputs?|output)\b/gi, " ");
+  // Résidu « Source: »/« Sources: »/« Analyse: » MID-string suivi UNIQUEMENT de
+  // ponctuation/fin (le nom d'agent qui suivait vient d'être scrubé) → label
+  // orphelin retiré (LEADING_LABEL_PREFIX ne traite que la TÊTE de chaîne).
+  s = s.replace(/\b(?:sources?|analyses?|rapports?|donn[ée]es?)\s*:\s*(?=[.,;:!?)\]\-–—]|$)/gi, "");
   s = s.replace(/\s+([,.;:!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
   s = s.replace(/^[\s:,;.\-–—]+/, "").trim();
   return s;
@@ -170,11 +174,53 @@ const PRESCRIPTIVE_DECISION_REWRITES: Array<[RegExp, string]> = [
 // (sinon « l'investisseur conserve la capacité à prendre une décision » serait mutilé).
 const INVESTOR_DECISION_SUBJECT = /investisseur|business\s+angel|\bBA\b|d[ée]cideur|[àa]\s+vous|vous\s+(?:de\s+|d['’])?d[ée]cid/i;
 
+// ---------------------------------------------------------------------------
+// Filet anti-prescriptif « verdict » (doctrine — pas de verdict binaire sur le
+// deal). Cible des CONSTRUCTIONS (verbe/objet deal), pas des mots nus, pour ne
+// PAS sur-scruber les usages légitimes (« thèse d'investissement », le rejet
+// d'une HYPOTHÈSE, « passer à l'étape » — non touchés car l'objet visé est
+// deal/opportunité/dossier/société). Réécrit en constat de signal au rendu.
+//
+// NB SOURCE-GUARD : ces motifs SUPPRIMENT des tournures que `doctrine-guard`
+// bannit aussi en CLAIR (chaînes user-facing). Ils sont écrits avec \s+ et des
+// classes de caractères pour ne PAS inscrire ces littéraux contigus dans cette
+// source scannée — c'est le mécanisme de scrub, pas une chaîne affichée.
+// (Invariant vérifié mécaniquement par doctrine-guard.test.ts.)
+// ---------------------------------------------------------------------------
+const PRESCRIPTIVE_VERDICT_REWRITES: Array<[RegExp, string]> = [
+  // adjectif-verdict « investissable » : réécrit en constat NEUTRE (jamais une
+  // polarité — « non investissable » NE doit PAS devenir « favorable », Codex 5b).
+  // Forme à copule (+ adverbe éventuel) : copule consommée pour rester grammatical.
+  // Le sens « montant investissable » (capacité d'investissement, sans copule
+  // avant) n'est PAS visé.
+  [/\b(?:n['’]est\s+pas|n['’]est|est|semble|para[îi]t|reste|s['’]av[èe]re|demeure)(?:\s+\S+){0,1}\s+investissables?\b/gi, "présente un profil de signal à peser"],
+  // Forme « <objet deal> (adverbe/négation) investissable » (adjectif accolé,
+  // sans copule) → même constat NEUTRE (la négation éventuelle est consommée).
+  [/\b(deals?|soci[ée]t[ée]s?|opportunit[ée]s?|projets?|dossiers?|entreprises?|startups?|affaires?)(?:\s+\S+){0,1}\s+investissables?\b/gi, "$1 présente un profil de signal à peser"],
+  // verdict binaire go / no-go (et no-go seul) → profil de signal
+  [/\bgo\s*\/\s*no[\s_-]*go\b/gi, "profil de signal"],
+  [/\bno[\s_-]*go\b/gi, "profil d'alerte"],
+  // impératif d'abstention d'investissement → constat (verbe directif retiré)
+  [/\bne\s+pas\s+investir\b/gi, "signaux d'alerte à peser"],
+  // impératif « il (ne) faut (pas) investir » / « vous (ne) devez (pas) investir »
+  [/\b(?:il\s+(?:ne\s+)?faut\s+(?:pas\s+)?|vous\s+(?:ne\s+)?dev(?:ez|riez)\s+(?:pas\s+)?)investir\b/gi, "les signaux sont à peser"],
+  // impératif de rejet d'un objet deal|opportunité|dossier|société (objet ciblé
+  // → le rejet d'une HYPOTHÈSE n'est PAS touché)
+  [/\brejet(?:er|ez|ter)\s+(?:ce\s+|cette\s+|l['’]|le\s+|la\s+)?(?:deal|opportunit[ée]|dossier|soci[ée]t[ée]|affaire)\b/gi, "les signaux d'alerte dominent"],
+  // impératif d'écartement d'un objet deal|opportunité (objet ciblé → « passer à
+  // l'étape » n'est PAS touché)
+  [/\bpasser\s+(?:ce\s+|cette\s+)(?:deal|opportunit[ée]|dossier|affaire)\b/gi, "vigilance requise"],
+  // verdict définitif rédhibitoire → risque critique (mapping doctrine)
+  [/\bdeal[\s_-]?breakers?\b/gi, "risque critique"],
+];
+
 /**
- * Reformule les tournures prescriptives « décision » d'un texte d'agent rendu
- * (doctrine — l'OUTIL/l'ANALYSE ne décide jamais). Traité par SEGMENT : un segment
- * qui attribue la décision à l'INVESTISSEUR est conforme → laissé intact (Codex P1).
- * On ne reformule que là où le sujet est l'outil / l'analyse / les données.
+ * Reformule les tournures prescriptives « décision » ET « verdict » d'un texte
+ * d'agent rendu (doctrine — l'OUTIL/l'ANALYSE ne décide jamais, ne rend pas de
+ * verdict binaire). Traité par SEGMENT : un segment qui attribue la décision à
+ * l'INVESTISSEUR est conforme → laissé intact (Codex P1 ; « l'investisseur peut
+ * écarter ce deal » reste valide). On ne reformule que là où le sujet est
+ * l'outil / l'analyse / les données.
  */
 export function scrubPrescriptiveDecisionLanguage(text: string | null | undefined): string {
   if (!text) return text ?? "";
@@ -184,6 +230,7 @@ export function scrubPrescriptiveDecisionLanguage(text: string | null | undefine
       if (INVESTOR_DECISION_SUBJECT.test(segment)) return segment;
       let s = segment;
       for (const [re, repl] of PRESCRIPTIVE_DECISION_REWRITES) s = s.replace(re, repl);
+      for (const [re, repl] of PRESCRIPTIVE_VERDICT_REWRITES) s = s.replace(re, repl);
       return s;
     })
     .join(" ")
