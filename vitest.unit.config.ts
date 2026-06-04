@@ -19,5 +19,10 @@ export default defineConfig({
     exclude: ['node_modules', '.storybook'],
     environment: 'node',
     globals: false,
+    // Live Coaching est ARCHIVÉ en prod (flag off) mais ses routes sont testées dans leur mode
+    // ACTIVÉ (on vérifie la logique métier, pas le guard d'archivage). Le comportement archivé
+    // (403 / webhook no-op) sera couvert par des tests dédiés qui forcent le flag à "false"
+    // (vi.stubEnv). Refonte 5-sujets, Phase 3.
+    env: { LIVE_COACHING_ENABLED: 'true' },
   },
 });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { compileDealContext } from "@/lib/live/context-compiler";
@@ -10,6 +11,10 @@ import { evaluateDealCorpusReadinessSoft } from "@/services/documents/readiness-
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuth();
+
+    if (!isLiveCoachingEnabled()) {
+      return NextResponse.json({ error: "Live coaching est archivé." }, { status: 403 });
+    }
 
     const searchParams = request.nextUrl.searchParams;
     const dealId = searchParams.get("dealId");

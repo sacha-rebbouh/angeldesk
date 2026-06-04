@@ -26,7 +26,7 @@ import { ConditionsTab } from "@/components/deals/conditions/conditions-tab";
 import type { TermsResponse } from "@/components/deals/conditions/types";
 import type { ConditionsAnalystData } from "@/agents/types";
 import { normalizeTranche, buildTermsResponse } from "@/services/terms-normalization";
-import { isConditionsTabEnabled } from "@/lib/feature-flags";
+import { isConditionsTabEnabled, isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { DealInfoCard } from "@/components/deals/deal-info-card";
 import { ChatWrapper } from "@/components/chat/chat-wrapper";
 import LiveTabLoader from "@/components/deals/live-tab-loader";
@@ -149,12 +149,13 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
   const { dealId } = await params;
   const { tab } = await searchParams;
   const conditionsTabEnabled = isConditionsTabEnabled();
+  const liveCoachingEnabled = isLiveCoachingEnabled();
   const allowedTabs = [
     "analysis",
     "overview",
     "docs-team",
     ...(conditionsTabEnabled ? ["conditions"] : []),
-    "live",
+    ...(liveCoachingEnabled ? ["live"] : []),
   ];
   const deal = await getDeal(dealId, user.id);
 
@@ -336,10 +337,12 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
               Conditions
             </TabsTrigger>
           )}
-          <TabsTrigger value="live" className="whitespace-nowrap">
-            <Radio className="mr-1 h-4 w-4" />
-            Live
-          </TabsTrigger>
+          {liveCoachingEnabled && (
+            <TabsTrigger value="live" className="whitespace-nowrap">
+              <Radio className="mr-1 h-4 w-4" />
+              Live
+            </TabsTrigger>
+          )}
         </TabsList>
 
         {/* Tab 1: Vue d'ensemble — Scores + DealInfo */}
@@ -484,7 +487,8 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
         </TabsContent>
         )}
 
-        {/* Tab 5: Live Coaching */}
+        {/* Tab 5: Live Coaching (archivé — réactivable via LIVE_COACHING_ENABLED) */}
+        {liveCoachingEnabled && (
         <TabsContent value="live">
           <LiveTabLoader
             dealId={deal.id}
@@ -493,6 +497,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
             founderNames={deal.founders.map((f) => f.name)}
           />
         </TabsContent>
+        )}
       </DealDetailTabs>
 
       {/* Chat IA - split view on desktop (F86) */}

@@ -12,6 +12,7 @@ import { setScreenShareState } from "@/lib/live/visual-processor";
 import { handleApiError } from "@/lib/api-error";
 import { isValidCuid } from "@/lib/sanitize";
 import { verifyTranscriptWebhookSignature } from "@/lib/live/transcript-webhook-auth";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import {
   logCoachingLatency,
   logCoachingError,
@@ -319,6 +320,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         { error: "Unauthorized" },
         { status: verify.status }
       );
+    }
+
+    // Live Coaching archivé → ACK 200 APRÈS vérif signature, sans traitement (no DB/LLM/Neon).
+    if (!isLiveCoachingEnabled()) {
+      return NextResponse.json({ ok: true, archived: true });
     }
 
     // ── Rate limiting ──

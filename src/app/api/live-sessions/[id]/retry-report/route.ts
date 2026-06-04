@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { isValidCuid } from "@/lib/sanitize";
 import { publishSessionStatus } from "@/lib/live/ably-server";
 import { generateAndSavePostCallReport } from "@/lib/live/post-call-generator";
@@ -17,6 +18,11 @@ type RouteContext = {
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const user = await requireAuth();
+
+    if (!isLiveCoachingEnabled()) {
+      return NextResponse.json({ error: "Live coaching est archivé." }, { status: 403 });
+    }
+
     const { id } = await context.params;
 
     if (!isValidCuid(id)) {

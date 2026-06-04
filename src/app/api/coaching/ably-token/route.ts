@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { isValidCuid } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { generateAblyToken } from "@/lib/live/ably-server";
@@ -9,6 +10,10 @@ import { generateAblyToken } from "@/lib/live/ably-server";
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuth();
+
+    if (!isLiveCoachingEnabled()) {
+      return NextResponse.json({ error: "Live coaching est archivé." }, { status: 403 });
+    }
 
     const searchParams = request.nextUrl.searchParams;
     const sessionId = searchParams.get("sessionId");

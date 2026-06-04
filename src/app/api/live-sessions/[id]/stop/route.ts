@@ -6,6 +6,7 @@ import { isValidCuid } from "@/lib/sanitize";
 import { leaveMeeting } from "@/lib/live/recall-client";
 import { publishSessionStatus } from "@/lib/live/ably-server";
 import { generateAndSavePostCallReport } from "@/lib/live/post-call-generator";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { handleApiError } from "@/lib/api-error";
 
 export const maxDuration = 300;
@@ -79,20 +80,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ data: current });
     }
 
-    // Publish real-time status event
-    await publishSessionStatus(id, {
-      status: "processing",
-      message: "Session ended. Generating post-call report...",
-    });
+    // Live Coaching archivé : `stop` reste autorisé pour NETTOYER (leaveMeeting + transition de
+    // statut ci-dessus déjà faits), mais on NE déclenche PAS le rapport post-call (LLM) ni le
+    // publish temps réel (aucun client n'écoute quand l'onglet est caché). Réactivable via flag.
+    if (isLiveCoachingEnabled()) {
+      // Publish real-time status event
+      await publishSessionStatus(id, {
+        status: "processing",
+        message: "Session ended. Generating post-call report...",
+      });
 
-    // Use after() to run post-call report generation (survives response sending on Vercel)
-    after(async () => {
-      try {
-        await generateAndSavePostCallReport(id);
-      } catch (err) {
-        console.error(`[stop] Post-call report failed for session ${id}:`, err);
-      }
-    });
+      // Use after() to run post-call report generation (survives response sending on Vercel)
+      after(async () => {
+        try {
+          await generateAndSavePostCallReport(id);
+        } catch (err) {
+          console.error(`[stop] Post-call report failed for session ${id}:`, err);
+        }
+      });
+    }
 
     const current = await prisma.liveSession.findUnique({ where: { id } });
     return NextResponse.json({ data: current });

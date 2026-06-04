@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { checkRateLimit, isValidCuid } from "@/lib/sanitize";
 import { detectPlatform } from "@/lib/live/recall-client";
 import { canStartLiveSession } from "@/services/live-session-limits";
@@ -18,6 +19,10 @@ const createSessionSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
+
+    if (!isLiveCoachingEnabled()) {
+      return NextResponse.json({ error: "Live coaching est archivé." }, { status: 403 });
+    }
 
     // Rate limiting: max 10 session creations per minute
     const rateLimit = checkRateLimit(`live-sessions-post:${user.id}`, {

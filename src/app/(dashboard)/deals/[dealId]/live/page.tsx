@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { Badge } from "@/components/ui/badge";
 
 interface PageProps {
@@ -55,6 +56,12 @@ export default async function LiveCoachingPage({ params, searchParams }: PagePro
   const user = await requireAuth();
   const { dealId } = await params;
   const { popout } = await searchParams;
+
+  // Live Coaching archivé (refonte 5-sujets) → route popout inaccessible : retour au deal
+  // (PAS vers ?tab=live, qui est caché). Réactivable via LIVE_COACHING_ENABLED.
+  if (!isLiveCoachingEnabled()) {
+    redirect(`/deals/${dealId}`);
+  }
 
   const isPopout = popout === "true";
 

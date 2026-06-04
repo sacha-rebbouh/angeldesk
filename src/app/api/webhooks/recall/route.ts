@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifySvixSignature } from "@/lib/live/recall-client";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { publishSessionStatus } from "@/lib/live/ably-server";
 import { generateAndSavePostCallReport } from "@/lib/live/post-call-generator";
 import { handleApiError } from "@/lib/api-error";
@@ -79,6 +80,12 @@ export async function POST(request: NextRequest) {
       // In production / preview / Vercel, require signature verification.
       console.error("[recall-webhook] Missing webhook secret or Svix headers");
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Live Coaching archivé → on ACQUITTE (200) APRÈS vérif signature mais on NE traite RIEN
+    // (aucun lookup DB / LLM / Neon réveillé). Évite les retries Recall. Réactivable via flag.
+    if (!isLiveCoachingEnabled()) {
+      return NextResponse.json({ ok: true, archived: true });
     }
 
     // ── Parse body ──

@@ -1,6 +1,24 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — UI/infra — Phase 3 (refonte 5-sujets) : archivage du Live Coaching
+
+### Contexte
+Refonte 5-sujets. Live Coaching (temps réel Recall/Ably) n'a pas sa place pour l'instant → archivé (réactivable via flag), sans casser Recall ni laisser de drain Neon/LLM résiduel.
+
+### Changements
+- `src/lib/feature-flags.ts` : `isLiveCoachingEnabled()` (défaut false=archivé, runtime).
+- `page.tsx` : onglet + contenu Live gatés + retirés de `allowedTabs`. Popout `live/page.tsx` : redirige vers `/deals/:id` (pas `?tab=live`) quand archivé.
+- Routes **403 après auth** : POST `/live-sessions` (create), `[id]/start`, `[id]/reinvite`, `[id]/retry-report` (LLM), `[id]/participants` (PUT), `[id]` PATCH, `/coaching/{context,reanalyze,ably-token}`.
+- Webhooks **no-op (ACK 200 APRÈS vérif signature/secret, avant DB/LLM)** : `/webhooks/recall`, `[id]/webhook`, `[id]/visual-frame`.
+- `[id]/stop` CONSERVÉ (cleanup : `leaveMeeting` + transition statut) mais rapport post-call LLM + publish Ably gatés sous le flag.
+- Conservé : GET (liste/détail), DELETE (nettoyage). `src/lib/live/*` dormant.
+- `vitest.unit.config.ts` : `LIVE_COACHING_ENABLED=true` par défaut (routes testées en mode activé ; tests archivé-off → Phase 6).
+
+### Vérif
+`tsc` clean (hors baseline `exit-strategist.ts` untracked). 39 tests routes Live verts ; suite complète : seuls 6 `*-integration.test.ts` rouges (Neon capé). Scan auto : aucune route Live write/LLM sans guard. Différé Neon-up : stopper les bots Recall actifs. Gate Codex : **APPROVE** (après 1 round — gate report-LLM de `stop` + PATCH `[id]`).
+
+---
 ## 2026-06-04 — infra/coûts — Phase 2 (refonte 5-sujets) : watchdog Neon événementiel par-analyse
 
 ### Contexte

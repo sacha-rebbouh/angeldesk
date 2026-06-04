@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { isValidCuid, checkRateLimit } from "@/lib/sanitize";
 import { deductCredits, refundCredits } from "@/services/credits";
 import { handleApiError } from "@/lib/api-error";
@@ -56,6 +57,10 @@ const reanalyzeSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
+
+    if (!isLiveCoachingEnabled()) {
+      return NextResponse.json({ error: "Live coaching est archivé." }, { status: 403 });
+    }
 
     // Limit to 3 reanalyze calls per hour per user
     const rateCheck = checkRateLimit(`coaching-reanalyze:${user.id}`, { maxRequests: 3, windowMs: 3600000 });

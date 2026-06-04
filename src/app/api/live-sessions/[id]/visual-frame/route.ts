@@ -6,6 +6,7 @@ import { compileDealContextCached, compileContextForColdMode } from "@/lib/live/
 import { evaluateDealCorpusReadinessSoft } from "@/services/documents/readiness-gate";
 import { publishCoachingCard, publishVisualAnalysis } from "@/lib/live/ably-server";
 import { isValidCuid } from "@/lib/sanitize";
+import { isLiveCoachingEnabled } from "@/lib/feature-flags";
 import { logCoachingError } from "@/lib/live/monitoring";
 import type {
   AblyCoachingCardEvent,
@@ -56,6 +57,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     if (!timingSafeCompare(authHeader, `Bearer ${expectedSecret}`)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Live Coaching archivé → ACK 200 APRÈS vérif du secret relay, sans traitement (no LLM/Neon).
+    if (!isLiveCoachingEnabled()) {
+      return NextResponse.json({ ok: true, archived: true });
     }
 
     // Per-session rate limiting

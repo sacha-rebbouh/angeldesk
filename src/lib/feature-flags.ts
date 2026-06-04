@@ -17,3 +17,16 @@
 export function isConditionsTabEnabled(): boolean {
   return process.env.SHOW_CONDITIONS_TAB === "true";
 }
+
+/**
+ * Live Coaching (onglet temps réel + sous-système Recall/Ably + routes associées).
+ *
+ * Archivé par défaut (refonte 5-sujets : pas sa place pour l'instant, à ressortir plus tard).
+ * Quand archivé : onglet + route popout cachés, création/start/reinvite/coaching bloqués (403
+ * après auth), webhooks Recall en no-op APRÈS vérif signature/secret (ne pas casser Recall ni
+ * réveiller Neon). Le `stop` reste autorisé (nettoyage des bots actifs). Le code `src/lib/live/*`
+ * reste dormant. Réactivation : poser LIVE_COACHING_ENABLED=true.
+ */
+export function isLiveCoachingEnabled(): boolean {
+  return process.env.LIVE_COACHING_ENABLED === "true";
+}
