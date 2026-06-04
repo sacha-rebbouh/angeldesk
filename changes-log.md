@@ -1,6 +1,20 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — Migration/infra — Phase 6 (refonte 5-sujets) : déblocage Neon + migration prod Phase 2/4
+
+### Contexte
+La prod Neon était suspendue par un garde-fou anti-drain : quota **projet** `compute_time_seconds = 72000` (20 CU-h) sur le projet `angeldesk` (`crimson-tooth-32900265`), dépassé à 20.33 CU-h → suspension persistante de TOUS les computes jusqu'à fin de période (≠ scale-to-zero). Diagnostic prouvé : psql brut sur les 2 endpoints (direct + poolé) renvoyait l'erreur quota au niveau protocole Postgres (donc pas Prisma/connection string). Cause = quota projet, pas le plan Launch ni la limite $20. Fix : quota relevé `72000 → 144000` (20→40 CU-h) via l'API Neon (PATCH project settings.quota) → compute redémarré immédiatement.
+
+### Changements (gate Codex APPROVE)
+- `prisma/schema.prisma` : ré-ajout de `@@index([dispatchEventId])` sur `Analysis` (Phase 2 — retiré du diff lors de la Phase 2 pour éviter le drift).
+- `prisma/migrations/20260604120000_add_analysis_email_idempotency_and_dispatch_index/` : NOUVELLE migration — `ADD COLUMN analysisReadyEmailClaimedAt/SentAt TIMESTAMP(3)` (Phase 4) + `CREATE INDEX Analysis_dispatchEventId_idx` (Phase 2). SQL généré via `migrate diff` (lecture seule), **pas** `migrate dev` (`.env.local` = PROD → shadow DB/reset proscrits).
+- **Dérive Thesis EXCLUE** : `migrate diff` remontait aussi `ALTER TABLE Thesis ALTER COLUMN sourceDocumentIds DROP DEFAULT` — dérive cosmétique pré-existante (la migration thesis-first-architecture a créé la colonne en `DEFAULT ARRAY[]`, le champ `String[]` n'a pas de `@default`). Bénigne, hors périmètre → exclue de cette migration (confirmé Codex). Restera visible dans `migrate diff` tant que non traitée séparément.
+
+### Vérif
+Appliquée en prod via `npx dotenv -e .env.local -- npx prisma migrate deploy`. `migrate status` = up to date (29 migrations). Introspection prod : les 2 colonnes email + l'index `Analysis_dispatchEventId_idx` présents. Client Prisma régénéré (v6.19.3). Gate Codex : **APPROVE**.
+
+---
 ## 2026-06-04 — Tests/vérif — Phase 6 (refonte 5-sujets) : test du filet déterministe + vérification finale
 
 ### Contexte

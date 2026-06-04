@@ -693,6 +693,7 @@ model Analysis {
   @@index([dealId, status, createdAt])
   @@index([corpusSnapshotId])
   @@index([thesisId])
+  @@index([dispatchEventId]) // Phase 2 — lookup watchdog événementiel par dispatchEventId
 }
 
 enum AnalysisType {
