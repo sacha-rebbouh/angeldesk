@@ -108,6 +108,162 @@ function PrioritiesList({ priorities }: { priorities: Priority[] }) {
   );
 }
 
+// Phase 5 (Option B) — blocs riches du mémo autonome. Types dérivés du modèle
+// (pas de duplication de shape).
+type GeneratedMemo = Extract<MemoSectionModel, { kind: "generated" }>;
+
+function ProseBlock({ title, text }: { title: string; text: string | null }) {
+  if (!text) return null;
+  return (
+    <SectionBlock title={title}>
+      <p className="text-[14px] leading-relaxed text-[var(--av-ink)]">{text}</p>
+    </SectionBlock>
+  );
+}
+
+function HighlightsBlock({ items }: { items: GeneratedMemo["investmentHighlights"] }) {
+  if (items.length === 0) return null;
+  return (
+    <SectionBlock title="Points forts étayés">
+      <ul className="flex flex-col gap-3 text-[14px] text-[var(--av-ink)]">
+        {items.map((h, i) => (
+          <li key={i} className="flex flex-col gap-1">
+            <div className="flex items-start gap-2">
+              <span aria-hidden="true" className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--av-favorable)]" />
+              <strong className="flex-1 text-[14px] font-semibold leading-snug">{h.highlight}</strong>
+              {h.source ? <SourcePin source={h.source} className="mt-0.5" /> : null}
+            </div>
+            {h.evidence ? <span className="pl-3.5 text-[13px] text-[var(--av-muted)]">{h.evidence}</span> : null}
+            {h.dbComparable ? <span className="pl-3.5 text-[12px] text-[var(--av-muted)]">Comparable : {h.dbComparable}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </SectionBlock>
+  );
+}
+
+function KeyRisksBlock({ items }: { items: GeneratedMemo["keyRisks"] }) {
+  if (items.length === 0) return null;
+  return (
+    <SectionBlock title="Risques clés et mitigation">
+      <ul className="flex flex-col gap-3 text-[14px] text-[var(--av-ink)]">
+        {items.map((r, i) => (
+          <li key={i} className="flex flex-col gap-1">
+            <div className="flex items-start gap-2">
+              {r.severity && r.severityLabel ? <StatusPill severity={r.severity} label={r.severityLabel} /> : null}
+              <strong className="flex-1 text-[14px] font-semibold leading-snug">{r.risk}</strong>
+              {r.source ? <SourcePin source={r.source} className="mt-0.5" /> : null}
+            </div>
+            {r.mitigation ? <span className="pl-1 text-[13px] text-[var(--av-muted)]">Mitigation : {r.mitigation}</span> : null}
+            {r.residualRisk ? <span className="pl-1 text-[12px] text-[var(--av-muted)]">Risque résiduel : {r.residualRisk}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </SectionBlock>
+  );
+}
+
+function FinancialSummaryBlock({ data }: { data: GeneratedMemo["financialSummary"] }) {
+  if (!data) return null;
+  return (
+    <SectionBlock title="Synthèse financière">
+      {data.metrics.length > 0 ? (
+        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {data.metrics.map((m, i) => (
+            <div
+              key={i}
+              className="flex flex-col rounded-lg bg-[var(--av-surface-muted)] px-3 py-2"
+              style={{ border: "1px solid var(--av-line)" }}
+            >
+              <dt className="text-[11px] uppercase tracking-wide text-[var(--av-muted)]">{m.label}</dt>
+              <dd className="av-tabular text-[14px] font-semibold text-[var(--av-ink)]">{m.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      {data.valuationAssessment ? <p className="text-[13px] text-[var(--av-ink)]">{data.valuationAssessment}</p> : null}
+      {data.projections ? <p className="text-[13px] text-[var(--av-muted)]">{data.projections}</p> : null}
+    </SectionBlock>
+  );
+}
+
+function TermItems({ label, items }: { label: string; items: string[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[12px] uppercase tracking-wide text-[var(--av-muted)]">{label}</span>
+      <ul className="flex flex-col gap-1">
+        {items.map((t, i) => (
+          <li key={i} className="flex gap-2">
+            <span aria-hidden="true" className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-[var(--av-muted)]" />
+            <span>{t}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function DealTermsBlock({ data }: { data: GeneratedMemo["dealTerms"] }) {
+  if (!data) return null;
+  return (
+    <SectionBlock title="Termes du deal">
+      <div className="flex flex-col gap-2 text-[14px] text-[var(--av-ink)]">
+        {data.valuation ? (
+          <div>
+            <span className="text-[var(--av-muted)]">Valorisation : </span>
+            {data.valuation}
+          </div>
+        ) : null}
+        {data.roundSize ? (
+          <div>
+            <span className="text-[var(--av-muted)]">Tour : </span>
+            {data.roundSize}
+          </div>
+        ) : null}
+        <TermItems label="Termes clés" items={data.keyTerms} />
+        <TermItems label="Points de négociation" items={data.negotiationPoints} />
+      </div>
+    </SectionBlock>
+  );
+}
+
+function DueDiligenceBlock({ data }: { data: GeneratedMemo["dueDiligence"] }) {
+  if (!data) return null;
+  return (
+    <SectionBlock title="Due diligence">
+      <div className="flex flex-col gap-3">
+        {data.completed.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            <span className="text-[12px] uppercase tracking-wide text-[var(--av-muted)]">Réalisée</span>
+            <ul className="flex flex-col gap-1 text-[13px] text-[var(--av-ink)]">
+              {data.completed.map((t, i) => (
+                <li key={i} className="flex gap-2">
+                  <span aria-hidden="true" className="text-[var(--av-favorable)]">✓</span>
+                  <span>{t}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {data.outstanding.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            <span className="text-[12px] uppercase tracking-wide text-[var(--av-muted)]">À compléter</span>
+            <ul className="flex flex-col gap-1 text-[13px] text-[var(--av-ink)]">
+              {data.outstanding.map((t, i) => (
+                <li key={i} className="flex gap-2">
+                  <span aria-hidden="true" className="text-[var(--av-muted)]">○</span>
+                  <span>{t}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </SectionBlock>
+  );
+}
+
 export function MemoSection({ model }: { model: MemoSectionModel }) {
   return (
     <section id="memo" className="flex scroll-mt-44 flex-col gap-5">
@@ -152,6 +308,12 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
               <p className="text-[14px] leading-relaxed text-[var(--av-ink)]">{model.investmentThesis}</p>
             </SectionBlock>
           ) : null}
+          <HighlightsBlock items={model.investmentHighlights} />
+          <ProseBlock title="Opportunité de marché" text={model.marketOpportunity} />
+          <ProseBlock title="Paysage concurrentiel" text={model.competitiveLandscape} />
+          <ProseBlock title="Évaluation de l'équipe" text={model.teamAssessment} />
+          <FinancialSummaryBlock data={model.financialSummary} />
+          <DealTermsBlock data={model.dealTerms} />
           {model.criticalRisks.length > 0 ? (
             <SectionBlock title="Risques critiques">
               <ul className="flex flex-col gap-3 text-[14px] text-[var(--av-ink)]">
@@ -170,6 +332,8 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
           ) : null}
           {/* Standalone : se rend même si le bloc éditorial de risques est absent (#21). */}
           <CompleteRisksHint criticalRisks={model.criticalRisks} total={model.totalCriticalRisks} />
+          <KeyRisksBlock items={model.keyRisks} />
+          <DueDiligenceBlock data={model.dueDiligence} />
           {model.nextSteps.length > 0 ? (
             <SectionBlock title="Prochaines étapes">
               <ol className="flex flex-col gap-2.5 text-[14px] text-[var(--av-ink)]">

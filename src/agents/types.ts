@@ -3560,11 +3560,20 @@ export interface MemoGeneratorData {
   investmentHighlights: {
     highlight: string;
     evidence: string;
+    // Phase 5 (Option B) — provenance enrichie conservée jusqu'au rendu
+    // (le LLM les produit déjà : cf. `LLMMemoResponse.investmentHighlights`).
+    dbComparable?: string;
+    source?: string;
   }[];
   keyRisks: {
     risk: string;
+    // Phase 5 (Option B) — severity/category/source conservés (le normalizer
+    // les droppait ; `LLMMemoResponse.keyRisks` les fournit).
+    severity?: "CRITICAL" | "HIGH" | "MEDIUM";
+    category?: string;
     mitigation: string;
     residualRisk: "low" | "medium" | "high";
+    source?: string;
   }[];
   financialSummary: {
     currentMetrics: Record<string, string | number>;

@@ -218,6 +218,33 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
     expect(failed.reconciliationDegraded).toBe(false);
   });
 
+  // Phase 5 (finding Codex 5a) : la synthèse financière du mémo généré scrube
+  // le LABEL des métriques (clé `currentMetrics` issue du LLM) — une clé piégée
+  // « financial-auditor ARR » ne doit pas fuiter ; la métrique propre survit.
+  it("buildMemoSectionModel (generated) : labels financialSummary scrubés", () => {
+    const memo = buildMemoSectionModel({
+      "memo-generator": {
+        success: true,
+        data: {
+          financialSummary: {
+            currentMetrics: { "financial-auditor ARR": "1M€", Croissance: "120%" },
+          },
+        },
+      },
+    });
+    expect(memo.kind).toBe("generated");
+    if (memo.kind !== "generated") return;
+    const metrics = memo.financialSummary?.metrics ?? [];
+    expect(metrics.length).toBeGreaterThan(0);
+    for (const m of metrics) {
+      expectNoAgentName(m.label);
+      expect(m.value.length).toBeGreaterThan(0);
+    }
+    // la métrique propre reste présente, le nom d'agent est retiré du label piégé
+    expect(metrics.some((m) => m.label === "Croissance")).toBe(true);
+    expect(metrics.some((m) => /arr/i.test(m.label))).toBe(true);
+  });
+
   // Phase 4 (finding Codex) : le mémo reconstitué ne fabrique pas de provenance
   // factice ("Tier 1") ni de nom d'agent dans la source des risques critiques.
   it("buildMemoSectionModel : pas de provenance factice dans les risques critiques", () => {

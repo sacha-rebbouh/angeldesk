@@ -593,6 +593,138 @@ export function buildEvidenceSectionModel(results: ResultsMap | null | undefined
 
 type MemoPriority = { action: string; rationale: string | null; deadline: string | null; priority: string | null };
 
+// --- Phase 5 (Option B) : blocs riches du mémo généré (mémo AUTONOME) ---
+// Chaque champ texte rendu passe par cleanRenderedText (scrub noms d'agents +
+// tournures prescriptives). Les blocs absents/vides sont rendus `null` (le
+// composant les masque) — jamais de provenance ni de label fabriqué.
+type MemoHighlight = { highlight: string; evidence: string | null; dbComparable: string | null; source: string | null };
+type MemoKeyRisk = {
+  risk: string;
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO" | null;
+  severityLabel: string | null;
+  mitigation: string | null;
+  residualRisk: string | null;
+  category: string | null;
+  source: string | null;
+};
+type MemoFinancialSummary = { metrics: Array<{ label: string; value: string }>; projections: string | null; valuationAssessment: string | null };
+type MemoDealTerms = { valuation: string | null; roundSize: string | null; keyTerms: string[]; negotiationPoints: string[] };
+type MemoDueDiligence = { completed: string[]; outstanding: string[] };
+
+const RESIDUAL_RISK_LABELS: Record<string, string> = { low: "Faible", medium: "Moyen", high: "Élevé" };
+
+/** Scrub + trim ; renvoie null si rien d'utile ne reste (pas de chaîne vide rendue). */
+function cleanOrNull(raw: string | null | undefined): string | null {
+  const cleaned = cleanRenderedText(raw ?? "").trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function cleanStringList(value: unknown[]): string[] {
+  return value.map((t) => (isString(t) ? cleanOrNull(t) : null)).filter((t): t is string => t !== null);
+}
+
+/**
+ * companyOverview est un OBJET `{description,problem,solution,businessModel,traction}`
+ * (BUG corrigé Phase 5 : l'ancien `stringAt(memo,["companyOverview"])` rendait null).
+ * Concaténé en prose, chaque morceau scrubé. Fallback défensif sur l'ancienne forme string.
+ */
+function buildCompanyOverviewProse(memo: Record<string, unknown>): string | null {
+  const co = valueAt(memo, ["companyOverview"]);
+  if (isRecord(co)) {
+    const parts = [
+      stringAt(co, ["description"]),
+      stringAt(co, ["problem"]),
+      stringAt(co, ["solution"]),
+      stringAt(co, ["businessModel"]),
+      stringAt(co, ["traction"]),
+    ]
+      .map((p) => cleanRenderedText(p ?? "").trim())
+      .filter((p) => p.length > 0);
+    return parts.length > 0 ? parts.join(" ") : null;
+  }
+  return cleanOrNull(stringAt(memo, ["companyOverview"]));
+}
+
+function buildMemoHighlights(memo: Record<string, unknown>): MemoHighlight[] {
+  return arrayAt(memo, ["investmentHighlights"])
+    .map((h): MemoHighlight | null => {
+      if (!isRecord(h)) return null;
+      const highlight = cleanOrNull(stringAt(h, ["highlight"]));
+      if (!highlight) return null;
+      return {
+        highlight,
+        evidence: cleanOrNull(stringAt(h, ["evidence"])),
+        dbComparable: cleanOrNull(stringAt(h, ["dbComparable"])),
+        source: presentableSource(stringAt(h, ["source"])),
+      };
+    })
+    .filter((h): h is MemoHighlight => h !== null);
+}
+
+function buildMemoKeyRisks(memo: Record<string, unknown>): MemoKeyRisk[] {
+  return arrayAt(memo, ["keyRisks"])
+    .map((r): MemoKeyRisk | null => {
+      if (!isRecord(r)) return null;
+      const risk = cleanOrNull(stringAt(r, ["risk"]));
+      if (!risk) return null;
+      // severity ABSENTE → pas de pastille fabriquée (severityToPill renverrait
+      // "MEDIUM" par défaut, ce qui inventerait une sévérité).
+      const sevRaw = stringAt(r, ["severity"]);
+      const severity = sevRaw ? severityToPill(sevRaw) : null;
+      const residualRaw = (stringAt(r, ["residualRisk"]) ?? "").toLowerCase();
+      return {
+        risk,
+        severity,
+        severityLabel: severity ? severityLabel(severity) : null,
+        mitigation: cleanOrNull(stringAt(r, ["mitigation"])),
+        residualRisk: RESIDUAL_RISK_LABELS[residualRaw] ?? null,
+        category: cleanOrNull(stringAt(r, ["category"])),
+        source: presentableSource(stringAt(r, ["source"])),
+      };
+    })
+    .filter((r): r is MemoKeyRisk => r !== null);
+}
+
+function buildMemoFinancialSummary(memo: Record<string, unknown>): MemoFinancialSummary | null {
+  const fs = valueAt(memo, ["financialSummary"]);
+  if (!isRecord(fs)) return null;
+  const metricsObj = valueAt(fs, ["currentMetrics"]);
+  const metrics: Array<{ label: string; value: string }> = isRecord(metricsObj)
+    ? Object.entries(metricsObj)
+        // Le LABEL est une CLÉ du mémo LLM (ex. "ARR") → scrubé au même titre que
+        // la value : une clé piégée ("financial-auditor ARR") ne doit pas fuiter.
+        .map(([label, value]) => ({
+          label: cleanRenderedText(label).trim(),
+          value: typeof value === "number" ? String(value) : cleanRenderedText(String(value ?? "")).trim(),
+        }))
+        .filter((m) => m.label.length > 0 && m.value.length > 0)
+    : [];
+  const projections = cleanOrNull(stringAt(fs, ["projections"]));
+  const valuationAssessment = cleanOrNull(stringAt(fs, ["valuationAssessment"]));
+  if (metrics.length === 0 && !projections && !valuationAssessment) return null;
+  return { metrics, projections, valuationAssessment };
+}
+
+function buildMemoDealTerms(memo: Record<string, unknown>): MemoDealTerms | null {
+  const dt = valueAt(memo, ["dealTerms"]);
+  if (!isRecord(dt)) return null;
+  const valuation = cleanOrNull(stringAt(dt, ["valuation"]));
+  const roundSize = cleanOrNull(stringAt(dt, ["roundSize"]));
+  const keyTerms = cleanStringList(arrayAt(dt, ["keyTerms"]));
+  const negotiationPoints = cleanStringList(arrayAt(dt, ["negotiationPoints"]));
+  if (!valuation && !roundSize && keyTerms.length === 0 && negotiationPoints.length === 0) return null;
+  return { valuation, roundSize, keyTerms, negotiationPoints };
+}
+
+function buildMemoDueDiligence(memo: Record<string, unknown>): MemoDueDiligence | null {
+  const dd = valueAt(memo, ["dueDiligenceFindings"]);
+  if (!isRecord(dd)) return null;
+  const completed = cleanStringList(arrayAt(dd, ["completed"]));
+  const outstanding = cleanStringList(arrayAt(dd, ["outstanding"]));
+  if (completed.length === 0 && outstanding.length === 0) return null;
+  return { completed, outstanding };
+}
+
 export type MemoSectionModel =
   | {
       kind: "generated";
@@ -600,6 +732,15 @@ export type MemoSectionModel =
       keyPoints: string[];
       companyOverview: string | null;
       investmentThesis: string | null;
+      // Phase 5 (Option B) — blocs riches du mémo autonome.
+      investmentHighlights: MemoHighlight[];
+      keyRisks: MemoKeyRisk[];
+      financialSummary: MemoFinancialSummary | null;
+      teamAssessment: string | null;
+      marketOpportunity: string | null;
+      competitiveLandscape: string | null;
+      dealTerms: MemoDealTerms | null;
+      dueDiligence: MemoDueDiligence | null;
       criticalRisks: Array<{ title: string; detail: string | null; severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"; severityLabel: string; source: string | null }>;
       nextSteps: string[];
       /** Plan d'investigation priorisé (Question Master) — enrichit des next steps trop courts (#22). */
@@ -649,12 +790,22 @@ export function buildMemoSectionModel(results: ResultsMap | null | undefined): M
         .map((kp) => (isString(kp) ? kp : isRecord(kp) ? stringAt(kp, ["text"]) : null))
         .filter((kp): kp is string => kp !== null)
         .map((kp) => cleanRenderedText(kp) || kp),
-      companyOverview: cleanRenderedText(stringAt(memo, ["companyOverview"]) ?? "") || null,
+      // Phase 5 (BUG corrigé) : companyOverview est un objet → prose scrubée.
+      companyOverview: buildCompanyOverviewProse(memo),
       investmentThesis: cleanRenderedText(
         (isString(valueAt(memo, ["investmentThesis"]))
           ? (valueAt(memo, ["investmentThesis"]) as string)
           : stringAt(memo, ["investmentThesis", "summary"])) ?? "",
       ) || null,
+      // Phase 5 (Option B) — blocs riches du mémo autonome (tous scrubés).
+      investmentHighlights: buildMemoHighlights(memo),
+      keyRisks: buildMemoKeyRisks(memo),
+      financialSummary: buildMemoFinancialSummary(memo),
+      teamAssessment: cleanOrNull(stringAt(memo, ["teamAssessment"])),
+      marketOpportunity: cleanOrNull(stringAt(memo, ["marketOpportunity"])),
+      competitiveLandscape: cleanOrNull(stringAt(memo, ["competitiveLandscape"])),
+      dealTerms: buildMemoDealTerms(memo),
+      dueDiligence: buildMemoDueDiligence(memo),
       // criticalRisks[] = {severity, description, evidence, source} (PAS de title).
       // Titre dérivé de description, détail = evidence ; tout scrubé (le prompt mémo
       // enseignait « Source: <agent> »), source via presentableSource (null si agent).

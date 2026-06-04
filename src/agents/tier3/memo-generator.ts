@@ -441,22 +441,46 @@ Réponds en JSON avec cette structure exacte:
 }
 \`\`\`
 
-**CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
-- investmentHighlights: MAX 4, keyRisks: MAX 5
-- termsAnalysis: MAX 4, competitors: MAX 4
-- nextSteps: MAX 5, questionsForFounder: MAX 6
-- keyStrengths/keyRisks: MAX 3 chacun
-- oneLiner: 20 mots MAX, verdict: 2 phrases MAX
-- PRIORITE: JSON complet > detail`;
+**CONCISION MAITRISEE (memo AUTONOME ~700-1200 mots ; JSON COMPLET prioritaire):**
+- investmentHighlights: MAX 6, keyRisks: MAX 7
+- termsAnalysis: MAX 5, competitors: MAX 5
+- nextSteps: MAX 6, questionsForFounder: MAX 8
+- keyStrengths/keyRisks (executiveSummary): MAX 4 chacun
+- oneLiner: 25 mots MAX, verdict: 3-4 phrases MAX
+- Chaque section doit se suffire (le memo est lu seul), rester factuelle et sourcee
+- PRIORITE ABSOLUE: JSON complet et valide > exhaustivite`;
 
-    const { data } = await this.llmCompleteJSON<LLMMemoResponse>(prompt);
+    // Phase 5 (Option B) — appel LLM enrichi protégé par un filet déterministe.
+    // Modèle pinné GEMINI_PRO (décision produit) + budget de tokens explicite et
+    // généreux (le mémo autonome est la sortie la plus riche du système).
+    // `llmCompleteJSON` THROW fail-closed sur troncature (assertNotTruncatedResult),
+    // parse ou timeout. La chaîne de fallback model-aware du router (GEMINI_PRO →
+    // HAIKU) s'exécute AVANT ce throw ; le filet déterministe est le dernier recours :
+    // sur throw, on reconstruit un mémo COMPLET et AUTONOME depuis les données déjà
+    // consolidées plutôt que de propager l'échec (le mémo ne doit jamais être vide).
+    let llmData: LLMMemoResponse | null = null;
+    try {
+      llmData = (
+        await this.llmCompleteJSON<LLMMemoResponse>(prompt, {
+          model: "GEMINI_PRO",
+          maxTokens: 32000,
+        })
+      ).data;
+    } catch (err) {
+      console.warn(
+        `[memo-generator] LLM memo indisponible (${err instanceof Error ? err.message : "raison inconnue"}) ` +
+          `— bascule sur le mémo déterministe reconstruit depuis les données consolidées.`,
+      );
+    }
 
-    // Validation et normalisation
-    const result = this.normalizeResponse(data, deal, consolidatedRedFlags, consolidatedQuestions);
+    // Validation et normalisation (LLM) OU reconstruction déterministe (fallback).
+    const result = llmData
+      ? this.normalizeResponse(llmData, deal, consolidatedRedFlags, consolidatedQuestions)
+      : this.buildDeterministicFallback(deal, consolidatedRedFlags, consolidatedQuestions, context);
 
     // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
     // déterministe (D2 verrouillé : contradictory / insufficient / null,
-    // jamais dérivé de score / confidence).
+    // jamais dérivé de score / confidence). S'applique aux DEUX chemins.
     const solidity = buildEvidenceSolidityForContext(context);
     if (solidity.value !== null && solidity.rationale) {
       result.signalProfile.evidenceSolidity = solidity.value;
@@ -1053,30 +1077,47 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
         traction: data.companyOverview?.traction ?? "",
       },
 
-      // Investment Highlights (ajout dbComparable)
+      // Investment Highlights — Phase 5 (Option B) : dbComparable + source
+      // conservés jusqu'au rendu (le type est élargi ; plus de drop).
       investmentHighlights: Array.isArray(data.investmentHighlights)
-        ? data.investmentHighlights.map((h) => ({
-            highlight: h.highlight ?? "",
-            evidence: h.evidence ?? "",
-            // Note: dbComparable et source sont dans la nouvelle structure mais pas dans l'ancien type
-          }))
+        ? data.investmentHighlights.map((h) => {
+            const item: MemoGeneratorData["investmentHighlights"][number] = {
+              highlight: h.highlight ?? "",
+              evidence: h.evidence ?? "",
+            };
+            if (h.dbComparable) item.dbComparable = h.dbComparable;
+            if (h.source) item.source = h.source;
+            return item;
+          })
         : [],
 
-      // Key Risks (avec severity maintenant)
+      // Key Risks — Phase 5 (Option B) : severity/category/source conservés
+      // (les deux branches : LLM natif + fallback dérivé des red flags consolidés).
       keyRisks: Array.isArray(data.keyRisks)
-        ? data.keyRisks.map((r) => ({
-            risk: r.risk ?? "",
-            mitigation: r.mitigation ?? "",
-            residualRisk: (r.residualRisk?.toLowerCase() === "low"
-              ? "low"
-              : r.residualRisk?.toLowerCase() === "high"
-              ? "high"
-              : "medium") as "low" | "medium" | "high",
-          }))
+        ? data.keyRisks.map((r) => {
+            const item: MemoGeneratorData["keyRisks"][number] = {
+              risk: r.risk ?? "",
+              mitigation: r.mitigation ?? "",
+              residualRisk: (r.residualRisk?.toLowerCase() === "low"
+                ? "low"
+                : r.residualRisk?.toLowerCase() === "high"
+                ? "high"
+                : "medium") as "low" | "medium" | "high",
+            };
+            if (validSeverities.includes(r.severity as typeof validSeverities[number])) {
+              item.severity = r.severity as typeof validSeverities[number];
+            }
+            if (r.category) item.category = r.category;
+            if (r.source) item.source = r.source;
+            return item;
+          })
         : consolidatedRedFlags.slice(0, 10).map((rf) => ({
             risk: rf.title,
             mitigation: "À définir",
-            residualRisk: rf.severity === "CRITICAL" ? "high" : rf.severity === "HIGH" ? "medium" : "low" as "low" | "medium" | "high",
+            residualRisk: (rf.severity === "CRITICAL" ? "high" : rf.severity === "HIGH" ? "medium" : "low") as "low" | "medium" | "high",
+            severity: rf.severity,
+            category: rf.category,
+            source: rf.source,
           })),
 
       // Financial Summary
@@ -1148,6 +1189,129 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
         comparableDeals: data.financialSummary?.valuationAssessment?.benchmarkComparables?.join("; "),
         referencesChecked: this.extractReferencesChecked(data),
       },
+    };
+  }
+
+  /**
+   * Phase 5 (Option B) — Filet déterministe. Reconstruit un mémo COMPLET et
+   * AUTONOME quand l'appel LLM échoue (troncature fail-closed, parse, timeout).
+   * Aucune fabrication : tout provient des données DÉJÀ consolidées par l'agent
+   * (red flags, questions, deal, synthèse Tier 3). L'orientation reprend le
+   * verdict du synthesis-deal-scorer (source canonique, cohérente avec le score
+   * affiché ailleurs dans la vue) ; à défaut, dérivation CONSERVATRICE depuis les
+   * counts de sévérité (jamais « favorable » sans synthèse LLM — anti-fabrication).
+   * Les textes rendus sont scrubés au niveau vue (cleanRenderedText), pas ici.
+   */
+  private buildDeterministicFallback(
+    deal: EnrichedAgentContext["deal"],
+    consolidatedRedFlags: ConsolidatedRedFlag[],
+    consolidatedQuestions: ConsolidatedQuestion[],
+    context: EnrichedAgentContext,
+  ): MemoGeneratorData {
+    const validRecommendations = ["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"] as const;
+    type Reco = typeof validRecommendations[number];
+
+    const valuation = deal.valuationPre != null ? Number(deal.valuationPre) : 0;
+    const amount = deal.amountRequested != null ? Number(deal.amountRequested) : 0;
+    const arr = deal.arr != null ? Number(deal.arr) : 0;
+
+    const criticalCount = consolidatedRedFlags.filter((rf) => rf.severity === "CRITICAL").length;
+    const highCount = consolidatedRedFlags.filter((rf) => rf.severity === "HIGH").length;
+
+    // Orientation : 1) verdict canonique du synthesis-deal-scorer s'il est dispo
+    // et valide (cohérence avec le ScoreBadge) ; 2) sinon dérivation conservatrice
+    // depuis les counts (jamais favorable — le fallback ne fabrique pas de positif).
+    const scorer = context.previousResults?.["synthesis-deal-scorer"];
+    const scorerVerdict =
+      scorer?.success && "data" in scorer ? (scorer.data as { verdict?: unknown }).verdict : undefined;
+    const recommendation: Reco = validRecommendations.includes(scorerVerdict as Reco)
+      ? (scorerVerdict as Reco)
+      : criticalCount >= 2
+        ? "alert_dominant"
+        : criticalCount >= 1 || highCount >= 3
+          ? "vigilance"
+          : "contrasted";
+
+    // criticalRisks : red flags CRITICAL/HIGH consolidés (même dérivation que le
+    // fallback du normalizer, CriticalRiskRef structuré).
+    const criticalRisks: CriticalRiskRef[] = consolidatedRedFlags
+      .filter((rf) => rf.severity === "CRITICAL" || rf.severity === "HIGH")
+      .slice(0, 5)
+      .map((rf, idx) => {
+        const ref: CriticalRiskRef = {
+          riskId: `mc-fallback-${idx + 1}`,
+          severity: rf.severity,
+          description: rf.title,
+        };
+        if (rf.evidence) ref.evidence = rf.evidence;
+        if (rf.source) ref.source = rf.source;
+        return ref;
+      });
+
+    // keyRisks : red flags consolidés (severity/category/source conservés).
+    const keyRisks: MemoGeneratorData["keyRisks"] = consolidatedRedFlags.slice(0, 8).map((rf) => ({
+      risk: rf.title,
+      mitigation: "À définir avec le fondateur",
+      residualRisk: (rf.severity === "CRITICAL" ? "high" : rf.severity === "HIGH" ? "medium" : "low") as
+        | "low"
+        | "medium"
+        | "high",
+      severity: rf.severity,
+      category: rf.category,
+      source: rf.source,
+    }));
+
+    const currentMetrics: Record<string, string | number> = {};
+    if (arr > 0) currentMetrics["ARR"] = `€${arr.toLocaleString()}`;
+    if (deal.growthRate != null) currentMetrics["Croissance"] = `${Number(deal.growthRate)}%`;
+
+    return {
+      executiveSummary: {
+        oneLiner: `${deal.name} — synthèse déterministe (mémo enrichi indisponible, données consolidées ci-dessous)`,
+        recommendation,
+        keyPoints: consolidatedRedFlags.slice(0, 4).map((rf) => `[${rf.severity}] ${rf.title}`),
+      },
+      signalProfile: { orientation: recommendation, evidenceSolidity: null },
+      criticalRisks,
+      companyOverview: {
+        description: deal.description ?? "",
+        problem: "",
+        solution: "",
+        businessModel: "",
+        traction: arr > 0 ? `ARR €${arr.toLocaleString()}` : "",
+      },
+      // Pas de highlight fabriqué sans synthèse LLM (anti-oraculaire).
+      investmentHighlights: [],
+      keyRisks,
+      financialSummary: {
+        currentMetrics,
+        projections: "",
+        valuationAssessment:
+          valuation > 0 ? `Valorisation pre-money €${valuation.toLocaleString()}` : "Non spécifié",
+      },
+      teamAssessment: "",
+      marketOpportunity: "",
+      competitiveLandscape: "",
+      dealTerms: {
+        valuation: valuation > 0 ? `€${valuation.toLocaleString()} pre-money` : "Non spécifié",
+        roundSize: amount > 0 ? `€${amount.toLocaleString()}` : "Non spécifié",
+        keyTerms: [],
+        negotiationPoints: [],
+      },
+      dueDiligenceFindings: {
+        completed: [],
+        outstanding: consolidatedQuestions
+          .filter((q) => q.priority === "CRITICAL")
+          .slice(0, 5)
+          .map((q) => `Vérifier : ${q.question}`),
+        redFlags: consolidatedRedFlags.slice(0, 10).map((rf) => `[${rf.severity}] ${rf.title} (${rf.source})`),
+      },
+      investmentThesis: "",
+      nextSteps:
+        consolidatedQuestions.length > 0
+          ? consolidatedQuestions.slice(0, 6).map((q) => `[BEFORE_TERM_SHEET] [FOUNDER] ${q.question}`)
+          : criticalRisks.map((r) => `[IMMEDIATE] [INVESTOR] Investiguer : ${r.description}`),
+      appendix: {},
     };
   }
 

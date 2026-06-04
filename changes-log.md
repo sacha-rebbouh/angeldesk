@@ -1,6 +1,24 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — Mémo/UI — Phase 5a (refonte 5-sujets) : enrichissement du mémo (Option B) + filet déterministe
+
+### Contexte
+Refonte 5-sujets, S1. Le mémo d'investissement était aminci sur toute la chaîne : le normalizer droppait `dbComparable`/`source` (highlights) et `severity`/`category`/`source` (keyRisks) alors que le LLM les produit ; le sélecteur ne surfaçait qu'une fraction des champs ; `companyOverview` (un OBJET) était lu via `stringAt` → toujours null. Décision produit verrouillée : **Option B** = mémo riche LLM + **mémo AUTONOME** (se suffit) + **filet déterministe** si l'appel LLM échoue. Modèle `memo-generator` pinné **GEMINI_PRO**.
+
+### Changements (5a — enrichissement, gate Codex APPROVE round 2)
+- `src/agents/types.ts` + `src/agents/type-modules/tier3.ts` : `MemoGeneratorData.investmentHighlights` (+`dbComparable?`, +`source?`) et `keyRisks` (+`severity?`, +`category?`, +`source?`). Champs optionnels, 2 défs gardées EN SYNC (`type-modules/tier3.ts` est un module orphelin — aucun importeur — synchronisé par sécurité anti-drift).
+- `src/agents/tier3/memo-generator.ts` (normalizer) : arrête de dropper les champs riches (2 branches : LLM natif + fallback red flags), pattern conditionnel identique à `criticalRisks`.
+- `src/agents/tier3/memo-generator.ts` (execute) : `model:"GEMINI_PRO"` + `maxTokens:32000` explicites ; appel LLM wrappé en try/catch → sur throw (troncature fail-closed, parse, timeout) bascule sur `buildDeterministicFallback`. La chaîne model-aware du router (GEMINI_PRO→HAIKU) reste active avant le throw.
+- `src/agents/tier3/memo-generator.ts` (NEW `buildDeterministicFallback`) : reconstruit un `MemoGeneratorData` COMPLET et AUTONOME depuis `consolidatedRedFlags`/`consolidatedQuestions`/`deal`. Orientation = verdict canonique du synthesis-deal-scorer si valide (cohérence ScoreBadge), sinon dérivation CONSERVATRICE par counts de sévérité (jamais « favorable » — anti-fabrication). `investmentHighlights=[]` (pas de positif fabriqué).
+- `prompts/memo-generator-prompt.ts` + bloc inline : concision assouplie (mémo autonome ~700-1200 mots), invariant anti-troncature conservé ; exemple « BON OUTPUT » verdict dé-impérativé ; « investissable » ajouté à la liste INTERDIT du prompt.
+- `analysis-v2/lib/selectors.ts` : BUG `companyOverview` corrigé (objet → prose scrubée) ; surface `investmentHighlights`/`keyRisks`(rich)/`financialSummary`/`teamAssessment`/`marketOpportunity`/`competitiveLandscape`/`dealTerms`/`dueDiligence`. **Chaque** champ rendu passe par `cleanRenderedText` (y compris le LABEL des métriques `financialSummary` — finding Codex round 1).
+- `analysis-v2/sections/memo-section.tsx` : blocs riches du mémo autonome (types dérivés via `Extract<MemoSectionModel,{kind:"generated"}>`).
+
+### Vérif
+`tsc` clean (hors baseline `exit-strategist.ts` untracked). 225 tests verts sur les 2 zones touchées (`analysis-v2/__tests__/` + `tier3/__tests__/`) + nouveau test scrub label `financialSummary`. Baseline rouge inchangée (Neon capé : 6 `*-integration` + 5 coaching/live). Gate Codex : round 1 REQUEST_CHANGES (label `financialSummary` non scrubé) → corrigé + test → **APPROVE** round 2. Phase 5b (scrub doctrine classe « verdict » + guard/fixture/tests) = commit suivant.
+
+---
 ## 2026-06-04 — UX/infra — Phase 4 (refonte 5-sujets) : masque « analyse en cours » + email idempotent
 
 ### Contexte
