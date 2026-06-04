@@ -196,3 +196,70 @@ describe("normalizeResponse Memo — invariants A4 (D1 + D2)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 5 (Option B) — filet déterministe `buildDeterministicFallback`
+// ---------------------------------------------------------------------------
+type FallbackFn = (
+  deal: unknown,
+  consolidatedRedFlags: unknown[],
+  consolidatedQuestions: unknown[],
+  context: unknown,
+) => MemoGeneratorData;
+const buildDeterministicFallback = (
+  memoGenerator as unknown as { buildDeterministicFallback: FallbackFn }
+).buildDeterministicFallback.bind(memoGenerator);
+
+const fallbackRedFlags = [
+  { id: "rf-1", category: "team", severity: "CRITICAL", title: "Fondateur non vérifié", source: "team-investigator", evidence: "e1", impact: "i1" },
+  { id: "rf-2", category: "financials", severity: "HIGH", title: "Valorisation agressive", source: "financial-auditor", evidence: "e2", impact: "i2" },
+  { id: "rf-3", category: "market", severity: "MEDIUM", title: "TAM à confirmer", source: "market-intelligence", evidence: "e3", impact: "i3" },
+];
+const fallbackQuestions = [
+  { priority: "CRITICAL", category: "team", question: "Pouvez-vous fournir le CV vérifiable du fondateur ?", context: "x", source: "team-investigator" },
+];
+
+describe("buildDeterministicFallback Memo — filet Option B (Phase 5)", () => {
+  it("reconstruit un MemoGeneratorData COMPLET et exploitable depuis les données consolidées", () => {
+    const result = buildDeterministicFallback(stubDeal, fallbackRedFlags, fallbackQuestions, { previousResults: {} });
+    // contrat natif présent et cohérent
+    expect(result.signalProfile.orientation).toBe(result.executiveSummary.recommendation);
+    expect(result.signalProfile.evidenceSolidity).toBeNull();
+    expect(Array.isArray(result.criticalRisks)).toBe(true);
+    expect(result.criticalRisks.length).toBe(2); // CRITICAL + HIGH (pas le MEDIUM)
+    // keyRisks enrichis (severity/category/source conservés)
+    expect(result.keyRisks.length).toBe(3);
+    expect(result.keyRisks[0].severity).toBe("CRITICAL");
+    expect(result.keyRisks[0].source).toBe("team-investigator");
+    expect(result.keyRisks[0].category).toBe("team");
+    // pas de positif fabriqué sans synthèse LLM
+    expect(result.investmentHighlights).toEqual([]);
+    // nextSteps dérivés des questions consolidées
+    expect(result.nextSteps.length).toBeGreaterThan(0);
+    expect(result.nextSteps[0]).toContain("CV vérifiable");
+    // dueDiligence : question CRITICAL en outstanding
+    expect(result.dueDiligenceFindings.outstanding.length).toBeGreaterThan(0);
+  });
+
+  it("orientation CONSERVATRICE en l'absence de scorer : ≥1 CRITICAL → vigilance/alert (jamais favorable)", () => {
+    const oneCritical = [fallbackRedFlags[0]];
+    const result = buildDeterministicFallback(stubDeal, oneCritical, [], { previousResults: {} });
+    expect(["vigilance", "alert_dominant"]).toContain(result.executiveSummary.recommendation);
+    const twoCritical = [fallbackRedFlags[0], { ...fallbackRedFlags[0], id: "rf-x" }];
+    const alert = buildDeterministicFallback(stubDeal, twoCritical, [], { previousResults: {} });
+    expect(alert.executiveSummary.recommendation).toBe("alert_dominant");
+  });
+
+  it("orientation = verdict CANONIQUE du synthesis-deal-scorer quand disponible (cohérence ScoreBadge)", () => {
+    const context = { previousResults: { "synthesis-deal-scorer": { success: true, data: { verdict: "favorable" } } } };
+    const result = buildDeterministicFallback(stubDeal, [], [], context);
+    expect(result.executiveSummary.recommendation).toBe("favorable");
+    expect(result.signalProfile.orientation).toBe("favorable");
+  });
+
+  it("verdict scorer INVALIDE → retombe sur la dérivation conservatrice", () => {
+    const context = { previousResults: { "synthesis-deal-scorer": { success: true, data: { verdict: "GARBAGE" } } } };
+    const result = buildDeterministicFallback(stubDeal, [], [], context);
+    expect(result.executiveSummary.recommendation).toBe("contrasted"); // 0 red flag → neutre
+  });
+});

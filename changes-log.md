@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — Tests/vérif — Phase 6 (refonte 5-sujets) : test du filet déterministe + vérification finale
+
+### Contexte
+Clôture de la refonte 5-sujets S1 (mémo Option B). Verrouillage comportemental du filet déterministe `buildDeterministicFallback` (le mémo ne doit jamais être vide/cassé) et vérification finale avant la décision utilisateur (merge/deploy/migrations/Neon).
+
+### Changements (gate Codex APPROVE)
+- `src/agents/tier3/__tests__/memo-generator-transform.test.ts` (+4 tests, test-only — runtime déjà APPROVE en 5a) : (1) le fallback reconstruit un `MemoGeneratorData` COMPLET (orientation = recommendation, evidenceSolidity null, criticalRisks = CRITICAL+HIGH, keyRisks enrichis severity/category/source, investmentHighlights vide, nextSteps depuis questions, dueDiligence.outstanding depuis questions CRITICAL) ; (2) orientation conservatrice sans scorer (1 CRITICAL → vigilance ; 2 → alert_dominant ; jamais favorable) ; (3) orientation = verdict canonique du synthesis-deal-scorer si dispo ; (4) verdict scorer invalide → dérivation conservatrice.
+
+### Vérif finale
+`tsc` clean (hors baseline `exit-strategist.ts` untracked). Suite unit COMPLÈTE : **4316 passed / 6 failed / 48 skipped** — les 6 rouges = `*-integration.test.ts` (evidence/evidence-signals) qui font `prisma.user.create` en beforeAll → **compute Neon capé par l'utilisateur** (anti-drain), baseline pré-existante hors périmètre. ZÉRO régression. Guards doctrine/mémo verts.
+
+### Reste — BLOQUÉ sur décision utilisateur / infra (Neon capé)
+Migrations Prisma à générer (`migrate dev`, Neon UP requis) : `@@index([dispatchEventId])` (Phase 2) + colonnes email Phase 4 (`analysisReadyEmailClaimedAt`/`analysisReadyEmailSentAt`, dans `schema.prisma` sans migration). Puis merge, deploy, application migrations Neon prod à la main, réactivation reaper Inngest, re-run Avekapeti. À arbitrer par l'utilisateur.
+
+---
 ## 2026-06-04 — Doctrine/UI — Phase 5b (refonte 5-sujets) : scrub doctrine classe « verdict » + résidu Source
 
 ### Contexte
