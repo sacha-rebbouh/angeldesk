@@ -89,14 +89,16 @@ describe("dealAnalysisFunction — D.5d-1d branchement stepwise (sticky)", () =>
     expect(mocks.runAnalysis.mock.calls[0][0].stepwiseGraphVersion).toBeUndefined();
   });
 
-  it("OFF (event.data.stepwise=false) : runAnalysis DANS step.run('run-analysis'), sans stepwise/stepRunner/dispatchEventId", async () => {
+  it("OFF (event.data.stepwise=false) : runAnalysis DANS step.run('run-analysis'), sans stepwise/stepRunner mais AVEC dispatchEventId (watchdog + idempotence retry)", async () => {
     const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis", stepwise: false });
 
     expect(mocks.runAnalysis).toHaveBeenCalledTimes(1);
     const arg = mocks.runAnalysis.mock.calls[0][0];
     expect(arg.stepwise).toBeUndefined();
     expect(arg.stepRunner).toBeUndefined();
-    expect(arg.dispatchEventId).toBeUndefined();
+    // Phase 2 : dispatchEventId est désormais threadé AUSSI hors stepwise → la ligne full_analysis
+    // le persiste (résolution watchdog par-analyse + get-or-create idempotent au retry worker).
+    expect(arg.dispatchEventId).toBe(baseData.dispatchEventId);
     expect(stepRunCalls).toContain("run-analysis");
   });
 

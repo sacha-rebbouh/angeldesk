@@ -1,19 +1,19 @@
 /**
- * API Route — Stale Analysis Reaper (fallback cron Vercel)
+ * API Route — Stale Analysis Reaper (fallback cron Vercel du BACKSTOP)
  *
- * Filet de secours pour le watchdog des analyses figées. La planification
- * PRIMAIRE est le cron Inngest staleAnalysisReaperFunction (toutes les 15 min).
- * Comme c'est le premier cron Inngest du repo (les autres jobs sont
- * event-triggered) et que l'enregistrement cloud d'un cron Inngest n'est pas
- * garanti, cette route Vercel appelle le MEME coeur reapStaleAnalyses —
- * idempotent et sur a executer en parallele du cron Inngest (flip atomique
- * RUNNING vers FAILED, refund une seule fois).
+ * Filet de dernier recours. La détection PRIMAIRE des analyses figées est désormais
+ * ÉVÉNEMENTIELLE et par-analyse (analysisWatchdogFunction, déclenchée au lancement de
+ * chaque analyse) ; le BACKSTOP global est le cron Inngest staleAnalysisReaperFunction
+ * (toutes les 12 h, basse fréquence pour ne PAS réveiller Neon à vide). Comme
+ * l'enregistrement cloud d'un cron Inngest n'est pas garanti, cette route Vercel appelle
+ * le MEME coeur reapStaleAnalyses — idempotent et sûr à exécuter en parallèle (flip
+ * atomique RUNNING vers FAILED, refund une seule fois).
  *
  * Securite : Bearer CRON_SECRET en comparaison timing-safe (meme pattern que les
  * routes cron maintenance).
  *
- * Planification : a declarer cote Vercel (dashboard OU vercel.json). La frequence
- * (toutes les 15 min) depend du plan Vercel — a verifier.
+ * Planification : si déclarée côté Vercel (dashboard OU vercel.json), la caler sur la
+ * cadence BACKSTOP (~12 h), PAS plus fréquent — sinon on réintroduit le drain compute-hours.
  */
 
 import { NextRequest, NextResponse } from 'next/server'

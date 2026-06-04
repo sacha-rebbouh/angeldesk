@@ -322,6 +322,17 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Watchdog événementiel par-analyse (détection primaire des runs figés, sans cron global).
+      // Non bloquant : la reprise est déjà dispatchée ; un échec d'émission retombe sur le backstop 12 h.
+      try {
+        await inngest.send({
+          name: "analysis/watchdog.check",
+          data: { analysisId: resumeCandidate.id, dealId, userId: user.id },
+        });
+      } catch (watchdogErr) {
+        logger.error({ err: watchdogErr, dealId, analysisId: resumeCandidate.id }, "Inngest watchdog dispatch failed (backstop 12h)");
+      }
+
       return NextResponse.json({
         data: {
           status: "RESUMING",
@@ -390,8 +401,9 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           dispatchRefundKey,
           // D.5d-1d — clé d'idempotence init durable (= id de l'event ci-dessus). Lue par
-          // dealAnalysisFunction en mode stepwise → createAnalysis get-or-create (analysis.id
-          // stable au replay). Inerte hors stepwise.
+          // dealAnalysisFunction → createAnalysis get-or-create (analysis.id stable au replay).
+          // Phase 2 : threadée AUSSI hors stepwise → résolution du watchdog par-analyse +
+          // get-or-create idempotent au retry worker même en non-stepwise (plus « inerte hors stepwise »).
           dispatchEventId,
           // D.5d-1d (gate Codex) — mode stepwise STICKY : décidé AU DISPATCH (pas au worker)
           // pour qu'il soit IMMUABLE sur toute la durée du run (le flag est lu une fois ici).
@@ -426,6 +438,21 @@ export async function POST(request: NextRequest) {
         { error: "Failed to schedule analysis" },
         { status: 502 }
       );
+    }
+
+    // Watchdog événementiel par-analyse — UNIQUEMENT pour full_analysis : le Deep Dive long est le
+    // seul type à risque réel de hang ET le seul à persister dispatchEventId (via
+    // initializeFullAnalysisRun) → seul résoluble par le watchdog. Les types courts retombent sur le
+    // backstop 12 h. Non bloquant : l'analyse est déjà dispatchée ; échec d'émission → backstop.
+    if (effectiveType === "full_analysis") {
+      try {
+        await inngest.send({
+          name: "analysis/watchdog.check",
+          data: { dispatchEventId, dealId, userId: user.id },
+        });
+      } catch (watchdogErr) {
+        logger.error({ err: watchdogErr, dealId, dispatchEventId }, "Inngest watchdog dispatch failed (backstop 12h)");
+      }
     }
 
     return NextResponse.json({

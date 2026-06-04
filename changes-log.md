@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-04 — infra/coûts — Phase 2 (refonte 5-sujets) : watchdog Neon événementiel par-analyse
+
+### Contexte
+Suite refonte 5-sujets. Un reaper cron (même à 15 min) réveille Neon à vide 24/7 (findMany inconditionnel) → ne restaure PAS le baseline ~3-4h compute/mois (≈10h/mois en horaire, ≈42h/mois en 15 min). Remplacement par une détection ÉVÉNEMENTIELLE par-analyse : Neon n'est touché que pendant qu'une analyse tourne réellement (~2 checks/analyse).
+
+### Changements
+- `src/lib/inngest.ts` : nouvelle `analysisWatchdogFunction` (event `analysis/watchdog.check`) — boucle durable `step.sleep 25m` → check UNE analyse → reap si figée (cap 8 itérations ≈ 3,3h ; la boucle vs tir unique couvre les hangs post-1er-check). Reaper global rétrogradé en BACKSTOP `0 */12 * * *` (orphelins). + registre `functions` + import des helpers. Non-stepwise full_analysis : `dispatchEventId` désormais threadé à `runAnalysis` (→ ligne Analysis le persiste, watchdog résoluble + get-or-create idempotent au retry).
+- `src/lib/analysis-compensation.ts` : `reapIfStale` (helper PARTAGÉ ; `reapStaleAnalyses` byte-préservé, 9 tests existants verts) + `reapStaleAnalysisById` (resume) + `reapStaleAnalysisByDispatchEventId` (new-analysis ; no-row → `alive`/pending pour la race file Inngest).
+- `src/app/api/analyze/route.ts` : 2 sends `analysis/watchdog.check` (new = `dispatchEventId`, gaté `full_analysis` ; resume = `analysisId`), non bloquants (échec → backstop 12h).
+- `src/app/api/cron/reap-stale-analyses/route.ts` : commentaire rôle backstop 12h.
+
+### Vérif
+`tsc` clean (hors baseline `exit-strategist.ts` untracked). 37 tests (17 reaper/watchdog + 14 route + 6 stepwise). `@@index([dispatchEventId])` REPORTÉ en Phase 6 (migration générée quand Neon rouvre — évite le drift schema/migration). Gate Codex : **APPROVE** (après 2 rounds — threading non-stepwise + pending race + ciblage full_analysis + maj test/commentaire).
+
+---
 ## 2026-06-04 — UI/produit — Phase 1 (refonte 5-sujets) : archivage de l'onglet Conditions
 
 ### Contexte

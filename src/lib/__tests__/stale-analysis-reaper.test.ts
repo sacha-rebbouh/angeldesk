@@ -7,6 +7,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     analysis: {
       findMany: vi.fn(),
+      findUnique: vi.fn(),
       updateMany: vi.fn(),
       update: vi.fn(),
       findFirst: vi.fn(),
@@ -32,11 +33,17 @@ vi.mock("@/lib/logger", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { reapStaleAnalyses, STALE_ANALYSIS_REAP_MS } from "@/lib/analysis-compensation";
+import {
+  reapStaleAnalyses,
+  reapStaleAnalysisById,
+  reapStaleAnalysisByDispatchEventId,
+  STALE_ANALYSIS_REAP_MS,
+} from "@/lib/analysis-compensation";
 
 const mockedPrisma = prisma as unknown as {
   analysis: {
     findMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
     updateMany: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     findFirst: ReturnType<typeof vi.fn>;
@@ -202,5 +209,79 @@ describe("reapStaleAnalyses — watchdog des analyses figées", () => {
     // step par step. 20 min = 4× le plafond d'un step → marge confortable.
     const MAX_STEP_WALL_CLOCK_MS = 300_000;
     expect(STALE_ANALYSIS_REAP_MS).toBeGreaterThan(MAX_STEP_WALL_CLOCK_MS * 2);
+  });
+});
+
+describe("reapStaleAnalysisById — watchdog par-analyse (résolu par id)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedPrisma.analysis.update.mockResolvedValue({});
+    mockedPrisma.deal.update.mockResolvedValue({});
+    mockedPrisma.analysis.findFirst.mockResolvedValue(null); // compensate: pas d'autre RUNNING → deal reset
+  });
+
+  it("analyse terminée (≠ RUNNING) → terminal, aucune action", async () => {
+    mockedPrisma.analysis.findUnique.mockResolvedValue({ ...runningRow(), status: "COMPLETED" });
+    const res = await reapStaleAnalysisById("a1", NOW);
+    expect(res.status).toBe("terminal");
+    expect(mockedPrisma.analysis.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("introuvable → terminal", async () => {
+    mockedPrisma.analysis.findUnique.mockResolvedValue(null);
+    const res = await reapStaleAnalysisById("missing", NOW);
+    expect(res.status).toBe("terminal");
+  });
+
+  it("RUNNING + figée → reaped + refund une fois", async () => {
+    mockedPrisma.analysis.findUnique.mockResolvedValue({ ...runningRow(), status: "RUNNING" });
+    mockedPrisma.analysis.updateMany.mockResolvedValue({ count: 1 });
+    const res = await reapStaleAnalysisById("a1", NOW);
+    expect(res.status).toBe("reaped");
+    expect(refundCredits).toHaveBeenCalledTimes(1);
+  });
+
+  it("RUNNING + fraîche → alive (continuer à surveiller), pas de reap", async () => {
+    mockedPrisma.analysis.findUnique.mockResolvedValue({
+      ...runningRow({ checkpoints: [{ createdAt: FRESH_AT }] }),
+      status: "RUNNING",
+    });
+    const res = await reapStaleAnalysisById("a1", NOW);
+    expect(res.status).toBe("alive");
+    expect(mockedPrisma.analysis.updateMany).not.toHaveBeenCalled();
+    expect(refundCredits).not.toHaveBeenCalled();
+  });
+});
+
+describe("reapStaleAnalysisByDispatchEventId — watchdog par-analyse (résolu par dispatchEventId)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedPrisma.analysis.update.mockResolvedValue({});
+    mockedPrisma.deal.update.mockResolvedValue({});
+  });
+
+  it("résout par dispatchEventId et reape si figée", async () => {
+    mockedPrisma.analysis.findFirst
+      .mockResolvedValueOnce({ ...runningRow(), status: "RUNNING" }) // lookup principal
+      .mockResolvedValue(null); // compensate: pas d'autre RUNNING
+    mockedPrisma.analysis.updateMany.mockResolvedValue({ count: 1 });
+    const res = await reapStaleAnalysisByDispatchEventId("disp-1", NOW);
+    expect(res.status).toBe("reaped");
+    expect(mockedPrisma.analysis.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { dispatchEventId: "disp-1" } })
+    );
+  });
+
+  it("pas encore de ligne pour ce dispatchEventId (worker en file) → alive (pending, on continue)", async () => {
+    mockedPrisma.analysis.findFirst.mockResolvedValue(null);
+    const res = await reapStaleAnalysisByDispatchEventId("disp-x", NOW);
+    expect(res.status).toBe("alive");
+    expect(mockedPrisma.analysis.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("ligne présente mais terminée (≠ RUNNING) → terminal", async () => {
+    mockedPrisma.analysis.findFirst.mockResolvedValue({ ...runningRow(), status: "COMPLETED" });
+    const res = await reapStaleAnalysisByDispatchEventId("disp-done", NOW);
+    expect(res.status).toBe("terminal");
   });
 });

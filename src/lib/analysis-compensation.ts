@@ -67,6 +67,62 @@ export async function compensateFailedAnalysis(params: {
 
 export const STALE_ANALYSIS_REAP_MS = 20 * 60 * 1000;
 
+interface ReapableAnalysis {
+  id: string;
+  dealId: string;
+  type: string;
+  startedAt: Date | null;
+  deal: { userId: string | null } | null;
+  checkpoints: { createdAt: Date }[];
+}
+
+/**
+ * Reape UNE analyse si figée : RUNNING + dernière activité (dernier checkpoint, sinon
+ * `startedAt`) au-delà du cutoff. Flip atomique RUNNING→FAILED (seule la transition
+ * gagnante rembourse) + refund + reset deal. Source UNIQUE de la logique de reap,
+ * partagée par le scan global (`reapStaleAnalyses`) et le watchdog par-analyse.
+ * Retourne true si reapée, false sinon (fraîche, abstention, course perdue, userId manquant).
+ */
+async function reapIfStale(a: ReapableAnalysis, cutoff: Date, nowMs: number): Promise<boolean> {
+  // Signal de vivacité : dernier checkpoint écrit, sinon startedAt.
+  const lastActivity = a.checkpoints[0]?.createdAt ?? a.startedAt;
+  if (!lastActivity) return false; // aucune activité datable → on s'abstient
+  if (new Date(lastActivity) >= cutoff) return false; // encore frais → vivant
+
+  // Flip atomique : seule la transition gagnante déclenche le refund.
+  const flip = await prisma.analysis.updateMany({
+    where: { id: a.id, status: 'RUNNING' },
+    data: {
+      status: 'FAILED',
+      completedAt: new Date(nowMs),
+      summary:
+        'Analyse interrompue (timeout infrastructure) — clôturée automatiquement ' +
+        'par le watchdog pour autoriser la relance. Crédits remboursés.',
+    },
+  });
+  if (flip.count !== 1) return false; // déjà terminalisée par un autre chemin
+
+  if (!a.deal?.userId) {
+    logger.error(
+      { analysisId: a.id, dealId: a.dealId },
+      '[stale-reaper] flipped FAILED but deal has no userId — cannot refund'
+    );
+    return false;
+  }
+
+  await compensateFailedAnalysis({
+    analysisId: a.id,
+    userId: a.deal.userId,
+    dealId: a.dealId,
+    type: a.type,
+  });
+  logger.warn(
+    { analysisId: a.id, dealId: a.dealId, lastActivity },
+    '[stale-reaper] stale RUNNING analysis reaped → FAILED + refunded + deal IN_DD'
+  );
+  return true;
+}
+
 /**
  * Cœur du watchdog : passe en FAILED + rembourse + remet le deal en IN_DD toute
  * analyse RUNNING dont la dernière activité (dernier checkpoint, ou `startedAt` à
@@ -113,47 +169,74 @@ export async function reapStaleAnalyses(nowMs: number = Date.now()): Promise<{
 
   const reapedIds: string[] = [];
   for (const a of running) {
-    // Signal de vivacité : dernier checkpoint écrit, sinon startedAt.
-    const lastActivity = a.checkpoints[0]?.createdAt ?? a.startedAt;
-    if (!lastActivity) continue; // aucune activité datable → on s'abstient
-    if (new Date(lastActivity) >= cutoff) continue; // encore frais → vivant
-
-    // Flip atomique : seule la transition gagnante déclenche le refund.
-    const flip = await prisma.analysis.updateMany({
-      where: { id: a.id, status: 'RUNNING' },
-      data: {
-        status: 'FAILED',
-        completedAt: new Date(nowMs),
-        summary:
-          'Analyse interrompue (timeout infrastructure) — clôturée automatiquement ' +
-          'par le watchdog pour autoriser la relance. Crédits remboursés.',
-      },
-    });
-    if (flip.count !== 1) continue; // déjà terminalisée par un autre chemin
-
-    if (!a.deal?.userId) {
-      logger.error(
-        { analysisId: a.id, dealId: a.dealId },
-        '[stale-reaper] flipped FAILED but deal has no userId — cannot refund'
-      );
-      continue;
-    }
-
-    await compensateFailedAnalysis({
-      analysisId: a.id,
-      userId: a.deal.userId,
-      dealId: a.dealId,
-      type: a.type,
-    });
-    reapedIds.push(a.id);
-    logger.warn(
-      { analysisId: a.id, dealId: a.dealId, lastActivity },
-      '[stale-reaper] stale RUNNING analysis reaped → FAILED + refunded + deal IN_DD'
-    );
+    if (await reapIfStale(a, cutoff, nowMs)) reapedIds.push(a.id);
   }
 
   if (reapedIds.length > 0) {
     logger.warn({ scanned: running.length, reaped: reapedIds.length, reapedIds }, '[stale-reaper] run complete');
   }
   return { scanned: running.length, reaped: reapedIds.length, reapedIds };
+}
+
+/**
+ * Issue d'un check par-analyse (watchdog événementiel) :
+ * - 'reaped'   : était figée → flippée FAILED + remboursée
+ * - 'terminal' : n'est plus RUNNING (terminée / disparue) → plus rien à surveiller
+ * - 'alive'    : encore RUNNING et fraîche → continuer à surveiller
+ */
+export type SingleReapOutcome = { status: 'reaped' | 'terminal' | 'alive' };
+
+/**
+ * Watchdog par-analyse (résolu par id, chemin resume). Reape CETTE analyse si figée.
+ * Remplace, avec reapStaleAnalysisByDispatchEventId, le scan global régulier : Neon
+ * n'est touché que pendant qu'une analyse tourne réellement (cf. inngest.ts watchdog).
+ */
+export async function reapStaleAnalysisById(
+  analysisId: string,
+  nowMs: number = Date.now()
+): Promise<SingleReapOutcome> {
+  const a = await prisma.analysis.findUnique({
+    where: { id: analysisId },
+    select: {
+      id: true,
+      dealId: true,
+      type: true,
+      startedAt: true,
+      status: true,
+      deal: { select: { userId: true } },
+      checkpoints: { orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } },
+    },
+  });
+  if (!a || a.status !== 'RUNNING') return { status: 'terminal' };
+  const cutoff = new Date(nowMs - STALE_ANALYSIS_REAP_MS);
+  return { status: (await reapIfStale(a, cutoff, nowMs)) ? 'reaped' : 'alive' };
+}
+
+/**
+ * Watchdog par-analyse (résolu par dispatchEventId, chemin new-analysis : l'analysisId
+ * est créé dans le worker, indisponible au dispatch). Reape CETTE analyse si figée.
+ */
+export async function reapStaleAnalysisByDispatchEventId(
+  dispatchEventId: string,
+  nowMs: number = Date.now()
+): Promise<SingleReapOutcome> {
+  const a = await prisma.analysis.findFirst({
+    where: { dispatchEventId },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      dealId: true,
+      type: true,
+      startedAt: true,
+      status: true,
+      deal: { select: { userId: true } },
+      checkpoints: { orderBy: { createdAt: 'desc' }, take: 1, select: { createdAt: true } },
+    },
+  });
+  // Pas encore de ligne pour ce dispatchEventId = worker pas encore démarré (file Inngest /
+  // concurrence > 25 min) → PENDING : on continue à surveiller jusqu'au cap au lieu d'abandonner.
+  if (!a) return { status: 'alive' };
+  if (a.status !== 'RUNNING') return { status: 'terminal' };
+  const cutoff = new Date(nowMs - STALE_ANALYSIS_REAP_MS);
+  return { status: (await reapIfStale(a, cutoff, nowMs)) ? 'reaped' : 'alive' };
 }

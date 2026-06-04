@@ -25,7 +25,7 @@ import { logger } from '@/lib/logger'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
 import type { SourceStats } from '@/agents/maintenance/types'
 import { inngest } from '@/lib/inngest-client'
-import { compensateFailedAnalysis, reapStaleAnalyses } from '@/lib/analysis-compensation'
+import { compensateFailedAnalysis, reapStaleAnalyses, reapStaleAnalysisById, reapStaleAnalysisByDispatchEventId } from '@/lib/analysis-compensation'
 
 export { inngest }
 
@@ -370,6 +370,10 @@ export const dealAnalysisFunction = inngest.createFunction(
             dealId,
             type: type as "extraction" | "full_dd" | "tier1_complete" | "tier3_synthesis" | "tier2_sector" | "full_analysis",
             enableTrace,
+            // Persiste dispatchEventId sur la ligne Analysis (via initializeFullAnalysisRun) AUSSI
+            // hors stepwise → le watchdog par-analyse peut résoudre le run par dispatchEventId même
+            // avec DEEP_DIVE_STEPWISE off. Active aussi le get-or-create idempotent au retry worker.
+            dispatchEventId,
           });
         });
       }
@@ -396,22 +400,67 @@ export const dealAnalysisFunction = inngest.createFunction(
 );
 
 /**
- * STALE ANALYSIS REAPER — watchdog (cron Inngest)
+ * STALE ANALYSIS REAPER — BACKSTOP global basse fréquence (cron Inngest 12 h).
  *
- * Filet de sécurité : toute analyse RUNNING figée (worker tué mid-step par le
- * plafond Vercel 300s, etc.) est terminalisée en FAILED + remboursée + deal remis
- * en IN_DD pour autoriser la relance. La logique vit dans `reapStaleAnalyses`
- * (@/lib/analysis-compensation) — testée en isolation. Planifié par le scheduler
- * Inngest (pas un cron Vercel → ne consomme pas le quota cron Vercel).
+ * La détection PRIMAIRE des analyses figées est désormais ÉVÉNEMENTIELLE et par-analyse
+ * (`analysisWatchdogFunction` ci-dessous, déclenchée au lancement de chaque analyse) :
+ * Neon n'est réveillé que pendant qu'une analyse tourne réellement. Ce cron ne sert plus
+ * que de FILET pour les orphelins — analyses lancées avant ce mécanisme, ou dont l'event
+ * watchdog n'a pas pu être émis. Cadence 12 h = 2 réveils Neon/j (vs 96/j en cadence 15 min) : c'est
+ * ce qui restaure le baseline compute-hours. Le scan reste un findMany inconditionnel, d'où
+ * la fréquence volontairement basse. Logique partagée dans `reapStaleAnalyses`
+ * (@/lib/analysis-compensation), testée en isolation.
  */
 export const staleAnalysisReaperFunction = inngest.createFunction(
-  { id: 'stale-analysis-reaper', name: 'Stale Analysis Reaper', retries: 1 },
-  // Cadence 15 min : le seuil de staleness est de 20 min (STALE_ANALYSIS_REAP_MS),
-  // donc un tick toutes les 15 min détecte toute analyse figée dans sa fenêtre de
-  // seuil. Tourner toutes les 5 min réveillait l'endpoint Neon ~288×/j (findMany
-  // inconditionnel) et empêchait l'autosuspend → compute-hours inutiles.
-  { cron: '*/15 * * * *' },
+  { id: 'stale-analysis-reaper', name: 'Stale Analysis Reaper (backstop)', retries: 1 },
+  { cron: '0 */12 * * *' },
   async () => reapStaleAnalyses()
+);
+
+/**
+ * ANALYSIS WATCHDOG — détection PRIMAIRE des analyses figées, ÉVÉNEMENTIELLE et par-analyse.
+ *
+ * Déclenchée par `analysis/watchdog.check` AU LANCEMENT d'une analyse (route.ts : new + resume).
+ * Boucle durable : dort 25 min (gratuit pendant le sleep Inngest) → vérifie CETTE analyse →
+ * la reap si figée (RUNNING + dernière activité > 20 min) ; si encore RUNNING et active,
+ * re-dort ; si terminale (COMPLETED/FAILED) ou reapée, sort. Cap WATCHDOG_MAX_CHECKS pour
+ * borner la boucle (au-delà, le backstop 12 h prend le relais).
+ *
+ * Pourquoi pas un cron global : un cron réveille Neon à VIDE (findMany inconditionnel) 24/7
+ * → compute-hours. Ici Neon n'est touché (~2 checks) que pendant qu'une analyse tourne.
+ * 25 min > 20 min (STALE_ANALYSIS_REAP_MS) : au réveil, une analyse figée est past-seuil. La
+ * boucle (vs un tir unique) couvre les hangs survenant APRÈS le 1ᵉʳ check (granularité ~25 min,
+ * comme l'ancien cron) sans laisser le user attendre le backstop 12 h.
+ */
+const WATCHDOG_SLEEP = '25m';
+const WATCHDOG_MAX_CHECKS = 8; // ~3,3 h de surveillance active par analyse ; au-delà → backstop 12 h
+
+export const analysisWatchdogFunction = inngest.createFunction(
+  { id: 'analysis-watchdog', name: 'Analysis Watchdog', retries: 1 },
+  { event: 'analysis/watchdog.check' },
+  async ({ event, step }) => {
+    const { analysisId, dispatchEventId } = event.data as {
+      analysisId?: string;
+      dispatchEventId?: string;
+    };
+    if (!analysisId && !dispatchEventId) {
+      return { ok: false, reason: 'no-identifier' };
+    }
+
+    for (let i = 0; i < WATCHDOG_MAX_CHECKS; i++) {
+      await step.sleep(`wait-${i}`, WATCHDOG_SLEEP);
+      const outcome = await step.run(`check-${i}`, async () =>
+        analysisId
+          ? reapStaleAnalysisById(analysisId)
+          : reapStaleAnalysisByDispatchEventId(dispatchEventId as string)
+      );
+      // 'alive' = encore RUNNING et fraîche → on continue à surveiller ; sinon on sort.
+      if (outcome.status !== 'alive') {
+        return { ok: true, checks: i + 1, outcome: outcome.status };
+      }
+    }
+    return { ok: true, checks: WATCHDOG_MAX_CHECKS, outcome: 'cap-reached' };
+  }
 );
 
 /**
@@ -951,4 +1000,4 @@ export const documentExtractionFunction = inngest.createFunction(
 );
 
 // Export all functions for the serve handler
-export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction, staleAnalysisReaperFunction, thesisReextractFunction, documentExtractionFunction]
+export const functions = [cleanerFunction, sourcerFunction, completerFunction, dealAnalysisFunction, dealAnalysisResumeFunction, staleAnalysisReaperFunction, analysisWatchdogFunction, thesisReextractFunction, documentExtractionFunction]
