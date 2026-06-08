@@ -76,11 +76,15 @@ export async function sendEmail(
       }),
     })
 
-    const data = (await response.json()) as ResendResponse
+    const data = (await response.json().catch(() => ({}))) as ResendResponse
 
-    if (data.error) {
-      console.error('[Email] Send failed:', data.error)
-      return { success: false, error: data.error.message }
+    // Exiger un succès HTTP ET un id Resend. `data.error` absent ne suffit pas : un 401/403/429
+    // ou un domaine non vérifié peut renvoyer un corps sans `error` exploitable — le considérer
+    // « succès » graverait un faux envoi (cf. analysisReadyEmailSentAt côté call site).
+    if (!response.ok || data.error || !data.id) {
+      const error = data.error?.message ?? `Resend HTTP ${response.status}`
+      console.error('[Email] Send failed:', error)
+      return { success: false, error }
     }
 
     return { success: true, id: data.id }

@@ -11,7 +11,7 @@ describe("sendEmail — header Idempotency-Key vers Resend", () => {
     vi.stubEnv("RESEND_API_KEY", "test_key");
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockReset();
-    fetchMock.mockResolvedValue({ json: async () => ({ id: "email_x" }) });
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "email_x" }) });
   });
 
   afterEach(() => {
@@ -36,5 +36,45 @@ describe("sendEmail — header Idempotency-Key vers Resend", () => {
   it("n'ajoute PAS le header sans idempotencyKey", async () => {
     await sendEmail({ to: "a@b.co", subject: "S", html: "<p>x</p>" });
     expect(headersFromLastCall()["Idempotency-Key"]).toBeUndefined();
+  });
+});
+
+// C1 — un envoi n'est « success » que si HTTP ok ET un id Resend est présent. Sinon un
+// 401/403/429 (ex. domaine non vérifié) passerait pour un succès et graverait un faux envoi.
+describe("sendEmail — validation de la réponse Resend (C1)", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    vi.stubEnv("RESEND_API_KEY", "test_key");
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("réponse non-ok (ex. 403 domaine non vérifié) → success:false, pas de throw", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: { message: "domain not verified", name: "validation_error" } }),
+    });
+    const res = await sendEmail({ to: "a@b.co", subject: "S", html: "<p>x</p>" });
+    expect(res.success).toBe(false);
+  });
+
+  it("réponse ok mais sans id Resend → success:false (pas de faux succès)", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    const res = await sendEmail({ to: "a@b.co", subject: "S", html: "<p>x</p>" });
+    expect(res.success).toBe(false);
+  });
+
+  it("réponse ok + id → success:true", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: "email_ok" }) });
+    const res = await sendEmail({ to: "a@b.co", subject: "S", html: "<p>x</p>" });
+    expect(res.success).toBe(true);
+    expect(res.id).toBe("email_ok");
   });
 });

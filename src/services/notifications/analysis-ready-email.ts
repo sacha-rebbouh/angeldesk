@@ -62,13 +62,25 @@ export async function sendAnalysisReadyNotification(opts: {
 
   // 2) SEND — résout destinataire + deal, envoie, finalise (sentAt) ou relâche le claim.
   await step.run(`${prefix}-send`, async () => {
-    // Email volontairement non configuré (dev/local) → consommer le claim, pas de retry.
+    // Email non configuré. En PRODUCTION c'est une MISCONFIG, pas un no-op légitime : relâcher le
+    // claim + throw → l'email repartira au retry une fois RESEND_API_KEY ajoutée, au lieu de graver
+    // sentAt en silence (preuve d'envoi mensongère). Hors prod (dev/local + Vercel Preview, où la clé
+    // peut légitimement manquer), consommer le claim sans retry. Gate sur VERCEL_ENV (PAS NODE_ENV,
+    // qui vaut "production" aussi en Preview) — cohérent avec proxy.ts.
     if (!isEmailConfigured()) {
+      if (process.env.VERCEL_ENV === "production") {
+        await prisma.analysis.updateMany({
+          where: { id: analysisId, analysisReadyEmailSentAt: null },
+          data: { analysisReadyEmailClaimedAt: null },
+        });
+        logger.error({ analysisId }, "[analysis-ready-email] RESEND_API_KEY absente en PRODUCTION — claim relâché, retry attendu");
+        throw new Error("[analysis-ready-email] email non configuré en production (RESEND_API_KEY absente)");
+      }
       await prisma.analysis.update({
         where: { id: analysisId },
         data: { analysisReadyEmailSentAt: new Date() },
       });
-      logger.info({ analysisId }, "[analysis-ready-email] email non configuré — notification ignorée");
+      logger.info({ analysisId }, "[analysis-ready-email] email non configuré (hors prod) — notification ignorée");
       return;
     }
 

@@ -1,6 +1,20 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-08 — Bug/email — Fiabilise l'envoi : sendEmail exige response.ok+id, prod fail-loud
+
+### Contexte
+L'utilisateur ne reçoit jamais l'email « analyse prête » bien que `analysisReadyEmailSentAt` soit posé. Deux failles : (1) `sendEmail` considérait « succès » dès que `data.error` absent — un 401/403/429 ou un domaine Resend non vérifié passait pour un envoi réussi et gravait un faux `sentAt` ; (2) si `RESEND_API_KEY` manque en prod, le claim était consommé en silence (`sentAt` posé + log info), masquant la misconfig.
+
+### Changements (gate Codex APPROVE)
+- `services/notifications/email.ts` : `sendEmail` exige `response.ok && data.id` (sinon `success:false`) + guard `.catch` sur `json()` non-JSON.
+- `services/notifications/analysis-ready-email.ts` : si email non configuré ET `VERCEL_ENV === "production"` → **relâche le claim** (`claimedAt=null`, guardé `sentAt:null`) **+ throw** (retry) au lieu de marquer `sentAt`. Hors prod (dev/local + Preview) → no-op inchangé.
+- Tests : `email-idempotency.test.ts` (mock fetch `ok:true` + cas 403/sans-id → `success:false`) ; `analysis-ready-email.test.ts` (ancien « non configuré » → cas HORS PROD + nouveau cas prod fail-loud).
+
+### Vérif
+12 tests email verts ; `tsc` clean hors WIP préexistant (`exit-strategist.ts`). Gate Codex APPROVE (idempotence/claim intacts, gate `VERCEL_ENV` validé).
+
+---
 ## 2026-06-08 — UI — Overlay « analyse en cours » : menu libre + affichage immédiat + redesign
 
 ### Contexte
