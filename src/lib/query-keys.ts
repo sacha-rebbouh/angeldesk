@@ -28,6 +28,11 @@ export const queryKeys = {
       [...queryKeys.analyses.all, "deal", dealId] as const,
     latest: (dealId: string) =>
       [...queryKeys.analyses.all, "latest", dealId] as const,
+    // Signal client « lancement à l'instant T » (timestamp ms) — posé par le bouton de
+    // relance, lu par l'overlay « analyse en cours » pour s'afficher immédiatement avant
+    // que le worker crée la ligne RUNNING (fenêtre de grâce, cf. analysis-running-overlay).
+    launchedAt: (dealId: string) =>
+      [...queryKeys.analyses.all, "launchedAt", dealId] as const,
   },
 
   // Document queries

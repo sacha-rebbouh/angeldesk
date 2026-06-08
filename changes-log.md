@@ -1,6 +1,20 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-08 — UI — Overlay « analyse en cours » : menu libre + affichage immédiat + redesign
+
+### Contexte
+Re-run Avekapeti : l'overlay (1) apparaissait **~1min30 après** le lancement (le worker ne pose `RUNNING` qu'après ~90s ; l'overlay attendait ce statut alors que l'inline tracker partait sur `isActive`), (2) était « moche », (3) couvrait **tout y compris le menu** alors que l'utilisateur veut pouvoir naviguer (autres deals/analyses, en lancer une autre) pendant que l'analyse tourne en arrière-plan.
+
+### Changements (UI — pas de gate)
+- `analysis-v2/analysis-running-overlay.tsx` : **SCOPE** `fixed inset-0 md:left-64` (couvre le contenu, **menu latéral `w-64` libre**) ; verrou de scroll body retiré (menu utilisable) ; **AFFICHAGE IMMÉDIAT** via fenêtre de grâce (`LAUNCH_GRACE_MS=150s`, couvre le démarrage worker) + statut `PENDING`/`RUNNING` ; **REDESIGN** (anneau de progression SVG + %, carte soignée, message « navigue librement, email à la fin »). beforeunload conservé (fermeture d'onglet accidentelle), navigation in-app libre.
+- `analysis-v2/analysis-v2-live.tsx` (`handleRelaunch`, succès + 409) : pose le signal `queryKeys.analyses.launchedAt(dealId)=Date.now()` → l'overlay s'affiche **sans attendre** le worker.
+- `lib/query-keys.ts` : ajout `analyses.launchedAt(dealId)`.
+
+### Vérif
+`tsc` clean (hors WIP) ; 62 tests analysis-v2 verts (non-régression). Validation visuelle live (overlay state-gated, non screenshotable hors analyse en cours).
+
+---
 ## 2026-06-08 — Bug/money — Refund-à-tort + email manquant : gate sur statut terminal (pas allSuccess)
 
 ### Contexte

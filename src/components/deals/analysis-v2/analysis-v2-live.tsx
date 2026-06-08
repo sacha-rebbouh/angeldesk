@@ -197,6 +197,8 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
           activeSinceRef.current = Date.now();
           setIsActive(true);
           queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
+          // Signal de lancement → l'overlay s'affiche immédiatement (fenêtre de grâce).
+          queryClient.setQueryData(queryKeys.analyses.launchedAt(dealId), Date.now());
           toast.info(err.error || "Une analyse est déjà en cours pour ce deal.");
           return;
         }
@@ -209,6 +211,9 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
       activeSinceRef.current = Date.now();
       setIsActive(true);
       queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
+      // Signal de lancement → l'overlay s'affiche immédiatement (fenêtre de grâce), sans
+      // attendre que le worker crée la ligne RUNNING (~90 s).
+      queryClient.setQueryData(queryKeys.analyses.launchedAt(dealId), Date.now());
       toast.success("Analyse relancée — suivez la progression ci-dessous.");
     } catch (error) {
       console.error("[AnalysisV2Live] relaunch error:", error);
