@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-08 — Bug/auth — Gel overlay « analyse en cours » : session Clerk expirée (fetcher auth-required)
+
+### Contexte
+L'overlay + le tracker d'étapes restaient figés à 0/22 alors que l'analyse progressait (DB 0→22). Cause (preuve DevTools réseau) : le JWT de session Clerk expire (~60 s) et le refresh échoue (`refresh_token_not_found`) → le middleware `proxy.ts` (`auth.protect()`) réécrit les polls `/analyses` en 404 « signed-out » ; les composants en `fetch()` brut avalaient l'erreur et figeaient sur la dernière valeur. Bug Clerk cookie `__session` vs `__session_<suffix>` désynchronisés (instance DEV sur domaine prod).
+
+### Changements (gate Codex APPROVE, 2 tours)
+- `lib/fetch-latest-analysis.ts` (nouveau) : fetcher AUTH-REQUIRED unifié pour `analyses.latest` — `clerkFetch` puis UN retry `getToken({skipCache:true})` en Bearer avec `credentials:"omit"` (le cookie périmé ne gagne plus sur le header) ; sinon `AuthExpiredError`. Pas de fallback cookie-only.
+- `lib/auth-expired-error.ts` (nouveau) : `AuthExpiredError` + `isAuthExpiredResponse` (401/403, ou 404 AVEC signal Clerk ; `x-matched-path:/404` seul ≠ auth-expired).
+- 3 consommateurs (`analysis-running-overlay`, `analysis-v2-live`, `analysis-panel`) repointés sur le fetcher unifié + `retry` no-AuthExpired + `refetchInterval` stoppe sur `query.state.error` ; UI « Session expirée + Se reconnecter » ; toast unique.
+- Retouches overlay : `beforeunload` retiré ; anneau ≥1 % (Tier0 ne paraît plus bloqué) ; libellé d'étape via `lib/analysis-progress-model.ts` (nouveau, partagé avec `analysis-progress.tsx` refacto byte-équivalent).
+
+### Vérif
+33 nouveaux tests + 100 tests existants analysis-v2/panel verts ; `tsc` clean hors WIP. Gate Codex APPROVE (correctif `credentials:omit` intégré au tour 2).
+
+---
 ## 2026-06-08 — Bug/email — Fiabilise l'envoi : sendEmail exige response.ok+id, prod fail-loud
 
 ### Contexte

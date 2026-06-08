@@ -20,6 +20,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { queryKeys } from "@/lib/query-keys";
 import { clerkFetch } from "@/lib/clerk-fetch";
+import { fetchLatestAnalysis as fetchLatestAnalysisAuth } from "@/lib/fetch-latest-analysis";
+import { AuthExpiredError } from "@/lib/auth-expired-error";
 import { useResolutions } from "@/hooks/use-resolutions";
 import {
   formatAgentName,
@@ -295,8 +297,10 @@ async function startAnalysis(dealId: string, type: string): Promise<StartAnalysi
   return await response.json();
 }
 
+// Passe par le fetcher AUTH-REQUIRED partagé (token Clerk frais + retry skipCache + AuthExpiredError)
+// — même queryFn que l'overlay et le tracker v2 sur la clé `analyses.latest` (cohérence des observers).
 async function fetchLatestAnalysis(dealId: string): Promise<LatestAnalysisResponse> {
-  return fetchApi(`/api/deals/${dealId}/analyses`, "Failed to fetch analysis status");
+  return fetchLatestAnalysisAuth<LatestAnalysisResponse>(dealId);
 }
 
 async function fetchUsageStatus(): Promise<{ usage: UsageStatus }> {
@@ -406,7 +410,13 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   const { data: polledAnalysis } = useQuery({
     queryKey: queryKeys.analyses.latest(dealId),
     queryFn: () => fetchLatestAnalysis(dealId),
-    refetchInterval: isPolling ? 3000 : false,
+    // Pas de retry sur session expirée ; stop le poll sur AuthExpiredError (cohérent avec
+    // l'overlay/tracker qui partagent la clé — l'overlay affiche la reconnexion).
+    retry: (failureCount, err) => !(err instanceof AuthExpiredError) && failureCount < 3,
+    refetchInterval: (query) => {
+      if (query.state.error instanceof AuthExpiredError) return false;
+      return isPolling ? 3000 : false;
+    },
     refetchOnWindowFocus: true,
     staleTime: isPolling ? 0 : 30_000,
   });

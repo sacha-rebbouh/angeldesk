@@ -6,10 +6,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, ShieldAlert } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { queryKeys } from "@/lib/query-keys";
+import { fetchLatestAnalysis } from "@/lib/fetch-latest-analysis";
+import { AuthExpiredError } from "@/lib/auth-expired-error";
 import { AnalysisProgress } from "../analysis-progress";
 import { AnalysisV2PageShell } from "./page-shell";
 import type { AnalysisV2ViewModel } from "./lib/selectors";
@@ -41,10 +43,13 @@ function ActiveAnalysisView({
   dealName,
   hideHeader,
   running,
+  authExpired,
 }: {
   dealName: string;
   hideHeader?: boolean;
   running: LatestAnalysis | null;
+  /** Session Clerk expirée : le suivi live est coupé, mais l'analyse continue côté serveur. */
+  authExpired: boolean;
 }) {
   const wrapperClass = hideHeader
     ? "analysis-v2 rounded-xl p-4 sm:p-6"
@@ -59,28 +64,59 @@ function ActiveAnalysisView({
           </header>
         )}
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Analyse en cours…
-            </CardTitle>
-            {running ? (
-              <CardDescription>
-                {running.completedAgents}/{running.totalAgents} étapes terminées
-              </CardDescription>
-            ) : (
-              <CardDescription>Initialisation de l&apos;analyse…</CardDescription>
-            )}
-          </CardHeader>
-          <CardContent>
-            <AnalysisProgress
-              isRunning
-              analysisType="full_analysis"
-              completedAgents={running?.completedAgents ?? 0}
-              totalAgents={running?.totalAgents ?? 0}
-              startedAt={running?.startedAt ?? running?.createdAt ?? null}
-            />
-          </CardContent>
+          {authExpired ? (
+            <>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ShieldAlert className="h-5 w-5 text-amber-500" />
+                  Session expirée
+                </CardTitle>
+                <CardDescription>
+                  L&apos;analyse continue en arrière-plan — vous recevrez un email dès qu&apos;elle est
+                  prête. Reconnectez-vous pour suivre la progression en direct.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-sm transition hover:opacity-90"
+                >
+                  Se reconnecter
+                </button>
+                {running ? (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Dernière progression connue : {running.completedAgents}/{running.totalAgents} étapes
+                  </p>
+                ) : null}
+              </CardContent>
+            </>
+          ) : (
+            <>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Analyse en cours…
+                </CardTitle>
+                {running ? (
+                  <CardDescription>
+                    {running.completedAgents}/{running.totalAgents} étapes terminées
+                  </CardDescription>
+                ) : (
+                  <CardDescription>Initialisation de l&apos;analyse…</CardDescription>
+                )}
+              </CardHeader>
+              <CardContent>
+                <AnalysisProgress
+                  isRunning
+                  analysisType="full_analysis"
+                  completedAgents={running?.completedAgents ?? 0}
+                  totalAgents={running?.totalAgents ?? 0}
+                  startedAt={running?.startedAt ?? running?.createdAt ?? null}
+                />
+              </CardContent>
+            </>
+          )}
         </Card>
       </div>
     </div>
@@ -114,18 +150,22 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
   const watchedIdRef = useRef<string | null>(null);
   const activeSinceRef = useRef<number>(initialActive ? Date.now() : 0);
 
-  const { data: latest } = useQuery({
+  const { data: latest, error: latestError } = useQuery({
     queryKey: queryKeys.analyses.latest(dealId),
-    queryFn: async () => {
-      const res = await fetch(`/api/deals/${dealId}/analyses`);
-      if (!res.ok) throw new Error("Failed to fetch analysis status");
-      return (await res.json()) as { data: LatestAnalysis | null };
+    queryFn: () => fetchLatestAnalysis<{ data: LatestAnalysis | null }>(dealId),
+    // Pas de retry sur session expirée → on bascule tout de suite sur la reconnexion.
+    retry: (failureCount, err) => !(err instanceof AuthExpiredError) && failureCount < 3,
+    // Stop le poll sur session expirée (piloté par l'ERREUR de query, partagée par tous les
+    // observers de la clé) ; sinon poll 3s tant que le suivi est actif.
+    refetchInterval: (query) => {
+      if (query.state.error instanceof AuthExpiredError) return false;
+      return isActive ? 3000 : false;
     },
-    refetchInterval: isActive ? 3000 : false,
     refetchOnWindowFocus: true,
     staleTime: isActive ? 0 : 30_000,
   });
 
+  const authExpired = latestError instanceof AuthExpiredError;
   const status = latest?.data?.status ?? null;
   const runningAnalysisId = status === "RUNNING" ? latest?.data?.id ?? null : null;
 
@@ -226,7 +266,7 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
   return (
     <>
       {isActive ? (
-        <ActiveAnalysisView dealName={dealName} hideHeader={hideHeader} running={runningAnalysisId ? latest?.data ?? null : null} />
+        <ActiveAnalysisView dealName={dealName} hideHeader={hideHeader} running={runningAnalysisId ? latest?.data ?? null : null} authExpired={authExpired} />
       ) : (
         <AnalysisV2PageShell
           dealName={dealName}
