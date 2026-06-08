@@ -24,6 +24,7 @@ import { prisma } from '@/lib/prisma'
 import { logger } from '@/lib/logger'
 import { notifyAgentCompleted, notifyAgentFailed } from '@/services/notifications'
 import { sendAnalysisReadyNotification, type AnalysisReadyStep } from '@/services/notifications/analysis-ready-email'
+import { completionActionForStatus } from '@/lib/analysis-completion-policy'
 import type { SourceStats } from '@/agents/maintenance/types'
 import { inngest } from '@/lib/inngest-client'
 import { compensateFailedAnalysis, reapStaleAnalyses, reapStaleAnalysisById, reapStaleAnalysisByDispatchEventId } from '@/lib/analysis-compensation'
@@ -390,14 +391,25 @@ export const dealAnalysisFunction = inngest.createFunction(
       throw error;
     }
 
-    if (!analysisResult.success) {
-      await step.run('refund-on-failure', async () => {
-        await compensateFailedAnalysis({ analysisId: analysisResult.sessionId, userId, dealId, type });
-      });
-    } else if (analysisResult.sessionId) {
-      // Phase 4 — notifier l'utilisateur que l'analyse est prête (email idempotent, côté
-      // Inngest, UNIQUEMENT sur succès). Best-effort : un échec d'envoi persistant (après
-      // le retry Inngest du step `send`) ne doit pas marquer une analyse réussie comme échouée.
+    // Décision commerciale gatée sur le STATUT TERMINAL PERSISTÉ (source de vérité produit),
+    // PAS sur analysisResult.success (= allSuccess : tous les agents `success:true`). Une analyse
+    // COMPLETED avec agents imparfaits est LIVRÉE (doctrine « IA imparfaites ») → email + facturée ;
+    // seule FAILED est remboursée. `allSuccess` reste un signal qualité, jamais une règle
+    // commerciale (cf. src/lib/analysis-completion-policy.ts).
+    const terminalStatus = analysisResult.sessionId
+      ? await step.run('resolve-terminal-status', async () => {
+          const a = await prisma.analysis.findUnique({
+            where: { id: analysisResult.sessionId },
+            select: { status: true },
+          });
+          return a?.status ?? null;
+        })
+      : null;
+
+    const completionAction = completionActionForStatus(terminalStatus);
+    if (completionAction === 'notify') {
+      // Analyse LIVRÉE → notifier (email idempotent, best-effort : un échec d'envoi persistant
+      // après le retry Inngest du step `send` ne doit pas faire échouer une analyse réussie).
       try {
         await sendAnalysisReadyNotification({
           analysisId: analysisResult.sessionId,
@@ -411,7 +423,13 @@ export const dealAnalysisFunction = inngest.createFunction(
           '[deal-analysis] notification « analyse prête » best-effort échouée'
         );
       }
+    } else if (completionAction === 'refund') {
+      // Échec terminal (FAILED) → refund idempotent.
+      await step.run('refund-on-failure', async () => {
+        await compensateFailedAnalysis({ analysisId: analysisResult.sessionId, userId, dealId, type });
+      });
     }
+    // completionAction === 'none' (statut non terminal) → rien (pas de refund à l'aveugle).
 
     return analysisResult;
   }
@@ -528,11 +546,16 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
         return await orchestrator.resumeAnalysis(analysisId);
       });
 
-      if (!result.success) {
-        await compensateResumeFailure('compensate-resume-failure');
-      } else {
-        // Phase 4 — notifier que l'analyse (reprise) est prête. Même claim idempotent que la
-        // 1ʳᵉ complétion : la ligne Analysis est la même → un seul email même après resume.
+      // Même politique que dealAnalysisFunction : gate sur le STATUT TERMINAL PERSISTÉ,
+      // pas result.success (= allSuccess). COMPLETED → email ; FAILED → refund.
+      const terminalStatus = await step.run('resolve-terminal-status-resume', async () => {
+        const a = await prisma.analysis.findUnique({ where: { id: analysisId }, select: { status: true } });
+        return a?.status ?? null;
+      });
+      const completionAction = completionActionForStatus(terminalStatus);
+      if (completionAction === 'notify') {
+        // Analyse (reprise) LIVRÉE → notifier. Même claim idempotent que la 1ʳᵉ complétion :
+        // la ligne Analysis est la même → un seul email même après resume.
         try {
           await sendAnalysisReadyNotification({
             analysisId,
@@ -546,6 +569,8 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
             '[deal-analysis-resume] notification « analyse prête » best-effort échouée'
           );
         }
+      } else if (completionAction === 'refund') {
+        await compensateResumeFailure('compensate-resume-failure');
       }
 
       return result;

@@ -1,6 +1,23 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-08 — Bug/money — Refund-à-tort + email manquant : gate sur statut terminal (pas allSuccess)
+
+### Contexte
+Re-run Avekapeti (validation post-release) : l'utilisateur n'a **jamais reçu l'email « analyse prête »**. Diagnostic (prouvé en base) : l'analyse `cmpzke95i…` a **COMPLETED 22/22 agents** mais a été **REFUNDÉE** (5 crédits, `refundedAt` posé) **et** sans email. Cause racine : `inngest.ts` gatait refund vs email sur `analysisResult.success` = `allSuccess` = `Object.values(results).every(r => r.success)` (orchestrator/index.ts:688…) = vrai **seulement si TOUS les agents `success:true`**. Sur un Deep Dive, ≥1 agent en échec est normal → `success:false` → branche refund + email sauté. **Impact : chaque Deep Dive complété-mais-partiel était remboursé en silence (fuite de revenu) + sans email.** Contredit la doctrine (« environnement fiable autour d'IA imparfaites » : une analyse COMPLETED est livrée/facturable).
+
+### Décision (utilisateur + avis convergents Claude/Codex)
+Option A : gater refund/email sur le **statut terminal PERSISTÉ**, binaire — `COMPLETED` → email + facturé (pas de refund), `FAILED` → refund. `allSuccess` reste un signal qualité/observabilité, jamais une règle commerciale. **Pas de seuil** dans `inngest.ts` (un seuil appartiendrait à la logique de STATUT). **Historique non corrigé** (que le futur, décision utilisateur).
+
+### Changements (gate Codex APPROVE round 2)
+- `src/lib/analysis-completion-policy.ts` (NEW) : helper PUR `completionActionForStatus(status) → 'notify'|'refund'|'none'`.
+- `src/lib/inngest.ts` : `dealAnalysisFunction` + `dealAnalysisResumeFunction` — remplace le gate `analysisResult.success` par lecture du statut persisté (`step.run('resolve-terminal-status'…) → prisma.analysis.findUnique select status`) puis `completionActionForStatus`. Idempotence email (claim Phase 4) + clé refund inchangées.
+- Tests : `analysis-completion-policy.test.ts` (NEW, 3) ; `deal-analysis-inngest-stepwise.test.ts` mis à jour (mock `findUnique` + spy email ; sémantique FAILED→refund ; **+ test de régression** COMPLETED malgré agents KO → email, pas de refund).
+
+### Vérif
+`tsc` clean (hors WIP). 18 tests verts (stepwise 7, policy 3, email 8). Gate Codex : round 1 REQUEST_CHANGES (tests stepwise rouges : mock prisma `{}` + sémantique obsolète) → mock + sémantique mis à jour + régression → **APPROVE** round 2. Suivi non-bloquant noté par Codex : pas de test resume dédié (logique identique via le helper testé).
+
+---
 ## 2026-06-04 — Migration/infra — Phase 6 (refonte 5-sujets) : déblocage Neon + migration prod Phase 2/4
 
 ### Contexte

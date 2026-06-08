@@ -12,6 +12,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   runAnalysis: vi.fn(),
   compensateFailedAnalysis: vi.fn(),
+  // Statut terminal PERSISTÉ (nouvelle source de vérité du gate refund/email) + spy de l'email.
+  findUnique: vi.fn(),
+  sendNotif: vi.fn(),
 }));
 
 vi.mock("@/agents", () => ({ orchestrator: { runAnalysis: mocks.runAnalysis } }));
@@ -29,7 +32,10 @@ vi.mock("@/agents/maintenance/db-completer", () => ({
   processCompleterBatch: vi.fn(), finalizeCompleterRun: vi.fn(), emptyBatchStats: vi.fn(),
 }));
 vi.mock("@/services/notifications", () => ({ notifyAgentCompleted: vi.fn(), notifyAgentFailed: vi.fn() }));
-vi.mock("@/lib/prisma", () => ({ prisma: {} }));
+vi.mock("@/services/notifications/analysis-ready-email", () => ({ sendAnalysisReadyNotification: mocks.sendNotif }));
+// prisma.analysis.findUnique : lecture du STATUT TERMINAL PERSISTÉ — nouvelle source de vérité
+// du gate refund/email (vs analysisResult.success = allSuccess).
+vi.mock("@/lib/prisma", () => ({ prisma: { analysis: { findUnique: mocks.findUnique } } }));
 
 // step-runner NON mocké : on veut le vrai InngestStepRunner pour l'assertion instanceof.
 const { InngestStepRunner } = await import("@/agents/orchestrator/step-runner");
@@ -63,6 +69,8 @@ const baseData = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.runAnalysis.mockResolvedValue({ success: true, sessionId: "a1" });
+  // Défaut : statut terminal COMPLETED (analyse livrée) → chemin notify.
+  mocks.findUnique.mockResolvedValue({ status: "COMPLETED" });
 });
 
 describe("dealAnalysisFunction — D.5d-1d branchement stepwise (sticky)", () => {
@@ -111,12 +119,25 @@ describe("dealAnalysisFunction — D.5d-1d branchement stepwise (sticky)", () =>
     expect(stepRunCalls).toContain("run-analysis");
   });
 
-  it("ON : échec → refund (step refund-on-failure), sans run-analysis externe", async () => {
-    mocks.runAnalysis.mockResolvedValue({ success: false, sessionId: "a1" });
+  it("ON : statut terminal FAILED → refund (refund-on-failure), pas d'email, sans run-analysis externe", async () => {
+    mocks.findUnique.mockResolvedValue({ status: "FAILED" });
     const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis", stepwise: true });
 
     expect(stepRunCalls).not.toContain("run-analysis");
     expect(stepRunCalls).toContain("refund-on-failure");
     expect(mocks.compensateFailedAnalysis).toHaveBeenCalledTimes(1);
+    expect(mocks.sendNotif).not.toHaveBeenCalled();
+  });
+
+  it("ON : COMPLETED malgré des agents en échec (success:false) → email, JAMAIS de refund (régression refund-à-tort)", async () => {
+    // Bug historique : un Deep Dive COMPLETED 22/22 avec ≥1 agent `success:false` était remboursé
+    // + sans email. Le gate lit désormais le STATUT PERSISTÉ (COMPLETED), pas analysisResult.success.
+    mocks.runAnalysis.mockResolvedValue({ success: false, sessionId: "a1" });
+    mocks.findUnique.mockResolvedValue({ status: "COMPLETED" });
+    const { stepRunCalls } = await invokeHandler({ ...baseData, type: "full_analysis", stepwise: true });
+
+    expect(mocks.sendNotif).toHaveBeenCalledTimes(1);
+    expect(stepRunCalls).not.toContain("refund-on-failure");
+    expect(mocks.compensateFailedAnalysis).not.toHaveBeenCalled();
   });
 });
