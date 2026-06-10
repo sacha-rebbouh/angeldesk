@@ -28,6 +28,8 @@ import { completionActionForStatus } from '@/lib/analysis-completion-policy'
 import type { SourceStats } from '@/agents/maintenance/types'
 import { inngest } from '@/lib/inngest-client'
 import { compensateFailedAnalysis, reapStaleAnalyses, reapStaleAnalysisById, reapStaleAnalysisByDispatchEventId } from '@/lib/analysis-compensation'
+import { cleanupOldLLMLogs } from '@/services/llm-logger'
+import { cleanupExpiredSnapshots } from '@/services/context-engine/persistence'
 
 export { inngest }
 
@@ -450,7 +452,27 @@ export const dealAnalysisFunction = inngest.createFunction(
 export const staleAnalysisReaperFunction = inngest.createFunction(
   { id: 'stale-analysis-reaper', name: 'Stale Analysis Reaper (backstop)', retries: 1 },
   { cron: '0 */12 * * *' },
-  async () => reapStaleAnalyses()
+  // Filet de maintenance 12 h : analyses figées + purge des logs LLM > 30 j
+  // (RGPD/bloat) + snapshots Context Engine expirés. Chaque tâche en step
+  // ISOLÉ (échec d'une n'empêche pas les autres ; chacune garde son try/catch
+  // interne). NB : si le reaper est PAUSÉ en prod (anti-drain Neon), ce câblage
+  // reste correct mais DORMANT jusqu'à réactivation du cron.
+  async ({ step }) => {
+    // reapStaleAnalyses ne catch PAS son findMany top-level : on l'enveloppe ici
+    // pour qu'un échec Prisma du reaper n'empêche PAS les cleanups suivants
+    // (best-effort maintenance ; les 2 cleanups catchent déjà en interne).
+    const reaped = await step.run('reap-stale-analyses', async () => {
+      try {
+        return await reapStaleAnalyses();
+      } catch (err) {
+        logger.error({ err }, '[maintenance] stale analysis reaper failed');
+        return { scanned: 0, reaped: 0, reapedIds: [], error: true };
+      }
+    });
+    const llmLogsDeleted = await step.run('cleanup-old-llm-logs', () => cleanupOldLLMLogs());
+    const snapshotsDeleted = await step.run('cleanup-expired-snapshots', () => cleanupExpiredSnapshots());
+    return { reaped, llmLogsDeleted, snapshotsDeleted };
+  }
 );
 
 /**

@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Maintenance — Phase F (F3) : cleanups LLM logs / snapshots branchés sur le cron reaper 12h
+
+### Fichiers
+- `src/lib/inngest.ts` : `staleAnalysisReaperFunction` (cron 0 */12) exécute désormais 3 STEPS Inngest isolés — `reap-stale-analyses` (enveloppé try/catch + fallback sérialisable car `reapStaleAnalyses` ne catch pas son `findMany`), `cleanup-old-llm-logs` (`cleanupOldLLMLogs`, purge LLMCallLog > 30j), `cleanup-expired-snapshots` (`cleanupExpiredSnapshots`, purge ContextEngineSnapshot expirés). Imports ajoutés.
+
+### Description
+Phase F (F3) du plan post-audit : `cleanupOldLLMLogs`/`cleanupExpiredSnapshots` existaient mais n'étaient jamais appelées (bloat DB). Branchées sur le filet de maintenance 12h. Gate Codex : 1 REQUEST_CHANGES (le step reap pouvait court-circuiter les cleanups sur erreur Prisma → try/catch + fallback) → APPROVE. **⚠️ Dépendance ops** : le reaper est PAUSÉ en prod (anti-drain Neon, quota compute) — le câblage est correct mais DORMANT jusqu'à réactivation du cron par Sacha (action ops, non bloquant). Vérifs : tsc 0, eslint 0, 17 tests reaper verts. Reste F4-F6.
+
+---
 ## 2026-06-11 — RGPD/données — Phase F (F1+F2) : cleanup des orphelins à la suppression deal/compte (helper partagé)
 
 ### Fichiers
@@ -418,23 +427,4 @@ Le red flag CRITICAL « Absence de Vérification Légale (K-bis) » (devils-advo
 
 ### Vérif
 33 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 6 : APPROVE (après 1 REQUEST_CHANGES : scrub topic/énoncés + source conditionnelle).
-
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 5 : cartes signaux (étaye/alerte, score masqué, légende)
-
-### Contexte
-Section 3 « Signaux par dimension » : #14/#15 puces positives sous orientation d'alerte, #16 score /100 biaisant, #17/#2 orientations peu différenciées.
-
-### Changements
-- `atoms/agent-card.tsx` : deux mini-listes « Ce qui étaye » / « Ce qui alerte » ; score /100 **masqué** (conservé en modèle).
-- `lib/selectors.ts` (`buildSignalsSectionModel`) : `supports` (insights non-négatifs scrubés) + `concerns` (red flags title/description/impact scrubés) remplacent `insights[]` ; `oneLiner` scrubé ; `deriveFallbackOneLiner` ne renvoie plus de « Score X/100 » (libellé d'intensité non numérique).
-- `sections/signals-section.tsx` : légende compacte des 4 orientations (#17/#2).
-- Guard : assertion VM cards (oneLiner/supports/concerns sans nom d'agent ni `/100`).
-
-### Vérif
-32 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 5 : APPROVE (après 1 REQUEST_CHANGES : score /100 dans oneLiner fallback + oneLiner non scrubé).
-
-
-
-
 
