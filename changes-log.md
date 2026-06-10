@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Concurrence — Phase E (E2+E3) : isolation par-run de l'état mutable BaseAgent (fin de la contamination cross-deal)
+
+### Fichiers
+- `src/agents/base-agent.ts` : état mutable de run() (`_totalCost`, `_llmCalls`, tokens, `_dealStage`, `_traceId/_traceStartedAt/_llmCallTraces/_contextUsed/_contextHash/_contextualSystemPrompt`, flag trace) déplacé dans un `RunState` créé par run() et exposé via un `AsyncLocalStorage<RunState>` dédié (`baseRunStateStorage`). `run()` enveloppe `baseRunStateStorage.run(runState, () => runWithLLMContext(...))`. `_dealStage` devient un accessor get/set (les 18 sites d'écriture des sous-classes restent inchangés). `_enableTrace` instance → `_defaultTraceEnabled` (config) + effective par-run dans RunState (override `run(ctx,{enableTrace})` ne fuit plus). `resetCostTracking()` supprimé ; fallback hors-run paresseux pour les appels directs `execute()`/helpers en test.
+- NOUVEAU `src/agents/__tests__/base-agent-concurrency.test.ts` : test ROUGE→VERT — 2 run() concurrents entrelacés (rendez-vous barrier), assert zéro contamination thèse cross-deal + coût/compteur isolés par run ; + garde d'ordre canonique des sections de `buildFullSystemPrompt` (byte-equivalence, date-tolérant).
+
+### Description
+Phase E du plan post-audit (finding High : agents singletons + runtime serverless réutilisé → 2 analyses concurrentes contaminaient prompts et métriques). Clôture errors.md 2026-03-12 « Race condition BaseAgent état mutable singleton ». Décision Option B (ALS dédié) soumise à Codex en amont (raisonnement indépendant) → APPROVE, puis diff implémenté → APPROVE. Vérifs : tsc 0, eslint 0, suite unit complète 4363 passed / 9 skipped / 0 failed (aucune régression pipeline). Prochaines sous-étapes : E4 (CostMonitor par-analyse) + E5 (rate-limit distribué).
+
+---
 ## 2026-06-11 — DB/migrations — Phase D remédiation : baseline 0_baseline (l'historique sait à nouveau provisionner une base)
 
 ### Fichiers
@@ -437,15 +447,4 @@ Refonte de la vue Deep Dive (analysis-v2) sur 22 problèmes remontés (captures 
 ### Vérif
 13/13 tests verts. `tsc --noEmit` : aucune nouvelle erreur (seule erreur préexistante = `exit-strategist.ts`, untracked, hors périmètre). Gate Codex Phase 0a : APPROVE (après 1 REQUEST_CHANGES corrigé — scrub embedded).
 
----
-## 2026-06-03 — Gate Codex : indépendance d'abord, confrontation ensuite (anti-ancrage, symétrique)
-
-### Contexte
-Sur les contextes d'idéation/diagnostic, Codex était susceptible d'être **ancré** par l'analyse de Claude (« voici ma solution, t'es d'accord ? ») → il critique dans le cadre de Claude au lieu de penser frais. Perte de la valeur des deux avis indépendants. Demande utilisateur : Codex doit réfléchir **seul à partir de la demande originale d'abord**, puis confrontation — l'idée utile peut venir de l'un comme de l'autre (symétrique).
-
-### Changements
-- `CLAUDE.md` § Gate Codex → sous-section « Indépendance d'abord, confrontation ensuite (anti-ancrage) ». Pour idéation/diagnostic (feature, diagnostic — **pas** la review de diff) : fournir à Codex la **demande originale verbatim + contexte neutre, SANS la solution/conclusion de Claude** ; Codex produit son propre raisonnement d'abord ; confrontation ensuite (2ᵉ relance `codex exec resume` montrant l'avis de Claude, ou synthèse Claude). Exception : review de diff = ancrage inhérent OK.
-
-### Vérif
-Doc/doctrine uniquement. Cohérent avec § Routing (décision produit = utilisateur) et la doctrine produit Board AI (désaccords exposés).
 

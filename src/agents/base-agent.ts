@@ -11,6 +11,7 @@ import {
   type StreamCallbacks,
 } from "@/services/openrouter/router";
 import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ModelKey } from "@/services/openrouter/client";
 import type { AgentConfig, AgentContext, AgentResult, EnrichedAgentContext, StandardTrace, LLMCallTrace, ContextUsed, AgentTraceMetrics } from "./types";
 import { createHash } from "crypto";
@@ -113,37 +114,102 @@ export interface ValidatedLLMResult<T> {
 }
 
 // ============================================================================
+// PER-RUN STATE (isolation de concurrence — cf. Phase E / errors.md 2026-03-12)
+// ============================================================================
+
+/**
+ * État mutable propre à UNE exécution de run(). Les agents sont mis en cache
+ * comme singletons (agent-registry) et, sur runtime serverless réutilisé
+ * (Fluid Compute), deux analyses concurrentes partagent la même instance.
+ * Porter cet état sur l'instance contaminait les runs entre eux (thèse deal B
+ * injectée dans les prompts deal A, coûts/traces croisés). On isole donc via
+ * AsyncLocalStorage : chaque run() crée un RunState et l'expose à toutes les
+ * opérations async de son scope.
+ */
+interface RunState {
+  totalCost: number;
+  llmCalls: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  dealStage: string | null;
+  enableTrace: boolean;
+  traceId: string;
+  traceStartedAt: string;
+  llmCallTraces: LLMCallTrace[];
+  contextUsed: ContextUsed | null;
+  contextHash: string;
+  contextualSystemPrompt: string;
+}
+
+const baseRunStateStorage = new AsyncLocalStorage<RunState>();
+
+function createRunState(enableTrace: boolean): RunState {
+  return {
+    totalCost: 0,
+    llmCalls: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    dealStage: null,
+    enableTrace,
+    traceId: crypto.randomUUID(),
+    traceStartedAt: new Date().toISOString(),
+    llmCallTraces: [],
+    contextUsed: null,
+    contextHash: "",
+    contextualSystemPrompt: "",
+  };
+}
+
+// ============================================================================
 // BASE AGENT
 // ============================================================================
 
 export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResultWithData<TData>> {
   protected config: AgentConfig;
 
-  // Cost tracking - accumulated across all LLM calls
-  private _totalCost = 0;
-  private _llmCalls = 0;
-  private _totalInputTokens = 0;
-  private _totalOutputTokens = 0;
+  // Trace tracking config — valeur par défaut au niveau instance. L'effective
+  // par-run vit dans RunState (override possible via les options de run()).
+  private _defaultTraceEnabled = true;
 
-  // Stage calibration — set in execute() to inject stage-relative scoring into LLM prompts
-  protected _dealStage: string | null = null;
-
-  // Trace tracking - enabled by default for transparency
-  private _enableTrace = true;
-  private _traceId = "";
-  private _traceStartedAt = "";
-  private _llmCallTraces: LLMCallTrace[] = [];
-  private _contextUsed: ContextUsed | null = null;
-  private _contextHash = "";
-  private _contextualSystemPrompt = "";
+  // Fallback hors-run() : best-effort, NON concurrent-safe. La prod passe
+  // toujours par run() (ALS). Sert uniquement aux chemins qui appellent
+  // execute()/les helpers LLM directement (tests). Créé paresseusement puis
+  // réutilisé — accumule comme l'ancien état d'instance avant run().
+  private _fallbackRunState: RunState | null = null;
 
   constructor(config: AgentConfig) {
     this.config = config;
   }
 
-  // Enable/disable trace capture
+  /**
+   * État mutable de l'exécution courante. Dans run() : le RunState du scope
+   * ALS. Hors run() (appels directs en test) : un fallback d'instance.
+   */
+  private getRunState(): RunState {
+    const store = baseRunStateStorage.getStore();
+    if (store) return store;
+    if (!this._fallbackRunState) {
+      this._fallbackRunState = createRunState(this._defaultTraceEnabled);
+    }
+    return this._fallbackRunState;
+  }
+
+  // Stage calibration — écrit par execute() des sous-classes (this._dealStage =
+  // context.canonicalDeal.stage). Routé vers le RunState courant pour rester
+  // isolé par run (accessor : préserve les sites d'écriture existants).
+  protected get _dealStage(): string | null {
+    return this.getRunState().dealStage;
+  }
+  protected set _dealStage(value: string | null) {
+    this.getRunState().dealStage = value;
+  }
+
+  // Enable/disable trace capture (config par défaut, niveau instance)
   setTraceEnabled(enabled: boolean): void {
-    this._enableTrace = enabled;
+    this._defaultTraceEnabled = enabled;
+    // Garde la sémantique hors-run() exacte : si un fallback existe déjà, il
+    // doit refléter le nouveau défaut (le scope run() recrée un RunState frais).
+    if (this._fallbackRunState) this._fallbackRunState.enableTrace = enabled;
   }
 
   get name(): string {
@@ -156,16 +222,17 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
   // Get accumulated cost (for monitoring during execution)
   get currentCost(): number {
-    return this._totalCost;
+    return this.getRunState().totalCost;
   }
 
   // Get LLM call stats
   get llmStats(): { calls: number; inputTokens: number; outputTokens: number; cost: number } {
+    const rs = this.getRunState();
     return {
-      calls: this._llmCalls,
-      inputTokens: this._totalInputTokens,
-      outputTokens: this._totalOutputTokens,
-      cost: this._totalCost,
+      calls: rs.llmCalls,
+      inputTokens: rs.totalInputTokens,
+      outputTokens: rs.totalOutputTokens,
+      cost: rs.totalCost,
     };
   }
 
@@ -175,24 +242,10 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   // Build the system prompt for the agent
   protected abstract buildSystemPrompt(): string;
 
-  // Reset cost tracking (called at start of run)
-  private resetCostTracking(): void {
-    this._totalCost = 0;
-    this._llmCalls = 0;
-    this._totalInputTokens = 0;
-    this._totalOutputTokens = 0;
-    // Reset trace
-    this._traceId = crypto.randomUUID();
-    this._traceStartedAt = new Date().toISOString();
-    this._llmCallTraces = [];
-    this._contextUsed = null;
-    this._contextHash = "";
-    this._contextualSystemPrompt = "";
-  }
-
   // Capture context used for trace
   private captureContextUsed(context: AgentContext): void {
-    if (!this._enableTrace) return;
+    const rs = this.getRunState();
+    if (!rs.enableTrace) return;
 
     const documents = (context.documents ?? []).map(d => ({
       name: d.name,
@@ -215,7 +268,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       confidence: {} as Record<string, number>,
     } : undefined;
 
-    this._contextUsed = {
+    rs.contextUsed = {
       documents,
       contextEngine,
       extractedData,
@@ -233,12 +286,12 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       contextEngine,
       extractedFields: extractedData?.fields,
       systemPrompt: createHash("sha256").update(this.buildSystemPrompt()).digest("hex").slice(0, 16),
-      contextualSystemPrompt: this._contextualSystemPrompt
-        ? createHash("sha256").update(this._contextualSystemPrompt).digest("hex").slice(0, 16)
+      contextualSystemPrompt: rs.contextualSystemPrompt
+        ? createHash("sha256").update(rs.contextualSystemPrompt).digest("hex").slice(0, 16)
         : null,
       model: this.config.modelComplexity,
     });
-    this._contextHash = createHash("sha256").update(contextString).digest("hex").slice(0, 32);
+    rs.contextHash = createHash("sha256").update(contextString).digest("hex").slice(0, 32);
   }
 
   /**
@@ -255,25 +308,26 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
   // Build the complete trace
   private buildTrace(): StandardTrace | undefined {
-    if (!this._enableTrace) return undefined;
+    const rs = this.getRunState();
+    if (!rs.enableTrace) return undefined;
 
     const promptVersionHash = this.computePromptVersionHash();
 
     return {
-      id: this._traceId,
+      id: rs.traceId,
       agentName: this.config.name,
-      startedAt: this._traceStartedAt,
+      startedAt: rs.traceStartedAt,
       completedAt: new Date().toISOString(),
       totalDurationMs: 0, // Will be set by caller
-      llmCalls: this._llmCallTraces,
-      contextUsed: this._contextUsed ?? { documents: [] },
+      llmCalls: rs.llmCallTraces,
+      contextUsed: rs.contextUsed ?? { documents: [] },
       metrics: {
-        totalInputTokens: this._totalInputTokens,
-        totalOutputTokens: this._totalOutputTokens,
-        totalCost: this._totalCost,
-        llmCallCount: this._llmCalls,
+        totalInputTokens: rs.totalInputTokens,
+        totalOutputTokens: rs.totalOutputTokens,
+        totalCost: rs.totalCost,
+        llmCallCount: rs.llmCalls,
       },
-      contextHash: this._contextHash,
+      contextHash: rs.contextHash,
       promptVersion: promptVersionHash,
       promptVersionDetails: {
         systemPromptHash: createHash("sha256")
@@ -301,15 +355,16 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       latencyMs: number;
     }
   ): void {
-    this._totalCost += cost;
-    this._llmCalls++;
-    if (inputTokens) this._totalInputTokens += inputTokens;
-    if (outputTokens) this._totalOutputTokens += outputTokens;
+    const rs = this.getRunState();
+    rs.totalCost += cost;
+    rs.llmCalls++;
+    if (inputTokens) rs.totalInputTokens += inputTokens;
+    if (outputTokens) rs.totalOutputTokens += outputTokens;
 
     // Capture trace if enabled (F80: truncate large fields)
-    if (this._enableTrace && traceData) {
-      this._llmCallTraces.push({
-        id: `${this._traceId}-call-${this._llmCalls}`,
+    if (rs.enableTrace && traceData) {
+      rs.llmCallTraces.push({
+        id: `${rs.traceId}-call-${rs.llmCalls}`,
         timestamp: new Date().toISOString(),
         prompt: {
           system: truncateTraceField(traceData.systemPrompt, 'systemPrompt'),
@@ -335,19 +390,17 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
   async run(context: AgentContext, options?: { enableTrace?: boolean }): Promise<TResult> {
     const analysisId = getAnalysisContext();
 
-    return runWithLLMContext(
+    // État isolé par-run : créé ici, exposé à tout le scope async via ALS.
+    // L'effective trace est résolue par-run (override > défaut instance) sans
+    // muter l'instance (sinon fuite cross-run du flag).
+    const runState = createRunState(options?.enableTrace ?? this._defaultTraceEnabled);
+
+    return baseRunStateStorage.run(runState, () => runWithLLMContext(
       { agentName: this.config.name, analysisId },
       async () => {
         const startTime = Date.now();
 
-        // Enable trace if requested
-        if (options?.enableTrace !== undefined) {
-          this._enableTrace = options.enableTrace;
-        }
-
-        // Reset cost tracking for this run
-        this.resetCostTracking();
-        this._contextualSystemPrompt = this.buildContextualSystemPrompt(context);
+        runState.contextualSystemPrompt = this.buildContextualSystemPrompt(context);
 
         // Capture context for trace
         this.captureContextUsed(context);
@@ -374,16 +427,16 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
           // F80: Always build lightweight metrics
           const traceMetrics: AgentTraceMetrics = {
-            id: this._traceId,
+            id: runState.traceId,
             agentName: this.config.name,
             totalDurationMs: executionTimeMs,
-            llmCallCount: this._llmCalls,
-            totalInputTokens: this._totalInputTokens,
-            totalOutputTokens: this._totalOutputTokens,
-            totalCost: this._totalCost,
-            contextHash: this._contextHash || 'no-hash',
+            llmCallCount: runState.llmCalls,
+            totalInputTokens: runState.totalInputTokens,
+            totalOutputTokens: runState.totalOutputTokens,
+            totalCost: runState.totalCost,
+            contextHash: runState.contextHash || 'no-hash',
             promptVersion: this.computePromptVersionHash(),
-            startedAt: this._traceStartedAt,
+            startedAt: runState.traceStartedAt,
             completedAt: new Date().toISOString(),
           };
 
@@ -391,7 +444,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
             agentName: this.config.name,
             success: contract.status !== "CONTRACT_BROKEN",
             executionTimeMs,
-            cost: this._totalCost,
+            cost: runState.totalCost,
             contractStatus: contract.status,
             contractIssues: contract.issues,
             ...(contract.status === "CONTRACT_BROKEN" && { error: `Agent output contract broken: ${contract.issues.join("; ")}` }),
@@ -417,16 +470,16 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
 
           // F80: Always build lightweight metrics even on failure
           const traceMetrics: AgentTraceMetrics = {
-            id: this._traceId,
+            id: runState.traceId,
             agentName: this.config.name,
             totalDurationMs: executionTimeMs,
-            llmCallCount: this._llmCalls,
-            totalInputTokens: this._totalInputTokens,
-            totalOutputTokens: this._totalOutputTokens,
-            totalCost: this._totalCost,
-            contextHash: this._contextHash || 'no-hash',
+            llmCallCount: runState.llmCalls,
+            totalInputTokens: runState.totalInputTokens,
+            totalOutputTokens: runState.totalOutputTokens,
+            totalCost: runState.totalCost,
+            contextHash: runState.contextHash || 'no-hash',
             promptVersion: this.computePromptVersionHash(),
-            startedAt: this._traceStartedAt,
+            startedAt: runState.traceStartedAt,
             completedAt: new Date().toISOString(),
           };
 
@@ -434,18 +487,18 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
             agentName: this.config.name,
             success: false,
             executionTimeMs,
-            cost: this._totalCost,
+            cost: runState.totalCost,
             error: error instanceof Error ? error.message : "Unknown error",
             _traceMetrics: traceMetrics,
             ...(trace && { _traceFull: trace }),
           } as unknown as TResult;
         } finally {
-          // Clear agent context within the scoped request context.
-          this._contextualSystemPrompt = "";
+          // Clear agent context within the scoped request context. Le RunState
+          // est nettoyé par la fin de scope ALS (pas de reset d'instance).
           setAgentContext(null);
         }
       }
-    );
+    ));
   }
 
   // ============================================================================
@@ -483,7 +536,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       result.cost,
       result.usage.inputTokens,
       result.usage.outputTokens,
-      this._enableTrace ? {
+      this.getRunState().enableTrace ? {
         systemPrompt,
         userPrompt: prompt,
         response: result.content,
@@ -541,7 +594,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       result.cost,
       result.usage?.inputTokens,
       result.usage?.outputTokens,
-      this._enableTrace ? {
+      this.getRunState().enableTrace ? {
         systemPrompt,
         userPrompt: prompt,
         response: result.raw ?? JSON.stringify(result.data),
@@ -787,7 +840,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       result.cost,
       result.usage?.inputTokens,
       result.usage?.outputTokens,
-      this._enableTrace ? {
+      this.getRunState().enableTrace ? {
         systemPrompt,
         userPrompt: prompt,
         response: result.raw ?? JSON.stringify(result.data),
@@ -873,7 +926,7 @@ export abstract class BaseAgent<TData, TResult extends AgentResult = AgentResult
       result.cost,
       result.usage?.inputTokens,
       result.usage?.outputTokens,
-      this._enableTrace ? {
+      this.getRunState().enableTrace ? {
         systemPrompt,
         userPrompt: prompt,
         response: result.rawContent,
@@ -1922,7 +1975,7 @@ son deal sous le meilleur jour possible. Tu DOIS appliquer les regles suivantes:
     const stageCalibration = this._dealStage
       ? getStageCalibrationBlock(this._dealStage, this.config.name)
       : "";
-    const contextualPrompt = this._contextualSystemPrompt;
+    const contextualPrompt = this.getRunState().contextualSystemPrompt;
     const now = new Date();
     const dateContext = `\n\n## CONTEXTE TEMPOREL (CRITIQUE)\nDate actuelle : ${now.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.\nUtilise TOUJOURS cette date comme reference pour evaluer la fraicheur des donnees, les projections vs le realise, et les timelines. Ne JAMAIS deduire la date actuelle du contenu des documents analyses.\n`;
     return base
