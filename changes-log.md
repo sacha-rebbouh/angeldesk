@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — RGPD/données — Phase F (F1+F2) : cleanup des orphelins à la suppression deal/compte (helper partagé)
+
+### Fichiers
+- NOUVEAU `src/lib/deal-cleanup.ts` : `cleanupDealRelations(tx, dealIds[])` — source UNIQUE de vérité des lignes orphelines par deal (dealId scalaire SANS cascade vers Deal). Supprime par `dealId IN` : LLMCallLog (résolu via analysisId/boardSessionId des analyses+sessions du deal), CostEvent, CostAlert, ContextEngineSnapshot, DealChatContext, ChatConversation (+cascade ChatMessage), AIBoardSession (+cascade members/rounds). + test unitaire dédié.
+- `src/app/api/deals/[dealId]/route.ts` (F1) : `prisma.deal.delete` nu → transaction `cleanupDealRelations(tx,[dealId])` puis `tx.deal.delete`. Corrige la fuite RGPD (chat, snapshots, prompts LLM, télémétrie coût survivaient au deal). Test DELETE étendu.
+- `src/app/api/user/route.ts` (F2) : helper sur les deals courants PUIS résidu par `userId` (legacy orphans d'anciennes suppressions deal) — LLMCallLog via boardSessionId, AIBoardSession/ChatConversation/CostEvent par userId, CostAlert split (delete deal-liées + anonymise user-level `dealId:null`). Docblock « all associated data » corrigé. NOUVEAU test route.
+
+### Description
+Phase F (F1+F2) du plan post-audit (finding High RGPD : `deal.delete` laissait orphelines 7 tables à dealId scalaire ; suppression compte en omettait 3 + laissait des dealId danglants). Gate Codex : 2 REQUEST_CHANGES (CostAlert à intégrer au helper pour cohérence deal/compte ; résidu par userId requis pour les legacy orphans) → corrigés → APPROVE. **CostEvent ajouté** (absent du plan F1 initial, dealId requis = orpheline). Limite notée : orphelins legacy sans chemin vers l'user (LLMCallLog par analysisId d'analyses supprimées, DealChatContext/ContextEngineSnapshot de deals supprimés) relèvent d'un sweep global / F3 âge-based. Vérifs : tsc 0, eslint 0, suite unit 4371 passed / 0 failed. Reste F3-F6.
+
+---
 ## 2026-06-11 — Concurrence — Phase E (E5) : rate-limit distribué sur les routes coûteuses
 
 ### Fichiers
@@ -423,22 +434,6 @@ Section 3 « Signaux par dimension » : #14/#15 puces positives sous orientation
 ### Vérif
 32 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 5 : APPROVE (après 1 REQUEST_CHANGES : score /100 dans oneLiner fallback + oneLiner non scrubé).
 
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 4 : Section 1 (provenance, troncatures, flèche, convergence)
-
-### Contexte
-Section « Synthèse de décision » : #4/#7 troncatures muettes, #5 titre générique, #7/#18 noms d'agents en source, #8 flèche cliquable morte, #9 convergence illisible.
-
-### Changements
-- `atoms/source-pin.tsx` : refonte GLOBALE (#8/#7) — `<span>` info non-cliquable (plus de flèche-bouton morte), source sanitizée via `presentableSource`, **rien affiché** si la source n'est qu'un nom d'agent ; tolère `null`.
-- `lib/presentation.ts` : `presentableSource` (null si pas de vraie provenance), `scrubAgentNamesFromText` (scrub texte libre sans tokeniser), strip d'un préfixe-label `agent:`/`source:`.
-- `lib/selectors.ts` : `extractRanksFromTier1RedFlags` — #5 titre dérivé (jamais « Risque identifié » si contenu), title scrubé, #4/#7 description + preuve COMPLÈTES (fin des `compactString`), preuve en champ `evidence`, source = null (pas de nom d'agent), location sanitizée. `extractRanksFromQuestionMaster` aligné. Mémo reconstitué : plus de provenance factice « Tier 1 ».
-- `lib/view-types.ts` : `RankRowItem.evidence`. `atoms/rank-row.tsx` : preuve en `<details>` repliable.
-- `lib/solidity-aggregator.ts` : #9 `countAlertSignalDistribution` restreint aux 12 dimensions Tier 1. `sections/decision-section.tsx` : #9 mini-table libellée (Signal critique / Investigation / Point d'attention / Conforme).
-- Guards : fixture enrichi (titre piégé) + assertions VM ranks/mémo (zéro nom d'agent, pas de titre/provenance factice).
-
-### Vérif
-31 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 4 : APPROVE (après 2 REQUEST_CHANGES : scrub embedded `agent:` + rawTitle ; provenance « Tier 1 »).
 
 
 

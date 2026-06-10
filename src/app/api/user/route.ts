@@ -3,14 +3,22 @@ import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { deleteFile } from "@/services/storage";
 import { handleApiError } from "@/lib/api-error";
+import { cleanupDealRelations } from "@/lib/deal-cleanup";
 
 /**
- * DELETE /api/user — Delete the authenticated user's account and all associated data.
+ * DELETE /api/user — Delete the authenticated user's account and its data.
  *
  * Deletion order (respects FK constraints):
- * 1. Vercel Blob files (documents)
- * 2. Orphan tables (no cascade from User): AIBoardSession, ChatConversation, CostEvent, UserBoardCredits, UserDealUsage
- * 3. User record (cascades: Deal -> Document/Analysis/RedFlag/Founder/..., CreditBalance, CreditTransaction, ApiKey, Webhook, LiveSession)
+ * 1. Vercel Blob files (documents).
+ * 2. Per-deal orphan tables (dealId scalaire sans cascade vers Deal) via le
+ *    helper partagé `cleanupDealRelations` : LLMCallLog, CostEvent, CostAlert,
+ *    ContextEngineSnapshot, DealChatContext, ChatConversation (+ ChatMessage),
+ *    AIBoardSession (+ members/rounds). Source unique partagée avec la
+ *    suppression deal pour éviter la divergence.
+ * 3. CostAlert de niveau utilisateur (dealId null) anonymisées (userId=null) ;
+ *    UserBoardCredits / UserDealUsage (userId sans cascade User).
+ * 4. User record (cascades: Deal -> Document/Analysis/RedFlag/Founder/...,
+ *    CreditBalance, CreditTransaction, ApiKey, Webhook, LiveSession).
  *
  * Does NOT delete the Clerk account — the client handles that after a successful response.
  */
@@ -37,54 +45,48 @@ export async function DELETE() {
     await Promise.all(blobDeletions);
 
     // 3. Delete all data in a transaction
-    await prisma.$transaction(async (tx) => {
-      // --- Tables with userId but NO cascade from User ---
+    await prisma.$transaction(
+      async (tx) => {
+        // (a) Orphelins des deals ENCORE présents — helper partagé avec la
+        //     suppression deal (source unique). Couvre notamment DealChatContext
+        //     et ContextEngineSnapshot qui n'ont pas de userId (seulement
+        //     atteignables via les deals courants).
+        const userDeals = await tx.deal.findMany({ where: { userId }, select: { id: true } });
+        await cleanupDealRelations(tx, userDeals.map((d) => d.id));
 
-      // AIBoardSession children cascade from session, but session itself has no User FK
-      // First delete children (members, rounds), then sessions
-      const boardSessionIds = await tx.aIBoardSession.findMany({
-        where: { userId },
-        select: { id: true },
-      });
-      const sessionIds = boardSessionIds.map((s) => s.id);
+        // (b) Résidu par userId : capture les lignes ORPHELINES d'anciennes
+        //     suppressions de deals (deal déjà disparu → hors (a)) mais encore
+        //     rattachées à l'utilisateur. Sans ce filet, une suppression de deal
+        //     antérieure au fix laissait des lignes survivre à la suppression
+        //     compte.
+        const userSessions = await tx.aIBoardSession.findMany({ where: { userId }, select: { id: true } });
+        const userSessionIds = userSessions.map((s) => s.id);
+        if (userSessionIds.length > 0) {
+          // LLMCallLog n'a pas de userId : rattaché via boardSessionId.
+          await tx.lLMCallLog.deleteMany({ where: { boardSessionId: { in: userSessionIds } } });
+          await tx.aIBoardSession.deleteMany({ where: { userId } }); // cascade members/rounds
+        }
+        await tx.chatConversation.deleteMany({ where: { userId } }); // cascade ChatMessage
+        await tx.costEvent.deleteMany({ where: { userId } });
+        // CostAlert : supprimer les alertes liées à un deal (dealId
+        // potentiellement danglant), anonymiser SEULEMENT les alertes de niveau
+        // utilisateur (dealId null) — politique 'shared resource' conservée.
+        await tx.costAlert.deleteMany({ where: { userId, dealId: { not: null } } });
+        await tx.costAlert.updateMany({ where: { userId, dealId: null }, data: { userId: null } });
 
-      if (sessionIds.length > 0) {
-        await tx.aIBoardMember.deleteMany({ where: { sessionId: { in: sessionIds } } });
-        await tx.aIBoardRound.deleteMany({ where: { sessionId: { in: sessionIds } } });
-        await tx.aIBoardSession.deleteMany({ where: { userId } });
-      }
+        // (c) Tables à userId sans relation cascade vers User.
+        await tx.userBoardCredits.deleteMany({ where: { userId } });
+        await tx.userDealUsage.deleteMany({ where: { userId } });
 
-      // ChatConversation children cascade, but conversation has no User FK
-      const conversationIds = await tx.chatConversation.findMany({
-        where: { userId },
-        select: { id: true },
-      });
-      const convIds = conversationIds.map((c) => c.id);
-
-      if (convIds.length > 0) {
-        await tx.chatMessage.deleteMany({ where: { conversationId: { in: convIds } } });
-        await tx.chatConversation.deleteMany({ where: { userId } });
-      }
-
-      // CostEvent — no FK relation to User
-      await tx.costEvent.deleteMany({ where: { userId } });
-
-      // CostAlert — optional userId, set to null instead of deleting (shared resource)
-      await tx.costAlert.updateMany({ where: { userId }, data: { userId: null } });
-
-      // UserBoardCredits — no FK relation to User
-      await tx.userBoardCredits.deleteMany({ where: { userId } });
-
-      // UserDealUsage — no FK relation to User
-      await tx.userDealUsage.deleteMany({ where: { userId } });
-
-      // --- User record: cascades delete Deal, CreditBalance, CreditTransaction, ApiKey, Webhook, LiveSession ---
-      // Deal cascade further deletes: Document, Analysis, RedFlag, Founder, FactEvent,
-      // DealTerms, DealStructure, DealTermsVersion, AlertResolution
-      // Analysis cascade deletes: ScoredFinding, ReasoningTrace, DebateRecord, AgentMessage, StateTransition, AnalysisCheckpoint
-      // LiveSession cascade deletes: TranscriptChunk, CoachingCard, ScreenCapture, SessionSummary
-      await tx.user.delete({ where: { id: userId } });
-    });
+        // --- User record: cascades delete Deal, CreditBalance, CreditTransaction, ApiKey, Webhook, LiveSession ---
+        // Deal cascade further deletes: Document, Analysis, RedFlag, Founder, FactEvent,
+        // DealTerms, DealStructure, DealTermsVersion, AlertResolution
+        // Analysis cascade deletes: ScoredFinding, ReasoningTrace, DebateRecord, AgentMessage, StateTransition, AnalysisCheckpoint
+        // LiveSession cascade deletes: TranscriptChunk, CoachingCard, ScreenCapture, SessionSummary
+        await tx.user.delete({ where: { id: userId } });
+      },
+      { timeout: 20_000 }
+    );
 
     return NextResponse.json({ deleted: true });
   } catch (error) {

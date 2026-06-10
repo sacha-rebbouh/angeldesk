@@ -15,6 +15,7 @@ import {
 } from "@/services/deals/manual-fact-overrides";
 import { refreshCurrentFactsView } from "@/services/fact-store/current-facts";
 import { deleteFile } from "@/services/storage";
+import { cleanupDealRelations } from "@/lib/deal-cleanup";
 
 type RouteContext = {
   params: Promise<{ dealId: string }>;
@@ -320,9 +321,17 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       );
     }
 
-    await prisma.deal.delete({
-      where: { id: dealId },
-    });
+    // Cleanup transactionnel des lignes orphelines (dealId scalaire SANS
+    // cascade vers Deal — fuite RGPD sinon). Helper partagé avec la suppression
+    // compte (source unique de vérité). Le deal en dernier déclenche les
+    // cascades DB des relations FK (Document, Analysis, Thesis, etc.).
+    await prisma.$transaction(
+      async (tx) => {
+        await cleanupDealRelations(tx, [dealId]);
+        await tx.deal.delete({ where: { id: dealId } });
+      },
+      { timeout: 20_000 }
+    );
 
     return NextResponse.json({
       message: "Deal deleted successfully",
