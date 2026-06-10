@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-10 — Infra/Décision — B (Clerk DEV→PROD) + C3 (FROM email) PARQUÉS : bloqués sur le choix du domaine prod
+
+### Décision (utilisateur)
+B et C3 du plan overlay/Clerk/email (`~/.claude/plans/velvety-stargazing-bee.md`) sont **mis en attente** : on finit le reste du plan, ces deux-là restent ouverts. Les deux convergent sur **une seule décision produit/infra non tranchée** : quel **domaine possédé** pour Angel Desk en prod (Sacha ne possède pas `angeldesk.app` ; le rename « AngelDesk » est en pause). Aucune urgence — la mitigation A + C1/C2 sont déployées, le feu est éteint.
+
+### B — Clerk DEV→PROD (gelé)
+L'instance Clerk **production** exige un domaine possédé (pas `*.vercel.app`). Tant que le domaine n'est pas choisi : B0 (migration users re-link par email vérifié, Codex-revu) + B1-B6 (instance prod, DNS/FAPI, `pk_live/sk_live`, CSP `next.config.ts`, OAuth/redirects/webhooks, rollback réversible) **gelés**. Détail dans le plan + Obsidian `Projet Migration Clerk DEV vers PROD`.
+
+### C3 — Emails jamais reçus (gelé, même décision)
+FROM actuel `maintenance@angeldesk.app` **non vérifiable** chez Resend (domaine non possédé) = racine probable de la non-réception. Fix = FROM sur **domaine possédé + vérifié** (SPF/DKIM/DMARC). Partie diagnostic (clé Resend en prod ? logs/bounces ?) reportée avec C3. C1/C2 (fail-loud + `response.ok+id`) déjà livrés → un envoi raté ne grave plus de faux `sentAt`.
+
+### Reprise
+Plan `~/.claude/plans/velvety-stargazing-bee.md` (volets B/C) · Obsidian `03_Projects/Projet Migration Clerk DEV vers PROD.md` · mémoire repo `angeldesk_overlay_freeze_clerk.md`.
+
+---
 ## 2026-06-08 — Bug/auth — Gel overlay « analyse en cours » : session Clerk expirée (fetcher auth-required)
 
 ### Contexte
