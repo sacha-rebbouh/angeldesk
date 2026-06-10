@@ -2079,6 +2079,7 @@ export class AgentOrchestrator {
         });
 
         await costMonitor.endAnalysis({
+          analysisId: analysis.id,
           persistAnalysisSummary: false,
         });
 
@@ -2173,6 +2174,7 @@ export class AgentOrchestrator {
       });
 
       await costMonitor.endAnalysis({
+        analysisId: analysis.id,
         persistAnalysisSummary: false,
       });
 
@@ -2818,6 +2820,7 @@ export class AgentOrchestrator {
     // End cost monitoring after final results are persisted so `_costReport`
     // is merged into the canonical completed payload instead of being overwritten.
     const costReport = await costMonitor.endAnalysis({
+      analysisId: analysis.id,
       persistAnalysisSummary: false,
     });
     if (costReport) {
@@ -3119,6 +3122,7 @@ export class AgentOrchestrator {
     // End cost monitoring after final results are persisted so `_costReport`
     // survives the failed completion payload as well.
     await costMonitor.endAnalysis({
+      analysisId: analysis.id,
       persistAnalysisSummary: false,
     });
 

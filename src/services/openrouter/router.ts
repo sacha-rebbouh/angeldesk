@@ -477,6 +477,7 @@ export async function complete(
 
       // Record cost for monitoring (total including retries)
       costMonitor.recordCall({
+        analysisId: getAnalysisContext() ?? undefined,
         model: model.id,
         agent: getAgentContext() ?? "unknown",
         inputTokens: usage.prompt_tokens,
@@ -558,6 +559,7 @@ export async function complete(
         // Record the accumulated retry cost even on final failure
         if (accumulatedRetryCost > 0) {
           costMonitor.recordCall({
+            analysisId: getAnalysisContext() ?? undefined,
             model: model.id,
             agent: getAgentContext() ?? "unknown",
             inputTokens: estimatedInputTokens * (attempt + 1),
@@ -1020,6 +1022,7 @@ export async function completeVisionJSON<T>(
       const totalCost = successCost + accumulatedRetryCost;
 
       costMonitor.recordCall({
+        analysisId: getAnalysisContext() ?? undefined,
         model: model.id,
         agent: getAgentContext() ?? "visual-processor",
         inputTokens: usage.prompt_tokens,
@@ -1200,6 +1203,7 @@ export async function stream(
 
     // Record cost for monitoring
     costMonitor.recordCall({
+      analysisId: getAnalysisContext() ?? undefined,
       model: model.id,
       agent: getAgentContext() ?? "unknown",
       inputTokens,
@@ -1479,6 +1483,7 @@ export async function completeJSONStreaming<T>(
       if (result.data && !result.wasTruncated) {
         // Success! Complete JSON parsed
         costMonitor.recordCall({
+          analysisId: getAnalysisContext() ?? undefined,
           model: model.id,
           agent: getAgentContext() ?? "unknown",
           inputTokens: totalInputTokens,
@@ -1531,6 +1536,7 @@ export async function completeJSONStreaming<T>(
         const merged = mergePartialResponses<T>(partialResponses);
         if (merged) {
           costMonitor.recordCall({
+            analysisId: getAnalysisContext() ?? undefined,
             model: model.id,
             agent: getAgentContext() ?? "unknown",
             inputTokens: totalInputTokens,
@@ -1556,6 +1562,7 @@ export async function completeJSONStreaming<T>(
 
       // Return whatever we have
       costMonitor.recordCall({
+        analysisId: getAnalysisContext() ?? undefined,
         model: model.id,
         agent: getAgentContext() ?? "unknown",
         inputTokens: totalInputTokens,

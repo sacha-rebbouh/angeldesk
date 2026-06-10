@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Concurrence — Phase E (E4) : CostMonitor par-analyse (attribution money isolée)
+
+### Fichiers
+- `src/services/cost-monitor/index.ts` : slot unique `currentAnalysis` → `analyses = Map<analysisId, accumulator>`. Nouveau `resolveAccumulator(analysisId, { allowMonoAnalysisFallback })` : analysisId fourni → match EXACT ou null (jamais de devinette = pas de mis-attribution) ; analysisId omis (legacy/test) → fallback mono-analyse si une seule active. `recordCall`/`endAnalysis` distinguent « champ omis » (fallback) de « champ présent mais undefined » (router hors scope ALS → drop). `endAnalysis` retire SON analyse de la Map (les concurrentes restent).
+- `src/services/openrouter/router.ts` : 7 sites `recordCall` passent `analysisId: getAnalysisContext() ?? undefined` (mirroring du `logLLMCallAsync` adjacent ; pas d'import circulaire).
+- `src/agents/orchestrator/index.ts` : 4 sites `endAnalysis` passent `analysisId: analysis.id`.
+- NOUVEAU `src/services/cost-monitor/__tests__/cost-monitor-concurrency.test.ts` : 2 analyses concurrentes → attribution exacte des CostEvents, appel non identifiable droppé (pas mis-attribué), clôture indépendante ; + appel router `analysisId: undefined` pendant une analyse active → droppé (régression money pointée par Codex).
+
+### Description
+Phase E (E4) du plan post-audit. Le slot unique corrompait l'attribution des coûts quand 2 analyses tournaient en parallèle (la 2e `startAnalysis` écrasait la 1re). Gate Codex : 1 REQUEST_CHANGES (le fallback mono-analyse mis-attribuait un appel board/orphelin `analysisId: undefined` à l'unique analyse active) → corrigé (distinction champ-omis vs présent-mais-undefined) → APPROVE. Vérifs : tsc 0, suite unit complète 4365 passed / 0 failed. Reste E5 (rate-limit distribué).
+
+---
 ## 2026-06-11 — Concurrence — Phase E (E2+E3) : isolation par-run de l'état mutable BaseAgent (fin de la contamination cross-deal)
 
 ### Fichiers
@@ -432,19 +444,5 @@ Suite refonte analysis-v2. 0b = filet de tests ; 2 = section thèse (#10 capital
 ### Vérif
 26 tests verts (analysis-v2). `tsc --noEmit` propre (hors `exit-strategist.ts` préexistant). Gate Codex Phases 2+3 : APPROVE.
 
----
-## 2026-06-03 — Refonte analysis-v2 (22 pts) — Phase 0a : helpers de présentation + labels doctrine
-
-### Contexte
-Refonte de la vue Deep Dive (analysis-v2) sur 22 problèmes remontés (captures Avekapeti), plan validé par Codex (VERDICT APPROVE après 2 tours). Phase 0a = fondation : sanitization user-facing (zéro nom d'agent technique, zéro enum brut) réutilisée par toutes les phases suivantes.
-
-### Changements
-- `analysis-v2/lib/solidity-aggregator.ts` : `export` de `AGENT_DEFINITIONS` (source unique, évite copie divergente).
-- `analysis-v2/lib/presentation.ts` (nouveau) : `sanitizeSourceLabel` (scrub global des noms d'agents même embarqués + `*-expert`, fallback honnête « Provenance documentaire non disponible / Synthèse interne non sourcée », réécriture jargon Context Engine/Fact Store, séparateurs `·`/`&` seulement pour préserver les dates), `humanizeInlineAgentNames`, `capitalizeFirstMeaningfulChar` (1er char only, display-only), `AGENT_TECHNICAL_NAMES`.
-- `lib/ui-configs.ts` : `THESIS_ALERT_CATEGORY_LABELS` (8 catégories) + `thesisAlertCategoryLabel()` (fallback humanisé, jamais d'enum brut).
-- `analysis-v2/__tests__/presentation.test.ts` (nouveau) : 13 tests hostiles (dont noms d'agents embarqués).
-
-### Vérif
-13/13 tests verts. `tsc --noEmit` : aucune nouvelle erreur (seule erreur préexistante = `exit-strategist.ts`, untracked, hors périmètre). Gate Codex Phase 0a : APPROVE (après 1 REQUEST_CHANGES corrigé — scrub embedded).
 
 
