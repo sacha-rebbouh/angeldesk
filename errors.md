@@ -238,11 +238,12 @@
 
 ### 2026-03-12 — ARCHITECTURE — Race condition BaseAgent état mutable singleton
 - **Fichier(s)** : `src/agents/base-agent.ts:61-76`, `src/agents/orchestrator/agent-registry.ts:18-19`
-- **Erreur** : Les champs `_totalCost`, `_llmCalls`, etc. sont des variables d'instance mutables. Les agents sont cachés comme singletons. Deux analyses concurrentes corrompent les métriques.
+- **Erreur** : Les champs `_totalCost`, `_llmCalls`, etc. sont des variables d'instance mutables. Les agents sont cachés comme singletons. Deux analyses concurrentes corrompent les métriques (et, plus grave, la thèse du deal B s'injectait dans les prompts du deal A).
 - **Cause racine** : Etat mutable dans un singleton + absence d'isolation par requête.
 - **Solution validée** : Déplacer l'état mutable dans un objet `RunContext` créé à chaque appel de `run()`, ou utiliser `AsyncLocalStorage`.
 - **Ce qui N'A PAS fonctionné** : N/A
 - **Agent/Auteur** : Agent Architecture
+- **✅ RÉSOLU (2026-06-11, Phase E)** : état par-run isolé via un `AsyncLocalStorage<RunState>` dédié dans `base-agent.ts` (commit `889f44d`) ; `_dealStage` converti en accessor get/set routant vers le RunState (les 18 sites d'écriture sous-classes inchangés). CostMonitor migré du slot unique `currentAnalysis` → `Map<analysisId, accumulator>` (commit `03350e0`, attribution money par-analyse). Tests de concurrence rouges→verts (`base-agent-concurrency.test.ts`, `cost-monitor-concurrency.test.ts`). Décision ALS + correction mis-attribution gated Codex APPROVE. Prompts et scoring déterministe ne sont plus contaminés cross-deal.
 
 ### 2026-03-12 — SCORING — Incohérence poids Board vs Scoring Tier 3
 - **Fichier(s)** : `src/agents/board/board-member.ts:155-160` vs `src/scoring/services/score-aggregator.ts:24-30`

@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   txBoardSessionFindFirst: vi.fn(),
   txBoardSessionCreate: vi.fn(),
   boardRequestSafeParse: vi.fn(),
-  checkRateLimit: vi.fn(),
+  checkRateLimitDistributed: vi.fn(),
   canStartBoard: vi.fn(),
   consumeCredit: vi.fn(),
   refundCredit: vi.fn(),
@@ -51,7 +51,7 @@ vi.mock("@/services/board-credits", () => ({
 
 vi.mock("@/lib/sanitize", () => ({
   boardRequestSchema: { safeParse: mocks.boardRequestSafeParse },
-  checkRateLimit: mocks.checkRateLimit,
+  checkRateLimitDistributed: mocks.checkRateLimitDistributed,
 }));
 
 vi.mock("@/lib/api-error", () => ({
@@ -83,7 +83,7 @@ describe("POST /api/board", () => {
       success: true,
       data: { dealId: "deal_1" },
     });
-    mocks.checkRateLimit.mockReturnValue({ allowed: true, remaining: 1, resetIn: 0 });
+    mocks.checkRateLimitDistributed.mockResolvedValue({ allowed: true, remaining: 1, resetIn: 0 });
     mocks.txExecuteRawUnsafe.mockResolvedValue(undefined);
     mocks.txBoardSessionFindFirst.mockResolvedValue(null);
     mocks.txBoardSessionCreate.mockResolvedValue({ id: "session_123" });

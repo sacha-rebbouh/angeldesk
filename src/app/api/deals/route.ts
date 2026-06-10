@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/sanitize";
+import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DealStage, FundingInstrument } from "@prisma/client";
 import { handleApiError } from "@/lib/api-error";
 import {
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     const user = await requireAuth();
 
     // Rate limiting: max 60 requests per minute
-    const rateLimit = checkRateLimit(`deals-get:${user.id}`, { maxRequests: 60, windowMs: 60000 });
+    const rateLimit = await checkRateLimitDistributed(`deals-get:${user.id}`, { maxRequests: 60, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { error: "Rate limit exceeded", retryAfter: rateLimit.resetIn },
@@ -156,7 +156,7 @@ export async function POST(request: NextRequest) {
     const user = await requireAuth();
 
     // Rate limiting: max 20 deal creations per minute
-    const rateLimit = checkRateLimit(`deals-post:${user.id}`, { maxRequests: 20, windowMs: 60000 });
+    const rateLimit = await checkRateLimitDistributed(`deals-post:${user.id}`, { maxRequests: 20, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { error: "Rate limit exceeded", retryAfter: rateLimit.resetIn },

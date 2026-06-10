@@ -10,7 +10,7 @@ import {
   refundCredit,
   getCreditsStatus,
 } from "@/services/board-credits";
-import { boardRequestSchema, checkRateLimit } from "@/lib/sanitize";
+import { boardRequestSchema, checkRateLimitDistributed } from "@/lib/sanitize";
 import { handleApiError } from "@/lib/api-error";
 import { assertDealCorpusReady, CorpusNotReadyError } from "@/services/documents/readiness-gate";
 import { corpusNotReadyResponse } from "@/lib/api/corpus-not-ready-response";
@@ -51,8 +51,9 @@ export async function POST(req: NextRequest) {
 
     const { dealId } = parseResult.data;
 
-    // Rate limiting: max 2 board sessions per minute per user
-    const rateLimit = checkRateLimit(user.id, {
+    // Rate limiting: max 2 board sessions per minute per user (distribué — le
+    // store in-memory était par-instance serverless = limite × N sous charge).
+    const rateLimit = await checkRateLimitDistributed(user.id, {
       maxRequests: 2,
       windowMs: 60000, // 1 minute
     });

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
-  checkRateLimit: vi.fn(),
+  checkRateLimitDistributed: vi.fn(),
   dealCount: vi.fn(),
   dealFindMany: vi.fn(),
   handleApiError: vi.fn(),
@@ -18,7 +18,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 vi.mock("@/lib/sanitize", () => ({
-  checkRateLimit: mocks.checkRateLimit,
+  checkRateLimitDistributed: mocks.checkRateLimitDistributed,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -48,7 +48,7 @@ describe("GET /api/deals", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.requireAuth.mockResolvedValue({ id: "user_1" });
-    mocks.checkRateLimit.mockReturnValue({ allowed: true });
+    mocks.checkRateLimitDistributed.mockResolvedValue({ allowed: true });
     mocks.dealCount.mockResolvedValue(1);
     mocks.dealFindMany.mockResolvedValue([
       {

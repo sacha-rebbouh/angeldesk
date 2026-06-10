@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/sanitize";
+import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { analyzeFounderLinkedIn, findLinkedInProfile } from "@/services/context-engine/connectors/proxycurl";
 import { handleApiError } from "@/lib/api-error";
 import { validateLinkedInProfileUrl } from "@/lib/url-validator";
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    const rateLimit = checkRateLimit(`founder:${user.id}`, { maxRequests: 5, windowMs: 60000 });
+    const rateLimit = await checkRateLimitDistributed(`founder:${user.id}`, { maxRequests: 5, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
     }

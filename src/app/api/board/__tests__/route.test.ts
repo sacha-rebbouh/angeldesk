@@ -35,7 +35,7 @@ vi.mock("@/services/board-credits", () => ({
 
 vi.mock("@/lib/sanitize", () => ({
   boardRequestSchema: { safeParse: vi.fn() },
-  checkRateLimit: vi.fn(),
+  checkRateLimitDistributed: vi.fn(),
 }));
 
 vi.mock("@/lib/api-error", () => ({
