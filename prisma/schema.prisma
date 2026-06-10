@@ -766,7 +766,7 @@ model Thesis {
 
   // Source tracking
   // Legacy fields conserves le temps de migrer les consommateurs vers CorpusSnapshot.
-  sourceDocumentIds String[] // IDs des Document utilises pour l'extraction
+  sourceDocumentIds String[] @default([]) // IDs des Document utilises pour l'extraction (default aligne sur la migration 20260417120000 + prod)
   sourceHash        String // hash du corpus utilise — pour detecter staleness sur nouveau doc
   corpusSnapshotId  String?
   corpusSnapshot    CorpusSnapshot? @relation(fields: [corpusSnapshotId], references: [id], onDelete: SetNull)

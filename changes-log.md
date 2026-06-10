@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — DB/migrations — Phase D remédiation : baseline 0_baseline (l'historique sait à nouveau provisionner une base)
+
+### Fichiers
+- `prisma/schema.prisma:769` : `Thesis.sourceDocumentIds` + `@default([])` — seul drift prod↔schéma détecté (D1, diff read-only), aligné sur la migration 20260417120000 + prod ; re-diff = « No difference detected »
+- NOUVEAU `prisma/migrations/0_baseline/migration.sql` : baseline auto-générée (migrate diff --from-empty, 65 tables, 226 index) + objets hors-modèle Prisma ré-appendés à la main (materialized view `current_facts_mv` + 3 index + fonction `refresh_current_facts_mv` — invisibles pour migrate diff)
+- 30 anciennes migrations + `manual_current_facts_view.sql` → `prisma/migrations-archive/` (git mv, historique préservé)
+- `.github/workflows/test.yml` : job db-integration basculé `db push` → `migrate deploy` (chaque CI valide désormais le provisionnement d'une base vierge)
+
+### Description
+Phase D du plan post-audit (finding High : les migrations ne créaient que 20 tables sur 65 ; migrate deploy échouait à la 14e migration). Validé sur Postgres 16 vierge : migrate deploy OK, diff post-deploy vide, MV + fonction présentes, test crédits DB vert sur la base provisionnée. Gate Codex APPROVE (pattern baselining doc Prisma sourcé). RESTE D4 : `prisma migrate resolve --applied 0_baseline` contre la prod Neon — confirmation Sacha requise, à lancer depuis CE commit (ne plus modifier 0_baseline ensuite).
+
+---
 ## 2026-06-11 — CI/qualité — Phase C remédiation : lint en CI (36 erreurs corrigées), gate drift migrations, job Postgres éphémère + garde anti-prod
 
 ### Fichiers
@@ -436,16 +448,4 @@ Sur les contextes d'idéation/diagnostic, Codex était susceptible d'être **anc
 
 ### Vérif
 Doc/doctrine uniquement. Cohérent avec § Routing (décision produit = utilisateur) et la doctrine produit Board AI (désaccords exposés).
-
----
-## 2026-06-03 — Gate Codex : périmètre risk-tiered + second regard diagnostic (captures / incompréhension)
-
-### Contexte
-Étendre Codex au-delà des seuls plans multi-étapes, sans tomber dans le « Codex sur tout » (coût/latence + bruit qui érode l'attention). Décision utilisateur (impacte le coût → arbitrage utilisateur, pas Codex).
-
-### Changements
-- `CLAUDE.md` § Gate Codex : nouvelle sous-section « Périmètre — quand faire intervenir Codex ». **Gate obligatoire** sur changements à risque (durabilité/byte-equiv, scoring, auth/sécu, migrations, prompts doctrine, refacto/logique non triviale), plan ou standalone, via `codex-gate-drive.sh`. **Second regard diagnostic** sur captures de bug / incompréhension via `codex exec -s read-only -i <capture>` (hors gate diff-based, car souvent pas de changement). **Sounding board** sur idées de features/produit via `codex exec -s read-only` (Codex critique faisabilité/risques/alternatives, **ne décide pas** — la décision produit reste à l'utilisateur, cf. § Routing). **Skip** : UI, petits fix, typos/commentaires/format/doc.
-
-### Vérif
-Flag `-i/--image` de `codex exec` confirmé dans `codex exec --help`. Doc/doctrine uniquement, aucun code exécutable modifié.
 

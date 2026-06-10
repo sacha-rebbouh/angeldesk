@@ -74,9 +74,8 @@ jobs:
   # Sémantique Postgres réelle sur les invariants money/intégrité (idempotence
   # crédits, TOCTOU updateMany, EvidenceSignal, extracteurs evidence) — les
   # mocks Prisma ont déjà laissé passer 2 bugs runtime (errors.md 2026-05-14).
-  # NOTE : `db push` tant que la baseline migrations n'existe pas (Phase D du
-  # plan post-audit) ; à basculer ensuite sur `prisma migrate deploy` pour
-  # valider aussi l'historique de migrations.
+  # `migrate deploy` (et pas db push) : valide aussi que l'historique de
+  # migrations sait provisionner une base vierge (baseline 0_baseline, Phase D).
   db-integration:
     runs-on: ubuntu-latest
     services:
@@ -103,7 +102,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npx prisma generate
-      - run: npx prisma db push --skip-generate
+      - run: npx prisma migrate deploy
       - name: Tests d'intégration DB (vraie sémantique Postgres)
         run: >-
           npx vitest run --config vitest.unit.config.ts
