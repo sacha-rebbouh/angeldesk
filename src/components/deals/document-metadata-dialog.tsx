@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { CheckCircle2, ListTree, Loader2, Pencil } from "lucide-react";
@@ -325,7 +325,12 @@ export const DocumentMetadataDialog = memo(function DocumentMetadataDialog({
   // B6.2 → B6.3 — seed all six inputs when the dialog opens for a
   // given doc. Resets on close so a reopen on a different doc
   // doesn't show the stale values from the previous one.
-  useEffect(() => {
+  // Pattern « adjust state during render » (mêmes déclencheurs que l'ancien effect
+  // [open, document], à l'identité d'objet près) — remplace le setState-dans-effect
+  // interdit par react-hooks/set-state-in-effect.
+  const [prevSeed, setPrevSeed] = useState<{ open: boolean; document: typeof document } | null>(null);
+  if (prevSeed === null || prevSeed.open !== open || prevSeed.document !== document) {
+    setPrevSeed({ open, document });
     if (open && document) {
       setSourceDateInput(toDateInputValue(document.sourceDate));
       setTypeInput(document.type ?? "");
@@ -343,7 +348,7 @@ export const DocumentMetadataDialog = memo(function DocumentMetadataDialog({
       setSourceSubjectInput("");
       setServerError(null);
     }
-  }, [open, document]);
+  }
 
   // B6.2 → B6.3 — delta detection. Submit is enabled only when AT
   // LEAST ONE field differs from the initial values. Prevents

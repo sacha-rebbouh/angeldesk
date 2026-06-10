@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
@@ -50,7 +50,22 @@ export function AnalysisRunningOverlay({
 }) {
   const queryClient = useQueryClient();
   const launchedAt = (queryClient.getQueryData<number>(queryKeys.analyses.launchedAt(dealId)) ?? 0) as number;
-  const withinGrace = launchedAt > 0 && Date.now() - launchedAt < LAUNCH_GRACE_MS;
+  // Fenêtre de grâce time-dependent : useSyncExternalStore (l'horloge = source externe) au lieu
+  // de Date.now() au render (react-hooks/purity). Un timer programme le re-render à l'expiration.
+  const withinGrace = useSyncExternalStore(
+    useCallback(
+      (onExpire: () => void) => {
+        if (launchedAt <= 0) return () => {};
+        const remainingMs = launchedAt + LAUNCH_GRACE_MS - Date.now();
+        if (remainingMs <= 0) return () => {};
+        const timer = setTimeout(onExpire, remainingMs);
+        return () => clearTimeout(timer);
+      },
+      [launchedAt]
+    ),
+    () => launchedAt > 0 && Date.now() - launchedAt < LAUNCH_GRACE_MS,
+    () => false
+  );
 
   const { data, error } = useQuery({
     queryKey: queryKeys.analyses.latest(dealId),

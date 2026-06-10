@@ -16,7 +16,7 @@ export function EvidenceSection({ evidence }: { evidence: EvidenceRowProps[] }) 
 
       {evidence.length === 0 ? (
         <PartialBanner tone="info" title="Aucun élément de preuve consolidé">
-          Les agents Tier 0 et Tier 3 n'ont produit aucun fait ni claim exploitable sur ce dossier.
+          Les agents Tier 0 et Tier 3 n&apos;ont produit aucun fait ni claim exploitable sur ce dossier.
         </PartialBanner>
       ) : (
         <div

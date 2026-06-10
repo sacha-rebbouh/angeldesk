@@ -352,12 +352,13 @@ export const FileUpload = memo(function FileUpload({
 }: FileUploadProps) {
   // Phase B0 — instrumentation log: use the one passed by the dialog when
   // present (so the session spans the full modal lifecycle), otherwise
-  // create an ephemeral one local to this component instance.
-  const fallbackLogRef = useRef<InstrumentationLog | null>(null);
-  if (fallbackLogRef.current === null && !instrumentationProp) {
-    fallbackLogRef.current = createInstrumentationLog(createUploadSessionId());
-  }
-  const instrumentation = instrumentationProp ?? fallbackLogRef.current!;
+  // create an ephemeral one local to this component instance (useState lazy
+  // init — l'accès ref au render est interdit par react-hooks/refs ; le
+  // fallback inutilisé quand la prop est fournie est un objet en mémoire trivial).
+  const [fallbackLog] = useState<InstrumentationLog>(() =>
+    createInstrumentationLog(createUploadSessionId())
+  );
+  const instrumentation = instrumentationProp ?? fallbackLog;
 
   // Phase B1 — lightweight queue + sidecar File map. The queue is what the
   // render tree consumes; the File objects live in a ref so adding 6 files
@@ -422,9 +423,13 @@ export const FileUpload = memo(function FileUpload({
   useEffect(() => {
     onAllCompleteRef.current = onAllComplete;
   }, [onAllComplete]);
-  const batchRef = useRef<UploadBatchController | null>(null);
-  if (batchRef.current === null) {
-    batchRef.current = createUploadBatch({
+  // Instance stable par mount (useState lazy init — l'accès ref au render est
+  // interdit par react-hooks/refs). Le `onAllCompleteRef.current` capturé suit le
+  // pattern « latest ref » : la closure ne s'exécute qu'au settle d'un upload
+  // (événement async), jamais pendant l'init — faux positif de la règle.
+  // eslint-disable-next-line react-hooks/refs
+  const [batch] = useState<UploadBatchController>(() =>
+    createUploadBatch({
       onAllComplete: (summary) => onAllCompleteRef.current?.(summary),
       onBatchSettled: () => {
         setIsUploading(false);
@@ -433,9 +438,8 @@ export const FileUpload = memo(function FileUpload({
         setActiveUploadProgress(null);
         setElapsedSeconds(0);
       },
-    });
-  }
-  const batch = batchRef.current;
+    })
+  );
 
   /**
    * Phase B1 — validate a single queue item. SYNCHRONOUS metadata checks only

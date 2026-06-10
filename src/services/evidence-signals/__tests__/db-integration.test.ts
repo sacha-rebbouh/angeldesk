@@ -12,6 +12,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { config } from "dotenv";
 
+import { shouldSkipDbTests } from "@/lib/test-db-guard";
+
 config({ path: ".env.local" });
 
 // Neon round-trips can be slow on cold endpoints (>5s default vitest timeout).
@@ -20,7 +22,7 @@ const DB_TEST_TIMEOUT = 30_000;
 const TEST_KEY = "a".repeat(64);
 process.env.DOCUMENT_ENCRYPTION_KEY ??= TEST_KEY;
 
-const skipDbTests = process.env.SKIP_DB_TESTS === "1" || !process.env.DATABASE_URL;
+const skipDbTests = shouldSkipDbTests().skip;
 
 if (skipDbTests) {
   describe.skip("EvidenceSignal — DB integration (skipped: SKIP_DB_TESTS=1 or no DB)", () => {

@@ -30,3 +30,87 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npx tsc --noEmit
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx prisma generate
+      # Bloque sur les erreurs ; les warnings restent tolérés (dette trackée).
+      - run: npm run lint
+
+  # Garde anti-footgun : la prod Neon doit matcher schema.prisma AVANT merge.
+  # Les migrations prod sont appliquées À LA MAIN (`npm run db:migrate:deploy`)
+  # — l'oubli a déjà cassé la prod deux fois (PR #13/#14). Ce job échoue si un
+  # changement de schéma part en PR sans avoir été appliqué côté Neon.
+  # Lecture seule. Requiert le secret PROD_DATABASE_URL (rôle read-only conseillé).
+  migration-drift:
+    runs-on: ubuntu-latest
+    env:
+      PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Drift check prod ↔ schema.prisma
+        run: |
+          if [ -z "$PROD_DATABASE_URL" ]; then
+            echo "::warning::Secret PROD_DATABASE_URL non configuré — drift check sauté (à configurer : Settings → Secrets → Actions)"
+            exit 0
+          fi
+          npx prisma migrate diff \
+            --from-url "$PROD_DATABASE_URL" \
+            --to-schema-datamodel prisma/schema.prisma \
+            --exit-code
+
+  # Sémantique Postgres réelle sur les invariants money/intégrité (idempotence
+  # crédits, TOCTOU updateMany, EvidenceSignal, extracteurs evidence) — les
+  # mocks Prisma ont déjà laissé passer 2 bugs runtime (errors.md 2026-05-14).
+  # NOTE : `db push` tant que la baseline migrations n'existe pas (Phase D du
+  # plan post-audit) ; à basculer ensuite sur `prisma migrate deploy` pour
+  # valider aussi l'historique de migrations.
+  db-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: angeldesk_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/angeldesk_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/angeldesk_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma db push --skip-generate
+      - name: Tests d'intégration DB (vraie sémantique Postgres)
+        run: >-
+          npx vitest run --config vitest.unit.config.ts
+          src/services/credits/__tests__/db-integration.test.ts
+          src/services/evidence-signals/__tests__/db-integration.test.ts
+          src/services/evidence/__tests__/claims-extractor-integration.test.ts
+          src/services/evidence/__tests__/build-evidence-context-integration.test.ts
+          src/services/evidence/__tests__/attachment-linker-integration.test.ts
+          src/services/evidence/__tests__/temporal-extractor-integration.test.ts
+          src/services/evidence/__tests__/promote-source-date-integration.test.ts

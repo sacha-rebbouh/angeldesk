@@ -17,12 +17,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { config } from "dotenv";
 
+import { shouldSkipDbTests } from "@/lib/test-db-guard";
+
 config({ path: ".env.local" });
 
 const TEST_KEY = "a".repeat(64);
 process.env.DOCUMENT_ENCRYPTION_KEY ??= TEST_KEY;
 
-const skipDbTests = process.env.SKIP_DB_TESTS === "1" || !process.env.DATABASE_URL;
+const skipDbTests = shouldSkipDbTests().skip;
 const DB_TEST_TIMEOUT = 30_000;
 
 if (skipDbTests) {

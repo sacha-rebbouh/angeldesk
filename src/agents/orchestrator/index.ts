@@ -1560,13 +1560,13 @@ export class AgentOrchestrator {
     messageBus.clear();
 
     const allResults: Record<string, AgentResult> = {};
-    let totalCost = 0;
-    let completedCount = 0;
+    const totalCost = 0;
+    const completedCount = 0;
 
     // Variables for fact store (will be populated in Tier 0)
-    let factStore: CurrentFact[] = [];
-    let factStoreFormatted = "";
-    let founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }> = [];
+    const factStore: CurrentFact[] = [];
+    const factStoreFormatted = "";
+    const founderResponses: Array<{ questionId: string; question: string; answer: string; category: string }> = [];
 
     return {
       failFastOnCritical,
@@ -3178,7 +3178,8 @@ export class AgentOrchestrator {
       allResults,
       stepwise,
     } = init;
-    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    const { completedCount, factStore, factStoreFormatted } = params;
+    let { totalCost } = params;
     try {
       // STEP 2.6: STOP-AFTER-THESIS — re-extraction de these (upload doc / admin backfill).
       // Pas de gate, pas de decision : on s'arrete apres la these et on COMPLETE l'analyse
@@ -3329,8 +3330,8 @@ export class AgentOrchestrator {
     /** Remonte le totalCost courant du tail au scope appelant : byte-équivalence du coût. */
     reportTotalCost: (totalCost: number) => void;
   }): Promise<AnalysisResult> {
-    const { deal, dealId, onProgress, init, enrichedContext, extractedData, phasesResult, reportTotalCost } = params;
-    let { totalCost, completedCount, factStore, factStoreFormatted } = params;
+    const { deal, dealId, onProgress, init, enrichedContext, extractedData, phasesResult, reportTotalCost, factStore, factStoreFormatted } = params;
+    let { totalCost, completedCount } = params;
     try {
       const glue = await this.runPostTier1Glue({
         dealId,
@@ -4777,7 +4778,8 @@ export class AgentOrchestrator {
       allResults, allFindings, allValidations, extractedData, stateMachine,
       initialTotalCost,
     } = refs;
-    let { totalCost, completedCount, factStore, factStoreFormatted, verificationContext } = state;
+    const { factStore, factStoreFormatted, verificationContext } = state;
+    let { totalCost, completedCount } = state;
     // Run this phase's agents in parallel, collect + sanitize results, extract findings,
     // and materialize the ordered needsReflect list. Shared OFF/stepwise sub-method (d-3).
     const agentsResult = await this.runTier1PhaseAgents(

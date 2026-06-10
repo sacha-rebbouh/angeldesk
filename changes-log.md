@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — CI/qualité — Phase C remédiation : lint en CI (36 erreurs corrigées), gate drift migrations, job Postgres éphémère + garde anti-prod
+
+### Fichiers
+- `.github/workflows/test.yml` : +3 jobs — `lint` (npm run lint, bloque sur erreurs), `migration-drift` (prisma migrate diff --from-url $PROD_DATABASE_URL --to-schema-datamodel, lecture seule, skip gracieux si secret absent ; --to-schema-datamodel choisi car l'historique migrations est troué jusqu'à la Phase D), `db-integration` (service postgres:16, db push, 7 fichiers DB explicites)
+- Fixes lint (36 erreurs → 0) : prefer-const orchestrateur (3 destructurings scindés const/let sans logique changée), 2 disables justifiés tier2 (any délibérés commentés), entités JSX échappées (analysis-v2), `Date.now()` au render → useSyncExternalStore + timer d'expiration (analysis-running-overlay), setState-dans-effect → pattern « adjust state during render » (document-metadata-dialog, document-upload-dialog), refs-au-render → useState lazy init (document-upload-dialog, file-upload)
+- NOUVEAU `src/lib/test-db-guard.ts` : garde anti-prod — les tests d'intégration chargeaient .env.local et écrivaient en PROD Neon en local ; désormais skip si URL non-localhost sans ALLOW_REMOTE_DB=1 (6 fichiers patchés)
+- NOUVEAU `src/services/credits/__tests__/db-integration.test.ts` : 4 tests money-path contre vrai Postgres (idempotence par contrainte UNIQUE réelle, course TOCTOU 2 deducts concurrents → 1 seul passe, refund idempotent)
+
+### Description
+Phase C du plan post-audit. Vérifs : tsc propre, eslint 0 erreur, 4361 tests verts, simulation locale du job CI (docker postgres:16-alpine : db push + 50 tests verts contre vrai Postgres). Gate Codex APPROVE. ⚠️ Actions Sacha : secret GitHub PROD_DATABASE_URL + ajouter les nouveaux checks à la branch protection.
+
+---
 ## 2026-06-11 — Chore/deps — Phase B remédiation : bumps sécurité next/clerk, audit fix (29→6 vulns), pin pdfjs-dist, deps mortes retirées
 
 ### Fichiers
@@ -436,21 +448,4 @@ Doc/doctrine uniquement. Cohérent avec § Routing (décision produit = utilisat
 
 ### Vérif
 Flag `-i/--image` de `codex exec` confirmé dans `codex exec --help`. Doc/doctrine uniquement, aucun code exécutable modifié.
-
----
-## 2026-06-03 — Gate Codex : migration MCP → `codex exec resume` (continuité survit aux relais) + ledger
-
-### Contexte
-Une session relayée affichait *« The thread expired (Codex sessions are ephemeral). I'll start a fresh thread… »* → le gate repartait d'un thread neuf en perdant le contexte des étapes précédentes. Cause racine : le handle de thread MCP (`mcp__codex__codex-reply`) est scopé au process `codex mcp-server` ; il meurt à tout redémarrage de process (relais via `codex-relay.sh`). Le rollout de la conversation existe pourtant **sur disque** (`~/.codex/sessions/…/rollout-*-<id>.jsonl`, source `mcp`), et `codex exec resume <id>` sait le reprendre cross-process.
-
-### Changements
-- `~/.claude/bin/codex-gate-drive.sh` (nouveau, global) : pilote UNE étape de gate. **Create** via `codex exec -s read-only --json` (capture `thread.started.thread_id`), **resume** ensuite via `codex exec resume <id> -c sandbox_mode=read-only` (reprend le rollout disque). Effort `xhigh` forcé (override `CODEX_GATE_EFFORT`). Persiste `.codex-gate-thread`, append le ledger `.codex-gate-log.md` (1 bloc/tour : étape + verdict). Payload passé en **stdin** (`-`) pour éviter ARG_MAX sur gros diffs. Fallback : si `resume` échoue (rollout perdu), cold start **re-seedé par le ledger**. `codex-gate.sh` (builder de payload) inchangé.
-- `CLAUDE.md` : § « Gate Codex par étape » réécrit (MCP → drive script ; protocole 1 appel/étape ; RAZ `.codex-gate-thread` + `.codex-gate-log.md` au début du plan) ; § « Routing des décisions » parenthèse « thread MCP » → `codex-gate-drive.sh`.
-- `.gitignore` : `+ /.codex-gate-log.md` (artefact local, hors payload du gate).
-
-### Vérif
-Mécanisme testé **bout-en-bout** dans un repo git temp isolé (effort `low`, jamais dans angeldesk) : `create` capture l'UUID ; `resume` rappelle un mot-clé du tour précédent **thread inchangé** (`mode=resume`) = continuité réelle via rollout disque (pas via seed). Deux bugs trouvés et corrigés en cours de test : (1) `printf '- …'` lu comme option par bash → format `%s` + tiret dans la donnée ; (2) `codex exec resume` rejette `--color` (que `create` accepte) → retiré de la branche resume. `bash -n` OK ; `git check-ignore .codex-gate-log.md` OK ; `codex-cli 0.135.0`.
-
-### Reste
-1er run réel en plan multi-étapes sur angeldesk (notamment à travers un vrai relais) pour confirmer en conditions. NB : `.codex-gate-thread` d'angeldesk a changé pendant cette session (activité d'une autre session concurrente) — les edits de fichiers trackés ci-dessus (CLAUDE.md, .gitignore) apparaîtront dans le `git diff HEAD` d'un éventuel gate concurrent en cours.
 
