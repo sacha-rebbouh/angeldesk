@@ -3670,7 +3670,6 @@ technology:
     pdf: "@react-pdf/renderer"
     validation: "Zod 4"
     state: "React Query (TanStack Query)"
-    financial_math: "decimal.js"
 
   llm_models:
     fast:

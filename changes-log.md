@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Chore/deps — Phase B remédiation : bumps sécurité next/clerk, audit fix (29→6 vulns), pin pdfjs-dist, deps mortes retirées
+
+### Fichiers
+- `package.json` + `package-lock.json` : next 16.2.4→16.2.9 (ferme 3 auth-bypass middleware GHSA-26hh/GHSA-492v/GHSA-267c + SSRF/DoS), @clerk/nextjs 6.39.3→6.39.5 (js-cookie), @sentry/nextjs 10.37.0→10.57.0 (embarqué par audit fix) ; npm audit fix lockfile-only : 29 vulns prod → 6 (critical protobufjs + chaîne OTel via inngest réglés)
+- Pin `pdfjs-dist@~5.4.624` en dépendance directe (était phantom via pdf-to-img ; importeurs : src/services/pdf/extractor.ts, renderers/) — dedupe vérifié
+- Retraits vérifiés par grep : `decimal.js` (0 import), `@hookform/resolvers` (0 import), `react-hook-form` + `src/components/ui/form.tsx` supprimés ensemble (scaffold 0 importeur) ; `pdf-lib` → devDependencies (scripts/ uniquement)
+- `docs-private/reference.yaml` : ligne stale `financial_math: decimal.js` retirée (note Codex)
+
+### Description
+Phase B du plan post-audit. Résidu accepté : 5 moderate postcss@8.4.31 épinglé en interne par next (build-time, fix = future release next) + xlsx high (phase G dédiée). Vérifs : tsc propre, 4361 tests verts ×2 (1 flake non reproduit au 1er run, à surveiller en CI), next build OK. Gate Codex : APPROVE.
+
+---
 ## 2026-06-10 — Chore/hygiène — Phase A remédiation post-audit : purge zombies, doublon base-agent, changes-log 30 entrées, docs-private tracké
 
 ### Fichiers
@@ -441,22 +453,4 @@ Mécanisme testé **bout-en-bout** dans un repo git temp isolé (effort `low`, j
 
 ### Reste
 1er run réel en plan multi-étapes sur angeldesk (notamment à travers un vrai relais) pour confirmer en conditions. NB : `.codex-gate-thread` d'angeldesk a changé pendant cette session (activité d'une autre session concurrente) — les edits de fichiers trackés ci-dessus (CLAUDE.md, .gitignore) apparaîtront dans le `git diff HEAD` d'un éventuel gate concurrent en cours.
-
----
-## 2026-06-02 — Relais autonome de session (auto-handoff iTerm2) au point d'arrêt de scope
-
-### Contexte
-Éviter le cycle manuel fermer/rouvrir Claude + coller le recap toutes les ~20 min. Au point d'arrêt « avertissement de scope » (CLAUDE.md § Obéissance stricte), la session spawn elle-même une session fraîche et se ferme.
-
-### Changements
-- `~/.claude/bin/codex-relay.sh` (nouveau, global) : spawn d'un pane iTerm2 frais via AppleScript natif (`split` + `write text` + `close`, pas de keystrokes/System Events), relance `claude --effort max --permission-mode bypassPermissions` sur `.codex-gate-resume.md`. Sentinelle de démarrage `.codex-relay-up` + 60 s de latence + check `.codex-relay-dead`/pane-existe avant de fermer le pane courant. Cible le pane via `${ITERM_SESSION_ID#*:}` et l'app iTerm par **bundle id** `com.googlecode.iterm2` (insensible au nom iTerm/iTerm2). Flag **`--dry-run`** : B lance `echo+sleep` au lieu de claude (valide iTerm/TCC/fermeture sans session autonome ; ignore le cap).
-- `CLAUDE.md` : section « Relais autonome de session au point d'arrêt » + RAZ compteur au début du plan (gate Codex point 2).
-- `.gitignore` : ignore les artefacts relais (`.codex-gate-resume.md`, `.codex-gate-relay-count`, `.codex-relay-up/-dead`, `STOP`) + `.codex-gate-thread` (sinon inclus comme untracked dans le payload `codex-gate.sh`).
-- Garde-fous : `STOP` file (kill manuel, jamais auto) ; cap `CODEX_RELAY_CAP` (défaut 10) via `.codex-gate-relay-count` (par plan).
-
-### Vérif
-`bash -n` OK ; gardes STOP/cap/non-iTerm testées en sandbox (exit 3/4/2) ; gitignore 6/6 ignorés ; flags `--effort max` + `--permission-mode bypassPermissions` confirmés via `claude --help`. NON testé en réel : spawn/close osascript (exige iTerm + Automation/TCC au 1er run ; le 1er `bypassPermissions` peut demander une confirmation à accepter une fois).
-
-### Reste
-Valider le 1er relais réel : autoriser « iTerm contrôle iTerm » (Automation), accepter le bypass une fois, régler iTerm « Prompt before closing » pour ne pas bloquer la fermeture auto.
 
