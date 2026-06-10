@@ -8,6 +8,7 @@
 // ============================================================================
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 import {
   CREDIT_COSTS,
   type CreditActionType,
@@ -192,6 +193,17 @@ const mockTx = {
       return transactions.find((tx) => tx.idempotencyKey === where.idempotencyKey) ?? null;
     }),
     create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+      // Simule la contrainte UNIQUE sur idempotencyKey (P2002) — indispensable
+      // pour tester le chemin idempotent en course concurrente d'addCredits.
+      if (
+        typeof data.idempotencyKey === 'string' &&
+        transactions.some((t) => t.idempotencyKey === data.idempotencyKey)
+      ) {
+        throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed on idempotencyKey', {
+          code: 'P2002',
+          clientVersion: 'test',
+        });
+      }
       const tx: InMemoryTransaction = {
         id: nextId(),
         userId: data.userId as string,
@@ -217,6 +229,11 @@ vi.mock('@/lib/prisma', () => ({
     userCreditBalance: {
       findUnique: (...args: unknown[]) => mockTx.userCreditBalance.findUnique(...args as [never]),
       create: (...args: unknown[]) => mockTx.userCreditBalance.create(...args as [never]),
+    },
+    // Exposé au top-level pour la re-lecture du catch P2002 d'addCredits
+    // (hors transaction, après rollback).
+    creditTransaction: {
+      findUnique: (...args: unknown[]) => mockTx.creditTransaction.findUnique(...args as [never]),
     },
     $transaction: async (fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx),
   },
@@ -267,7 +284,7 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
   // --------------------------------------------------------------------------
 
   async function setupUser() {
-    const result = await addCredits(USER, 'pro', 100, 'stripe_pi_test');
+    const result = await addCredits(USER, 'pro', 100, 'idem-setup-pro', 'stripe_pi_test');
     expect(result.success).toBe(true);
     expect(result.newBalance).toBe(100);
     expect(getBalance()).toBe(100);
@@ -279,6 +296,45 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
       record.freeResetStartedAt = null;
     }
   }
+
+  it('addCredits est idempotent : 2e appel avec la même clé = no-op (pas de double-crédit)', async () => {
+    const first = await addCredits(USER, 'pro', 100, 'idem-dup-key');
+    expect(first.success).toBe(true);
+    expect(first.newBalance).toBe(100);
+    expect(first.alreadyAdded).toBeUndefined();
+
+    // Retry (ex. webhook Stripe rejoué) avec la MÊME clé → aucun nouveau crédit.
+    const second = await addCredits(USER, 'pro', 100, 'idem-dup-key');
+    expect(second.success).toBe(true);
+    expect(second.alreadyAdded).toBe(true);
+    expect(second.newBalance).toBe(100); // inchangé
+
+    // Balance créditée UNE seule fois + une seule transaction PURCHASE.
+    expect(balances.get(USER)!.balance).toBe(100);
+    expect(transactions.filter((t) => t.action === 'PURCHASE').length).toBe(1);
+  });
+
+  it('addCredits : course concurrente même clé → le perdant (P2002) retourne un succès idempotent', async () => {
+    // Le gagnant a déjà crédité (transaction 'race-key' en store).
+    const winner = await addCredits(USER, 'pro', 100, 'race-key');
+    expect(winner.success).toBe(true);
+    expect(winner.newBalance).toBe(100);
+
+    // Le perdant ne voit PAS encore la ligne dans sa transaction (findUnique
+    // null une fois) → il tente le create → P2002 (clé déjà présente) → le catch
+    // re-lit la transaction du gagnant et renvoie un succès idempotent.
+    vi.mocked(mockTx.creditTransaction.findUnique).mockResolvedValueOnce(null);
+    const loser = await addCredits(USER, 'pro', 100, 'race-key');
+
+    expect(loser.success).toBe(true);
+    expect(loser.alreadyAdded).toBe(true);
+    expect(loser.newBalance).toBe(100); // balance du gagnant (re-lecture)
+    // Pas de double-crédit au LEDGER : une seule transaction PURCHASE (le create
+    // du perdant a throw avant l'insert). NB : la balance en store mock n'est
+    // pas rollback (le mock $transaction ne simule pas l'atomicité) — en prod la
+    // transaction rollback, la balance reste à 100.
+    expect(transactions.filter((t) => t.action === 'PURCHASE').length).toBe(1);
+  });
 
   // --------------------------------------------------------------------------
   // TEST 1: Full happy path — simulate a typical BA workflow
@@ -398,7 +454,7 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
 
   it('should block deduction when credits are insufficient', async () => {
     // Setup with only 7 credits paid (et zero-out balanceFree pour tester le paid)
-    await addCredits(USER, 'starter', 7);
+    await addCredits(USER, 'starter', 7, 'idem-starter-7');
     const record = balances.get(USER)!;
     record.balanceFree = 0;
     record.freeResetStartedAt = null;
@@ -486,7 +542,7 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
 
   it('should drain to zero then block all paid actions', async () => {
     // Start with exactly 10 credits paid (et zero-out balanceFree pour focus paid)
-    await addCredits(USER, 'starter', 10);
+    await addCredits(USER, 'starter', 10, 'idem-starter-10-drain');
     const record = balances.get(USER)!;
     record.balanceFree = 0;
     record.freeResetStartedAt = null;
@@ -561,7 +617,7 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
   // --------------------------------------------------------------------------
 
   it('should succeed when balance equals exact cost', async () => {
-    await addCredits(USER, 'starter', 10);
+    await addCredits(USER, 'starter', 10, 'idem-starter-10-exact');
     const record = balances.get(USER)!;
     record.balanceFree = 0;
     record.freeResetStartedAt = null;
@@ -780,7 +836,7 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
     expect(getBalance()).toBe(69);
 
     // Buy more credits
-    const purchase = await addCredits(USER, 'standard', 30);
+    const purchase = await addCredits(USER, 'standard', 30, 'idem-standard-30');
     expect(purchase.success).toBe(true);
     expect(purchase.newBalance).toBe(99);
     expect(getBalance()).toBe(99);
@@ -820,7 +876,7 @@ describe('Free hebdo Option B "use it or lose it (non-purchasers only)"', () => 
 
   it('purchaser : deduct should consume 100% paid (free reset à 0 au moment de l\'achat)', async () => {
     // Setup : addCredits reset balanceFree=0 + freeResetStartedAt=null (doctrine B-strict)
-    await addCredits(USER, 'pro', 100);
+    await addCredits(USER, 'pro', 100, 'idem-pro-deduct');
     const record = balances.get(USER)!;
     expect(record.balance).toBe(100);
     expect(record.balanceFree).toBe(0); // reset à l'achat
@@ -837,7 +893,7 @@ describe('Free hebdo Option B "use it or lose it (non-purchasers only)"', () => 
 
   it('purchaser : checkCredits should ignore balanceFree, only count paid', async () => {
     // 3 paid + 10 free dormant (jamais utilisable car purchaser)
-    await addCredits(USER, 'starter', 3);
+    await addCredits(USER, 'starter', 3, 'idem-starter-3');
     const record = balances.get(USER)!;
     record.balanceFree = 10;
 
@@ -851,7 +907,7 @@ describe('Free hebdo Option B "use it or lose it (non-purchasers only)"', () => 
   });
 
   it('purchaser : getCreditBalance should expose balanceFree=0 + nextFreeResetAt=null', async () => {
-    await addCredits(USER, 'pro', 100);
+    await addCredits(USER, 'pro', 100, 'idem-pro-getbalance');
     // Même si DB a balanceFree=10 et un timer actif, l'API doit masquer
     const record = balances.get(USER)!;
     record.balanceFree = 10;
@@ -867,7 +923,7 @@ describe('Free hebdo Option B "use it or lose it (non-purchasers only)"', () => 
   });
 
   it('purchaser : refund crédite 100% en paid (cohérent avec Option B)', async () => {
-    await addCredits(USER, 'pro', 100);
+    await addCredits(USER, 'pro', 100, 'idem-pro-refund');
     await deductCredits(USER, 'DEEP_DIVE', DEAL, {
       idempotencyKey: 'deduct:DEEP_DIVE:001',
     });

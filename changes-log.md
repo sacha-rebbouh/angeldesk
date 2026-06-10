@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Crédits/money — Phase F (F4) : addCredits idempotent (anti double-crédit, avant câblage Stripe)
+
+### Fichiers
+- `src/services/credits/usage-gate.ts` : `addCredits` gagne un paramètre OBLIGATOIRE `idempotencyKey` (4e position). En tête de transaction : `findUnique` par `idempotencyKey` → no-op idempotent (`alreadyAdded`) si déjà vu. Catch : un `P2002` concurrent (contrainte UNIQUE) est normalisé en succès idempotent (re-lecture de la transaction gagnante) au lieu d'une erreur transitoire. Réutilise `CreditTransaction.idempotencyKey` (même pattern que deduct/refund). Import `Prisma` (value).
+- `src/services/credits/__tests__/credit-flow-e2e.test.ts` : mock in-memory `create` simule la contrainte UNIQUE (throw P2002), top-level mock expose `creditTransaction.findUnique` ; 9 appels existants reçoivent des clés uniques ; 2 nouveaux tests (retry séquentiel = no-op ; course concurrente P2002 = succès idempotent + 1 seul PURCHASE).
+
+### Description
+Phase F (F4) du plan post-audit : sans idempotence, un retry (webhook Stripe rejoué, double submit) double-créditait. Aucun appelant prod aujourd'hui — posé AVANT le câblage Stripe (forward-looking). Gate Codex : 1 REQUEST_CHANGES (le perdant P2002 concurrent devait retourner un succès idempotent, pas une erreur) → corrigé → APPROVE. À retenir pour Stripe : valider une clé non vide côté webhook (noté par Codex). Vérifs : tsc 0, eslint 0, suite unit 4373 passed / 0 failed. Reste F5-F6.
+
+---
 ## 2026-06-11 — Maintenance — Phase F (F3) : cleanups LLM logs / snapshots branchés sur le cron reaper 12h
 
 ### Fichiers
@@ -416,15 +426,4 @@ Le red flag CRITICAL « Absence de Vérification Légale (K-bis) » (devils-advo
 
 ### Vérif
 35 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 7 : APPROVE (après 2 REQUEST_CHANGES : représentant par sévérité + comptage par topic distinct + hint standalone + scrub tous champs).
-
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 6 : preuves consolidées (#18 troncatures/noms d'agents, #19 contradictions)
-
-### Changements
-- `lib/evidence-collector.ts` : sources sanitizées (`sanitizeSourceLabel`), troncatures `compactString` retirées (claim/note complets), textes scrubés. Contradictions reformatées (#19) : source rattachée INLINE à chaque énoncé (« Doc : "…" ↔ Doc : "…" »), implication = note (« Lecture »), `topic`/`s1`/`s2` scrubés ; colonne Source = « Recoupement de sources » seulement si une source inline est présentable, sinon fallback honnête.
-- `sections/evidence-section.tsx` : footer sans noms d'agents.
-- Guard : assertion VM evidence rows (claim/source/note sans nom d'agent ; « Recoupement » ⇒ source inline réelle).
-
-### Vérif
-33 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 6 : APPROVE (après 1 REQUEST_CHANGES : scrub topic/énoncés + source conditionnelle).
 
