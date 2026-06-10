@@ -1,0 +1,115 @@
+{
+  "startedAt": "2026-05-18T11:33:45.394Z",
+  "finishedAt": "2026-05-18T11:33:50.739Z",
+  "durationMs": 5345,
+  "args": {
+    "dealId": "cmofnoij00001ju04gdr8rno1",
+    "all": false,
+    "limit": null,
+    "maxCandidates": null,
+    "dryRun": true,
+    "onlyCompleted": true,
+    "since": null,
+    "force": false,
+    "summaryOut": "/Users/sacharebbouh/Desktop/angeldesk/docs-private/backfills/evidence-signals-2026-05-18T11-33-45-394Z.json"
+  },
+  "totals": {
+    "candidates": 7,
+    "skipped": 0,
+    "processed": 0,
+    "wouldProcess": 7,
+    "failed": 0,
+    "limitReached": false,
+    "signalsPersisted": 0,
+    "signalsDeduplicated": 0,
+    "claimsPersisted": 0,
+    "claimsDeduplicated": 0,
+    "attachmentsLinked": 0
+  },
+  "perDoc": [
+    {
+      "documentId": "cmp8sgo0x0001jx044677qup1",
+      "documentName": "e4n - Confidential Presentation_BD.pdf",
+      "dealId": "cmofnoij00001ju04gdr8rno1",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp8sgqty0005jx04r6i3dkqq",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9d6yl20001jl04sc874hzb",
+      "documentName": "One-pager RE-VAL.pdf",
+      "dealId": "cmofnoij00001ju04gdr8rno1",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9d71az0005jl047sowoezn",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9fsl2f0001jp04ljou5vhz",
+      "documentName": "e4n-ocr-smoke-image-only.pdf",
+      "dealId": "cmofnoij00001ju04gdr8rno1",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9fsnt70005jp04jf2vkf2k",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9hphth0001jq04bjqi3qer",
+      "documentName": "e4n-ocr-smoke-image-only-v2.pdf",
+      "dealId": "cmofnoij00001ju04gdr8rno1",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9hpkiv0005jq04hdysy1gr",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9w4h7g0001jr04690azt4p",
+      "documentName": "e4n - Model Output Extract.pdf",
+      "dealId": "cmofnoij00001ju04gdr8rno1",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9w4jxj0005jr04ss753rz3",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9w4ory0007jr04y2d3i1hy",
+      "documentName": "Message e4n.docx",
+      "dealId": "cmofnoij00001ju04gdr8rno1",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9w53gm0009jr04mnfii3by",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9w5buj000hjr04ukqggj8h",
+      "documentName": "e4n - Financial Model vFinal.xlsx",
+      "dealId": "cmofnoij00001ju04gdr8rno1",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9w7bpc000kjr04f2pw1ize",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    }
+  ]
+}

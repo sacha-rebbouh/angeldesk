@@ -1,0 +1,115 @@
+{
+  "startedAt": "2026-05-18T11:33:45.391Z",
+  "finishedAt": "2026-05-18T11:33:50.739Z",
+  "durationMs": 5348,
+  "args": {
+    "dealId": "cmp9w8b4v0001jp04tcvzviux",
+    "all": false,
+    "limit": null,
+    "maxCandidates": null,
+    "dryRun": true,
+    "onlyCompleted": true,
+    "since": null,
+    "force": false,
+    "summaryOut": "/Users/sacharebbouh/Desktop/angeldesk/docs-private/backfills/evidence-signals-2026-05-18T11-33-45-390Z.json"
+  },
+  "totals": {
+    "candidates": 7,
+    "skipped": 0,
+    "processed": 0,
+    "wouldProcess": 7,
+    "failed": 0,
+    "limitReached": false,
+    "signalsPersisted": 0,
+    "signalsDeduplicated": 0,
+    "claimsPersisted": 0,
+    "claimsDeduplicated": 0,
+    "attachmentsLinked": 0
+  },
+  "perDoc": [
+    {
+      "documentId": "cmp9wggk90001k004a4k4ybol",
+      "documentName": "bilan_et_resultat - fur love.pdf",
+      "dealId": "cmp9w8b4v0001jp04tcvzviux",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9wgj750005k004sqdc2otl",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9wgmil0007k004pnycu8r2",
+      "documentName": "Fur_Love_Limited_-_Profit_and_Loss (1) (1).pdf",
+      "dealId": "cmp9w8b4v0001jp04tcvzviux",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9wgoyv000bk004fwtfmx35",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9wgtuq000dk004isqgr5cz",
+      "documentName": "Gmail - Response Ineke.pdf",
+      "dealId": "cmp9w8b4v0001jp04tcvzviux",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9wgway000hk00486itxk8h",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9wh4lx000jk0043oyl4rck",
+      "documentName": "Team.jpeg",
+      "dealId": "cmp9w8b4v0001jp04tcvzviux",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9wha08000nk004m5x1dq2j",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9whgrw000qk004cdlm8pbj",
+      "documentName": "FUR LOVE SAFE ROUND €400k  (1)_compressed.pdf",
+      "dealId": "cmp9w8b4v0001jp04tcvzviux",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9whj8f000uk004bebkkz4m",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9whown000wk004onv8d4ps",
+      "documentName": "Mail - 22:01:26.docx",
+      "dealId": "cmp9w8b4v0001jp04tcvzviux",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9whqkb000yk004e637w3p5",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    },
+    {
+      "documentId": "cmp9whw5w0011k004ocsamtiu",
+      "documentName": "Fur-Love-2026-2030-Sept-2025-Capital-raise-for-ARR-_1M (5).pdf",
+      "dealId": "cmp9w8b4v0001jp04tcvzviux",
+      "processingStatus": "COMPLETED",
+      "decision": "would_process",
+      "latestRunId": "cmp9whyme0015k004ln6xacix",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ]
+    }
+  ]
+}
