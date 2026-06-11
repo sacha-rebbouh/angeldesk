@@ -26,31 +26,33 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-const TIER1_FILES = [
-  "src/agents/tier1/cap-table-auditor.ts",
-  "src/agents/tier1/competitive-intel.ts",
-  "src/agents/tier1/customer-intel.ts",
-  "src/agents/tier1/deck-forensics.ts",
-  "src/agents/tier1/financial-auditor.ts",
-  "src/agents/tier1/gtm-analyst.ts",
-  "src/agents/tier1/legal-regulatory.ts",
-  "src/agents/tier1/market-intelligence.ts",
-  "src/agents/tier1/question-master.ts",
-  "src/agents/tier1/team-investigator.ts",
-  "src/agents/tier1/tech-ops-dd.ts",
-  "src/agents/tier1/tech-stack-dd.ts",
-] as const;
-
 const REPO_ROOT = resolve(__dirname, "../../../..");
+
+// Glob the Tier 1 directory so a NEW agent is guarded BY DEFAULT (vs a hardcoded
+// list a contributor must remember to update). Exclusions = non-agent files only;
+// adding a real exclusion is a conscious, reviewed act.
+const TIER1_DIR = "src/agents/tier1";
+const TIER1_EXCLUDED = new Set(["index.ts"]);
+const TIER1_FILES = readdirSync(resolve(REPO_ROOT, TIER1_DIR))
+  .filter(
+    (file) =>
+      file.endsWith(".ts") && !file.endsWith(".d.ts") && !TIER1_EXCLUDED.has(file)
+  )
+  .sort()
+  .map((file) => `${TIER1_DIR}/${file}`);
 
 function loadFile(relPath: string): string {
   return readFileSync(resolve(REPO_ROOT, relPath), "utf-8");
 }
 
 describe("Phase A A7a — Source guard global Tier 1 (prompt cleanup)", () => {
+  it("globs at least the 12 known Tier 1 agents (no vacuous pass)", () => {
+    expect(TIER1_FILES.length).toBeGreaterThanOrEqual(12);
+  });
+
   for (const relPath of TIER1_FILES) {
     describe(relPath, () => {
       const source = loadFile(relPath);

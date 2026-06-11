@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Tests/doctrine — Phase I (I2) : guards doctrine globés (nouvel agent gardé par défaut)
+
+### Fichiers
+- `src/agents/tier1/__tests__/a7a-confidence-threshold.guard.test.ts` : liste hardcodée de 12 fichiers → **glob `readdirSync('src/agents/tier1')`** + allowlist d'exclusions (`index.ts`). Un nouvel agent Tier 1 est désormais gardé PAR DÉFAUT (plus besoin de penser à l'ajouter à la liste). + assertion plancher (`length >= 12`) contre un pass vacant si le glob casse.
+- `src/agents/tier2/__tests__/a8a-anti-hallucination.guard.test.ts` : idem, glob `src/agents/tier2` + 6 exclusions (sector-standards, sector-benchmarks, output-mapper, benchmark-injector, complete-sector-json, types — fichiers support sans directives anti-hallucination). base-sector-expert + index + tous les `*-expert.ts` restent gardés ; nouvel expert auto-inclus. + plancher `>= 24`.
+
+### Description
+Phase I2 du plan post-audit (non gaté). Couvre l'audit « un nouvel agent échappe silencieusement aux guards doctrine ». **a9-reste NON globé volontairement** : son scope est un sous-ensemble CURÉ inter-répertoires (4 dirs : top-level base, tier0, chat, orchestration) où ~17 fichiers non-agents seraient faussement inclus (la liste d'exclusions dépasserait la liste d'inclusions) — le glob y serait le mauvais outil. Le plan ciblait « glob des répertoires tier1/tier2 » : a7a (tier1) + a8a (tier2) sont les tiers qui croissent avec de nouveaux agents, et leur glob est propre. Vérifs : tsc 0, a7a 109 tests / a8a 241 tests (couverture IDENTIQUE — glob = même set de fichiers), suite unit 4395 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-11 — Observabilité — Phase I (I1) : logger structuré orchestrateur/router + Sentry dégradation
 
 ### Fichiers
@@ -375,21 +385,6 @@ Refonte 5-sujets. Live Coaching (temps réel Recall/Ably) n'a pas sa place pour 
 
 ### Vérif
 `tsc` clean (hors baseline `exit-strategist.ts` untracked). 39 tests routes Live verts ; suite complète : seuls 6 `*-integration.test.ts` rouges (Neon capé). Scan auto : aucune route Live write/LLM sans guard. Différé Neon-up : stopper les bots Recall actifs. Gate Codex : **APPROVE** (après 1 round — gate report-LLM de `stop` + PATCH `[id]`).
-
----
-## 2026-06-04 — infra/coûts — Phase 2 (refonte 5-sujets) : watchdog Neon événementiel par-analyse
-
-### Contexte
-Suite refonte 5-sujets. Un reaper cron (même à 15 min) réveille Neon à vide 24/7 (findMany inconditionnel) → ne restaure PAS le baseline ~3-4h compute/mois (≈10h/mois en horaire, ≈42h/mois en 15 min). Remplacement par une détection ÉVÉNEMENTIELLE par-analyse : Neon n'est touché que pendant qu'une analyse tourne réellement (~2 checks/analyse).
-
-### Changements
-- `src/lib/inngest.ts` : nouvelle `analysisWatchdogFunction` (event `analysis/watchdog.check`) — boucle durable `step.sleep 25m` → check UNE analyse → reap si figée (cap 8 itérations ≈ 3,3h ; la boucle vs tir unique couvre les hangs post-1er-check). Reaper global rétrogradé en BACKSTOP `0 */12 * * *` (orphelins). + registre `functions` + import des helpers. Non-stepwise full_analysis : `dispatchEventId` désormais threadé à `runAnalysis` (→ ligne Analysis le persiste, watchdog résoluble + get-or-create idempotent au retry).
-- `src/lib/analysis-compensation.ts` : `reapIfStale` (helper PARTAGÉ ; `reapStaleAnalyses` byte-préservé, 9 tests existants verts) + `reapStaleAnalysisById` (resume) + `reapStaleAnalysisByDispatchEventId` (new-analysis ; no-row → `alive`/pending pour la race file Inngest).
-- `src/app/api/analyze/route.ts` : 2 sends `analysis/watchdog.check` (new = `dispatchEventId`, gaté `full_analysis` ; resume = `analysisId`), non bloquants (échec → backstop 12h).
-- `src/app/api/cron/reap-stale-analyses/route.ts` : commentaire rôle backstop 12h.
-
-### Vérif
-`tsc` clean (hors baseline `exit-strategist.ts` untracked). 37 tests (17 reaper/watchdog + 14 route + 6 stepwise). `@@index([dispatchEventId])` REPORTÉ en Phase 6 (migration générée quand Neon rouvre — évite le drift schema/migration). Gate Codex : **APPROVE** (après 2 rounds — threading non-stepwise + pending race + ciblage full_analysis + maj test/commentaire).
 
 
 ---
