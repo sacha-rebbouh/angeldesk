@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-12 — Perf/Robustesse — Part 2 chantier memo-generator : LLM borné à 120s (fix racine de la boucle 300s)
+
+### Fichiers
+- `src/agents/tier3/memo-generator.ts` : `timeoutMs: 120_000` EXPLICITE sur l'appel `llmCompleteJSON` du mémo (avant : `config.timeoutMs`=180s). L'invocation Vercel du step memo porte AUSSI la réhydratation du snapshot stepwise (lecture multi-MB Neon) + l'écriture du snapshot suivant : 180s de LLM laissaient la somme dépasser 300s → kill Vercel → boucle Inngest → reaper. À 120s, le filet déterministe existant (`buildDeterministicFallback`) livre le mémo dégradé DANS l'invocation (complétion dégradée au lieu de boucler). Timeout global agent inchangé (180s = headroom du filet).
+- NOUVEAU `src/agents/tier3/__tests__/memo-generator-llm-budget.guard.test.ts` : source-guards — budget explicite présent, < timeout agent, ≤ moitié du plafond Vercel.
+
+### Description
+Fix racine du post-mortem `cmq9lg9un…` (la Part 1 du 2026-06-12 est le filet money-critical côté watchdog). Risque qualité assumé (mémos GEMINI_PRO 32k > 120s → plus de fallbacks déterministes) : à surveiller post-merge via le taux de fallback memo ; escalade produit seulement si visible. Gate Codex : APPROVE direct (120s validé vs son diagnostic rehydrate+snapshot ; source-guard jugé proportionné). tsc 0, 180 tests tier3 verts.
+
+---
 ## 2026-06-12 — Watchdog/Crédits — Salvage des analyses stepwise livrables + invariant refund/COMPLETED bidirectionnel (Part 1 du chantier memo-generator)
 
 ### Contexte

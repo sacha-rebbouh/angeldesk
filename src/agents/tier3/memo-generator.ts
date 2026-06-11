@@ -464,6 +464,14 @@ Réponds en JSON avec cette structure exacte:
         await this.llmCompleteJSON<LLMMemoResponse>(prompt, {
           model: "GEMINI_PRO",
           maxTokens: 32000,
+          // Budget WALL-CLOCK explicite (fix racine « boucle 300s », post-mortem
+          // cmq9lg9un…) : l'invocation Vercel du step memo porte AUSSI la
+          // réhydratation du snapshot stepwise (lecture multi-MB Neon) + l'écriture
+          // du snapshot suivant. 180s de LLM (config agent) laissaient la somme
+          // dépasser le plafond Vercel 300s → kill → boucle de retries Inngest →
+          // reaper. 120s ramène le pire cas sous le budget ; au-delà, le filet
+          // déterministe ci-dessous livre le mémo (complétion dégradée, pas boucle).
+          timeoutMs: 120_000,
         })
       ).data;
     } catch (err) {
