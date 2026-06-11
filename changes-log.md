@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Perf — Phase H (H2c) : script de backfill AnalysisSignalSummary (dry-run rails)
+
+### Fichiers
+- NOUVEAU `scripts/backfill-analysis-signal-summaries.ts` : pré-chauffe le read-model pour l'analyse canonique de chaque deal. Rails dry-run (défaut) / `CONFIRM=1` (apply), pattern `unblock-stale-analysis`. Réutilise `pickCanonicalAnalysis` (= ce que lit le read path) + `loadResults` + `upsertAnalysisSignalSummary` (zéro duplication de la sélection canonique). Batché (`BATCH_SIZE`, défaut 50, **fail-fast** si non-entier-positif → sinon `NaN` ferait `chunk()` traiter zéro deal et mentir `toBackfill: 0`). Idempotent : saute les analyses déjà résumées à la version courante → re-run sûr, `toBackfill: 0` au dry-run = signal autoritaire « rien à faire ». OPTIONNEL : le read étant self-correcting, le cache se réchauffe lazy au miss sinon.
+
+### Description
+Phase H2c du plan post-audit (fin de H2). **Validation réelle sur docker postgres:16** (seed minimal User+Deal+Analysis COMPLETED, sans thèse → canonique = analyse la plus récente) : dry-run DB vide propre ; apply 1 backfill ; row vérifiée (globalScore 82, productScore **79.5** fidélité Float confirmée non tronquée, sector/stage/instrument/geography/description ok, schemaVersion 1, `updatedAt` géré par Prisma) ; idempotence (re-run → `toBackfill: 0`) ; **FK cascade vérifiée** (DELETE Analysis → summary auto-supprimé). Gate Codex H2c : 1 REQUEST_CHANGES (`BATCH_SIZE` invalide silencieux → faux `toBackfill: 0`) → corrigé (parse strict + fail-fast). scripts/ exclu du tsc projet (convention tsx) → validé par exécution réelle. ⚠️ **ACTION SACHA : après migration prod, lancer le backfill `CONFIRM=1 npx dotenv -e .env.local -- npx tsx scripts/backfill-analysis-signal-summaries.ts`** (optionnel — sinon réchauffe lazy). Fin de Phase H2. Suite : Phase I (observabilité + docs).
+
+---
 ## 2026-06-11 — Perf — Phase H (H2b) : service signal-summary + write completeAnalysis + read self-correcting
 
 ### Fichiers
@@ -386,18 +395,6 @@ Refonte 5-sujets (plan agréé avec Codex). L'onglet « Conditions » (conçu po
 ### Vérif
 `tsc --noEmit` : aucune nouvelle erreur (seule baseline = `exit-strategist.ts`, untracked, hors périmètre). Choix flag-gating vs suppression d'imports : confirmé par Codex (imports non morts, référencés dans le JSX gaté). Gate Codex Phase 1 : **APPROVE** (après correction du cas URL `?tab=conditions` via `allowedTabs`).
 
----
-## 2026-06-04 — infra/coûts — Reaper watchdog : cadence cron 5 min → 15 min (compute-hours Neon)
-
-### Contexte
-Compute-hours Neon passées de ~3-4h/MOIS à ~17h/4 JOURS. Cause racine : le cron Inngest `staleAnalysisReaperFunction` (introduit le 31/05, commit `773181f`) tournait à `*/5 * * * *` et exécutait un `prisma.analysis.findMany` INCONDITIONNEL à chaque tick → réveillait l'endpoint Neon ~288×/jour 24/7, empêchant l'autosuspend. Corrélation temporelle exacte (cron 4 j avant le report).
-
-### Changements
-- `src/lib/inngest.ts` : cadence reaper `*/5` → `*/15` + commentaire de rationale (seuil staleness `STALE_ANALYSIS_REAP_MS` = 20 min, donc 15 min détecte toute analyse figée dans sa fenêtre de seuil ; latence de détection ≤ 15 min < 20 min). 288 → 96 réveils/jour.
-- `src/app/api/cron/reap-stale-analyses/route.ts` : commentaires « toutes les 5 min » → « 15 min » (cohérence).
-
-### Vérif
-`tsc --noEmit` : seul rouge préexistant = `exit-strategist.ts` (hors périmètre, fichier WIP non-tracké). Aucun test n'assert la chaîne du cron. Gate Codex : **APPROVE** (cadence 15 min correcte vs seuil 20 min ; flip atomique + refund-once inchangés ; `*/15` = meilleur trade-off vs `*/10`/`*/20`).
 
 ---
 
