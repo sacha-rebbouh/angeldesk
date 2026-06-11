@@ -37,6 +37,30 @@ import {
   saveCheckpoint,
   updateAnalysisProgress,
 } from "../persistence";
+import { logger } from "@/lib/logger";
+
+const DEGRADED_RESULTS = {
+  "financial-auditor": {
+    agentName: "financial-auditor",
+    success: true,
+    cost: 0.1,
+    executionTimeMs: 10,
+  },
+  "legal-regulatory": {
+    agentName: "legal-regulatory",
+    success: false,
+    cost: 0,
+    executionTimeMs: 0,
+    error: "timed out",
+  },
+};
+
+function degradedLogCalls() {
+  const calls = vi.mocked(logger.error).mock.calls as unknown as Array<
+    [Record<string, unknown>, string]
+  >;
+  return calls.filter((call) => call[1] === "Analysis completed degraded");
+}
 
 describe("analysis progress persistence monotonicity", () => {
   beforeEach(() => {
@@ -199,6 +223,92 @@ describe("analysis progress persistence monotonicity", () => {
     });
 
     expect(prismaMocks.prisma.analysis.update).not.toHaveBeenCalled();
+  });
+
+  it("emits one degraded-completion Sentry signal on the transition into COMPLETED", async () => {
+    prismaMocks.prisma.analysis.findUnique.mockResolvedValueOnce({
+      status: "RUNNING",
+      completedAgents: 1,
+      totalCost: "0.50",
+      results: {},
+    });
+    prismaMocks.prisma.analysis.update.mockResolvedValueOnce({
+      id: "analysis_1",
+      dealId: "deal_1",
+    });
+
+    await completeAnalysis({
+      analysisId: "analysis_1",
+      success: false,
+      totalCost: 0.5,
+      totalTimeMs: 1000,
+      summary: "degraded",
+      results: DEGRADED_RESULTS,
+    });
+
+    const calls = degradedLogCalls();
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toMatchObject({
+      analysisId: "analysis_1",
+      dealId: "deal_1",
+      failedAgents: ["legal-regulatory"],
+      failedCount: 1,
+    });
+  });
+
+  it("does not re-emit the degraded signal when re-completing an already COMPLETED analysis", async () => {
+    prismaMocks.prisma.analysis.findUnique.mockResolvedValueOnce({
+      status: "COMPLETED",
+      completedAgents: 2,
+      totalCost: "1.00",
+      results: {},
+    });
+    prismaMocks.prisma.analysis.update.mockResolvedValueOnce({
+      id: "analysis_1",
+      dealId: "deal_1",
+    });
+
+    await completeAnalysis({
+      analysisId: "analysis_1",
+      success: false,
+      totalCost: 1.0,
+      totalTimeMs: 1000,
+      summary: "re-complete",
+      results: DEGRADED_RESULTS,
+    });
+
+    expect(degradedLogCalls()).toHaveLength(0);
+  });
+
+  it("does not emit a degraded signal when all agents succeeded", async () => {
+    prismaMocks.prisma.analysis.findUnique.mockResolvedValueOnce({
+      status: "RUNNING",
+      completedAgents: 0,
+      totalCost: "0",
+      results: {},
+    });
+    prismaMocks.prisma.analysis.update.mockResolvedValueOnce({
+      id: "analysis_1",
+      dealId: "deal_1",
+    });
+
+    await completeAnalysis({
+      analysisId: "analysis_1",
+      success: true,
+      totalCost: 0.2,
+      totalTimeMs: 500,
+      summary: "ok",
+      results: {
+        "financial-auditor": {
+          agentName: "financial-auditor",
+          success: true,
+          cost: 0.1,
+          executionTimeMs: 10,
+        },
+      },
+    });
+
+    expect(degradedLogCalls()).toHaveLength(0);
   });
 
   it("exposes pure helpers for regression guards", () => {

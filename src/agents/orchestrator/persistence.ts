@@ -221,12 +221,17 @@ export async function completeAnalysis(params: {
 
   // Capturé depuis la transaction pour réutiliser le set MERGÉ dans le cache blob.
   let mergedResults: Record<string, unknown> = serializedResults;
+  // Statut AVANT cet appel — completeAnalysis peut être rappelé (set partiel,
+  // double-complétion) ; le signal Sentry de dégradation ne doit être émis qu'à
+  // la TRANSITION vers COMPLETED, pas à chaque appel.
+  let previousStatus: string | null = null;
 
   const analysis = await prisma.$transaction(async (tx) => {
     const current = await tx.analysis.findUnique({
       where: { id: params.analysisId },
-      select: { completedAgents: true, totalCost: true, results: true },
+      select: { completedAgents: true, totalCost: true, results: true, status: true },
     });
+    previousStatus = current?.status ?? null;
 
     // INVARIANT MONOTONE DES RÉSULTATS : ne JAMAIS dropper un agent déjà persisté.
     // completeAnalysis peut être appelé avec un set PARTIEL (chemin stop=thesis_only,
@@ -285,6 +290,32 @@ export async function completeAnalysis(params: {
   // Skip FAILED completions: only a COMPLETED analysis is canonical-eligible.
   if ((params.statusOverride ?? "COMPLETED") === "COMPLETED") {
     await upsertAnalysisSignalSummary(params.analysisId, analysis.dealId, mergedResults);
+
+    // Phase I1 — surface "completed but degraded" analyses to monitoring. Agent
+    // failures are swallowed into results (success:false) and the analysis still
+    // completes, so a degraded run is otherwise invisible. logger.error -> Sentry.
+    // Only on the TRANSITION into COMPLETED (previousStatus !== COMPLETED) so a
+    // re-call (partial set / double-completion) cannot duplicate the Sentry issue.
+    if (previousStatus !== "COMPLETED") {
+      const failedAgents = Object.entries(mergedResults)
+        .filter(
+          ([, result]) =>
+            isJsonObject(result) &&
+            (result as { success?: unknown }).success === false
+        )
+        .map(([agentName]) => agentName);
+      if (failedAgents.length > 0) {
+        logger.error(
+          {
+            analysisId: params.analysisId,
+            dealId: analysis.dealId,
+            failedAgents,
+            failedCount: failedAgents.length,
+          },
+          "Analysis completed degraded"
+        );
+      }
+    }
   }
 
   return analysis;

@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Observabilité — Phase I (I1) : logger structuré orchestrateur/router + Sentry dégradation
+
+### Fichiers
+- `src/agents/orchestrator/index.ts` (119 sites) + `src/services/openrouter/router.ts` (26 sites, + import logger) : TOUS les `console.*` → logger structuré (`src/lib/logger.ts`). Mapping : `console.log`→`logger.debug` (traces : `MIN_PRIORITY=info` en prod → **silencées en prod**, visibles en dev — corrige l'audit « 120+ console.log non gardés en production »), `console.warn`→`logger.warn`, `console.error`→`logger.error` (le logger **auto-hook Sentry** : `captureException` si champ `err` Error, sinon `captureMessage`). Multi-arg restructuré : `console.error(msg, err)` → `logger.error({ err }, msg)`. Conversion par transform arg-aware (single-line) + rename d'opener (multi-line single-arg) ; **tsc valide l'arité** (logger n'a pas d'overload `(string, X)` → toute erreur multi-arg planterait tsc).
+- `src/agents/orchestrator/persistence.ts` `completeAnalysis` : visibilité Sentry des **analyses « complétées mais dégradées »** (échecs d'agent avalés en `success:false`, analyse complète quand même → invisibles). Sur la **transition** vers COMPLETED (`previousStatus` lu dans la transaction, `!== "COMPLETED"`), si des agents ont `success===false` → UN `logger.error({ analysisId, dealId, failedAgents, failedCount }, "Analysis completed degraded")` → Sentry. Central (13 appelants), idempotent (transition-gated → pas de doublon sur re-complétion), message stable.
+- `persistence-progress-monotone.test.ts` : +3 tests (transition dégradée → 1 émission ; re-complétion déjà COMPLETED → 0 ; tous succès → 0).
+
+### Description
+Phase I1 du plan post-audit (observabilité, **seul volet gaté de Phase I**). Gate Codex I1 : 1 REQUEST_CHANGES (signal dégradation non idempotent — `completeAnalysis` peut être rappelé → doublons Sentry) → corrigé (transition-gating via `previousStatus` + message stable + 3 tests). Vérifs : tsc 0 ; eslint 0 nouveau (6 warnings unused-vars PRÉ-EXISTANTS dans HEAD orchestrator, confirmés par git stash, hors scope) ; suite unit 4393 passed / 9 skipped / 0 failed. Suite : I2 (guards doctrine globés), I3 (README + .env.example + doc crédits), I4 (corrections docs) + check CI SHA-256 tarball xlsx (reporté de G) — non gatés.
+
+---
 ## 2026-06-11 — Perf — Phase H (H2c) : script de backfill AnalysisSignalSummary (dry-run rails)
 
 ### Fichiers
@@ -379,21 +390,6 @@ Suite refonte 5-sujets. Un reaper cron (même à 15 min) réveille Neon à vide 
 
 ### Vérif
 `tsc` clean (hors baseline `exit-strategist.ts` untracked). 37 tests (17 reaper/watchdog + 14 route + 6 stepwise). `@@index([dispatchEventId])` REPORTÉ en Phase 6 (migration générée quand Neon rouvre — évite le drift schema/migration). Gate Codex : **APPROVE** (après 2 rounds — threading non-stepwise + pending race + ciblage full_analysis + maj test/commentaire).
-
----
-## 2026-06-04 — UI/produit — Phase 1 (refonte 5-sujets) : archivage de l'onglet Conditions
-
-### Contexte
-Refonte 5-sujets (plan agréé avec Codex). L'onglet « Conditions » (conçu pour un BA solo saisissant les conditions) est devenu une usine à gaz hors cœur de cible → archivé mais réactivable, sans casser l'agent `conditions-analyst` (dont `synthesis-deal-scorer` + `memo-generator` dépendent).
-
-### Changements
-- `src/lib/feature-flags.ts` (nouveau) : `isConditionsTabEnabled()` — flag SERVEUR runtime (pas `NEXT_PUBLIC` ; `page.tsx` est Server Component `force-dynamic` → toggle sans redeploy). Défaut `false` = archivé.
-- `src/app/(dashboard)/deals/[dealId]/page.tsx` : gate du `TabsTrigger` + `TabsContent` « conditions » + retrait du champ `conditions` du `ScoreGrid` (Vue d'ensemble) quand off ; calcule `allowedTabs` passé à `DealDetailTabs`. Agent `conditions-analyst` CONSERVÉ.
-- `src/components/deals/score-display.tsx` : ligne « Conditions » rendue seulement si `scores.conditions !== undefined` (`page.tsx` est le seul caller de `ScoreGrid`).
-- `src/components/deals/deal-detail-tabs.tsx` : prop `allowedTabs` (onglets réellement rendus) → une URL `?tab=conditions` avec flag off retombe sur `analysis` (plus de vue vide). Couvre aussi `live` (Phase 3).
-
-### Vérif
-`tsc --noEmit` : aucune nouvelle erreur (seule baseline = `exit-strategist.ts`, untracked, hors périmètre). Choix flag-gating vs suppression d'imports : confirmé par Codex (imports non morts, référencés dans le JSX gaté). Gate Codex Phase 1 : **APPROVE** (après correction du cas URL `?tab=conditions` via `allowedTabs`).
 
 
 ---

@@ -150,7 +150,7 @@ async function loadEvidenceContextSafe(
     const evidenceContext = await buildDealEvidenceContext(prisma, dealId, { today: evidenceToday });
     return { evidenceContext, evidenceToday };
   } catch (evidenceError) {
-    console.error("[orchestrator] loadEvidenceContextSafe failed (non-fatal):", evidenceError);
+    logger.error({ err: evidenceError }, "[orchestrator] loadEvidenceContextSafe failed (non-fatal):");
     return { evidenceContext: undefined, evidenceToday };
   }
 }
@@ -344,7 +344,7 @@ export class AgentOrchestrator {
     if (!forceRefresh && !documentIds?.length && cacheableTypes.includes(type)) {
       const cachedResult = await this.checkAnalysisCache(dealId, type);
       if (cachedResult) {
-        console.log(`[Orchestrator] Returning cached analysis for deal ${dealId}, type=${type}`);
+        logger.debug(`[Orchestrator] Returning cached analysis for deal ${dealId}, type=${type}`);
         onProgress?.({
           currentAgent: "cache",
           completedAgents: cachedResult.results ? Object.keys(cachedResult.results).length : 0,
@@ -445,7 +445,7 @@ export class AgentOrchestrator {
 
       // Log critical warnings
       if (warning.severity === "critical") {
-        console.log(
+        logger.debug(
           `[EarlyWarning] CRITICAL from ${agentName}: ${warning.title}`
         );
       }
@@ -499,7 +499,7 @@ export class AgentOrchestrator {
           select: { documentId: true, signalScopeKey: true, kind: true, signalHash: true, extractorVersion: true },
         });
       } catch (signalsError) {
-        console.error("[Orchestrator] Cache: evidence signals load failed — failing CLOSED, no cache hit:", signalsError);
+        logger.error({ err: signalsError }, "[Orchestrator] Cache: evidence signals load failed — failing CLOSED, no cache hit:");
         return null;
       }
       const fingerprint = generateDealFingerprint(dealForFingerprint, evidenceSignalsForFingerprint);
@@ -525,7 +525,7 @@ export class AgentOrchestrator {
         cacheAge: cached.cacheAge,
       };
     } catch (error) {
-      console.error("[Orchestrator] Cache lookup error:", error);
+      logger.error({ err: error }, "[Orchestrator] Cache lookup error:");
       return null;
     }
   }
@@ -557,7 +557,7 @@ export class AgentOrchestrator {
           select: { documentId: true, signalScopeKey: true, kind: true, signalHash: true, extractorVersion: true },
         });
       } catch (signalsError) {
-        console.error("[Orchestrator] Store fingerprint: evidence signals load failed — skipping fingerprint (safe):", signalsError);
+        logger.error({ err: signalsError }, "[Orchestrator] Store fingerprint: evidence signals load failed — skipping fingerprint (safe):");
         return;
       }
       const fingerprint = generateDealFingerprint(dealForFingerprint, evidenceSignalsForFingerprint);
@@ -569,9 +569,9 @@ export class AgentOrchestrator {
         },
       });
 
-      console.log(`[Orchestrator] Stored fingerprint for analysis ${analysisId}: ${fingerprint.slice(0, 8)}...`);
+      logger.debug(`[Orchestrator] Stored fingerprint for analysis ${analysisId}: ${fingerprint.slice(0, 8)}...`);
     } catch (error) {
-      console.error("[Orchestrator] Failed to store fingerprint:", error);
+      logger.error({ err: error }, "[Orchestrator] Failed to store fingerprint:");
     }
   }
 
@@ -802,7 +802,7 @@ export class AgentOrchestrator {
         } as AgentResult & { data: FactExtractorOutput };
       }
 
-      console.log(`[Orchestrator] Tier 0 complete: ${factStore.length} facts in store`);
+      logger.debug(`[Orchestrator] Tier 0 complete: ${factStore.length} facts in store`);
     }
 
     // STEP 1: Run document-extractor first (if documents exist)
@@ -827,7 +827,7 @@ export class AgentOrchestrator {
         // Extract data for Context Engine
         if (extractorResult.success) {
           extractedData = this.extractContextSeed(extractorResult);
-          console.log(`[Orchestrator] tier1_complete: Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}`);
+          logger.debug(`[Orchestrator] tier1_complete: Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}`);
         }
 
         // Check for early warnings from extractor
@@ -872,7 +872,7 @@ export class AgentOrchestrator {
         } as AgentResult & { data: DeckCoherenceReport };
       }
 
-      console.log(`[Orchestrator] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
+      logger.debug(`[Orchestrator] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
     }
 
     // STEP 2: Enrich with Context Engine (using extracted data)
@@ -904,7 +904,7 @@ export class AgentOrchestrator {
       ),
     }));
     if (previousAnalysisQuestions.length > 0) {
-      console.log(`[Orchestrator:Tier1] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
+      logger.debug(`[Orchestrator:Tier1] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
     }
 
     const enrichedContext: EnrichedAgentContext = attachEvidenceLedger({
@@ -1146,7 +1146,7 @@ export class AgentOrchestrator {
     for (const batch of TIER3_EXECUTION_BATCHES) {
       // COST CHECK: Before each batch, check if we've exceeded limit
       if (maxCostUsd && totalCost >= maxCostUsd) {
-        console.log(`[Tier3] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), stopping`);
+        logger.debug(`[Tier3] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), stopping`);
         break;
       }
 
@@ -1553,7 +1553,7 @@ export class AgentOrchestrator {
     });
 
     stateMachine.onStateChange(async (from, to, trigger) => {
-      console.log(`[StateMachine] ${from} → ${to} (${trigger})`);
+      logger.debug(`[StateMachine] ${from} → ${to} (${trigger})`);
       await persistStateTransition(analysis.id, from, to, trigger);
     });
 
@@ -1682,7 +1682,7 @@ export class AgentOrchestrator {
         } as AgentResult & { data: FactExtractorOutput };
       }
 
-      console.log(`[Orchestrator:FullAnalysis] Tier 0 complete: ${factStore.length} facts in store`);
+      logger.debug(`[Orchestrator:FullAnalysis] Tier 0 complete: ${factStore.length} facts in store`);
     }
     return { totalCost, completedCount, factStore, factStoreFormatted, founderResponses };
   }
@@ -1741,7 +1741,7 @@ export class AgentOrchestrator {
         // Extract data for Context Engine
         if (extractorResult.success) {
           extractedData = this.extractContextSeed(extractorResult);
-          console.log(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
+          logger.debug(`[Orchestrator] Extracted data for Context Engine: tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, useCases=${extractedData.useCases?.length ?? 0}, competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`);
         }
       } catch (error) {
         const errorResult: AgentResult = {
@@ -1800,7 +1800,7 @@ export class AgentOrchestrator {
         } as AgentResult & { data: DeckCoherenceReport };
       }
 
-      console.log(`[Orchestrator:FullAnalysis] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
+      logger.debug(`[Orchestrator:FullAnalysis] Coherence check complete: grade=${deckCoherenceReport?.reliabilityGrade ?? 'N/A'}`);
     }
     return { totalCost, deckCoherenceReport };
   }
@@ -1868,7 +1868,7 @@ export class AgentOrchestrator {
       ),
     }));
     if (previousAnalysisQuestions.length > 0) {
-      console.log(`[Orchestrator:FullAnalysis] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
+      logger.debug(`[Orchestrator:FullAnalysis] Loaded ${previousAnalysisQuestions.length} previous questions (${previousAnalysisQuestions.filter(q => !q.answered).length} unanswered)`);
     }
 
     // Build enriched context with Fact Store for all agents
@@ -1942,7 +1942,7 @@ export class AgentOrchestrator {
         data: { thesisId: latestThesis.id },
       });
 
-      console.log(
+      logger.debug(
         `[Orchestrator:FullAnalysis] Reusing canonical latest thesis for post-call reanalysis ` +
         `(analysisId=${analysis.id}, thesisId=${latestThesis.id})`
       );
@@ -2030,7 +2030,7 @@ export class AgentOrchestrator {
     const tier1SuccessCount = TIER1_AGENT_NAMES.filter(n => allResults[n]?.success).length;
     const tier1FailCount = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success).length;
     const tier1FailedNames = TIER1_AGENT_NAMES.filter(n => allResults[n] && !allResults[n].success);
-    console.log(
+    logger.debug(
       `[Orchestrator] Tier 1 results: ${tier1SuccessCount}/${TIER1_AGENT_NAMES.length} succeeded, ${tier1FailCount} failed. ` +
       `Extracted ${allFindings.length} findings. ` +
       `Low confidence: ${lowConfidenceAgents.join(", ") || "none"}` +
@@ -2062,7 +2062,7 @@ export class AgentOrchestrator {
     if (failFastOnCritical) {
       const criticalWarnings = collectedWarnings.filter(w => w.severity === "critical");
       if (criticalWarnings.length > 0) {
-        console.log(`[Orchestrator] FAIL-FAST: ${criticalWarnings.length} critical warning(s) detected`);
+        logger.debug(`[Orchestrator] FAIL-FAST: ${criticalWarnings.length} critical warning(s) detected`);
         await stateMachine.complete();
 
         const summary = `**CRITICAL WARNINGS DETECTED - Analysis stopped early**\n\n${criticalWarnings.map(w => `- ${w.title}: ${w.description}`).join("\n")}`;
@@ -2132,7 +2132,7 @@ export class AgentOrchestrator {
 
       const debateStats = await this.runConsensusDebate(analysis.id, allFindings, verificationContext, enrichedContext);
       totalCost += debateStats.totalTokens * 0.00001;
-      console.log(`[ConsensusEngine] Global: ${debateStats.debateCount} debates completed`);
+      logger.debug(`[ConsensusEngine] Global: ${debateStats.debateCount} debates completed`);
     }
     return { totalCost };
   }
@@ -2157,7 +2157,7 @@ export class AgentOrchestrator {
     const { maxCostUsd, totalCost, stateMachine, allResults, analysis, analysisModeOverride, dealId, collectedWarnings, startTime } = params;
     // Check cost limit before synthesis phase
     if (maxCostUsd && totalCost >= maxCostUsd) {
-      console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), skipping remaining phases`);
+      logger.debug(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}), skipping remaining phases`);
       await stateMachine.complete();
 
       const summary = generateFullAnalysisSummary(allResults);
@@ -2208,7 +2208,7 @@ export class AgentOrchestrator {
     // STEP 4.5: TIER 1 CROSS-VALIDATION (deterministic, no LLM) (F34/F39)
     const crossValidation = runTier1CrossValidation(allResults);
     if (crossValidation.validations.length > 0 || crossValidation.warnings.length > 0) {
-      console.log(
+      logger.debug(
         `[Orchestrator] Tier 1 cross-validation: ${crossValidation.validations.length} divergences, ${crossValidation.adjustments.length} adjustments, ${crossValidation.warnings.length} warnings`
       );
 
@@ -2258,10 +2258,10 @@ export class AgentOrchestrator {
       const consolidatedFlags = consolidateRedFlags(agentRedFlagMap);
       if (consolidatedFlags.length > 0) {
         enrichedContext.consolidatedRedFlags = consolidatedFlags;
-        console.log(`[Orchestrator] F77: Consolidated ${consolidatedFlags.length} red flags from ${Object.keys(agentRedFlagMap).length} agents`);
+        logger.debug(`[Orchestrator] F77: Consolidated ${consolidatedFlags.length} red flags from ${Object.keys(agentRedFlagMap).length} agents`);
       }
     } catch (err) {
-      console.error("[Orchestrator] Red flag consolidation failed:", err);
+      logger.error({ err: err }, "[Orchestrator] Red flag consolidation failed:");
     }
   }
 
@@ -2392,14 +2392,14 @@ export class AgentOrchestrator {
       for (let i = 0; i < batchResults.length; i++) {
         if (!batchResults[i].result.success) {
           const { agentName } = batchResults[i];
-          console.log(`[Orchestrator] Retrying failed agent: ${agentName}`);
+          logger.debug(`[Orchestrator] Retrying failed agent: ${agentName}`);
           const agent = tier3AgentMap[agentName];
           try {
             const retryResult = await agent.run(enrichedContext);
             batchResults[i] = { agentName, result: retryResult };
-            console.log(`[Orchestrator] Retry succeeded for ${agentName}`);
+            logger.debug(`[Orchestrator] Retry succeeded for ${agentName}`);
           } catch (retryError) {
-            console.log(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
+            logger.debug(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
           }
         }
       }
@@ -2428,7 +2428,7 @@ export class AgentOrchestrator {
       });
       // Tier 3 coherence check retiré (ajustait scenario-modeler — agent supprimé, doctrine anti-oraculaire).
     } else {
-      console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
+      logger.debug(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) - skipping Tier 3`);
     }
 
     await this.persistTierCheckpoint(analysis.id, allResults, totalCost, startTime, stepwise);
@@ -2458,7 +2458,7 @@ export class AgentOrchestrator {
     if (result.success && "data" in result) {
       const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
       if (totalViolations > 0) {
-        console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+        logger.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
         (result as { data: unknown }).data = sanitized;
       }
     }
@@ -2522,12 +2522,12 @@ export class AgentOrchestrator {
     }
     // Auto-retry failed agent (1 retry, comme runTier3PreTier2Batch)
     if (!result.success) {
-      console.log(`[Orchestrator] Retrying failed agent: ${agentName}`);
+      logger.debug(`[Orchestrator] Retrying failed agent: ${agentName}`);
       try {
         result = await agent.run(enrichedContext);
-        console.log(`[Orchestrator] Retry succeeded for ${agentName}`);
+        logger.debug(`[Orchestrator] Retry succeeded for ${agentName}`);
       } catch (retryError) {
-        console.log(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
+        logger.debug(`[Orchestrator] Retry also failed for ${agentName}: ${retryError instanceof Error ? retryError.message : "Unknown"}`);
       }
     }
     return result;
@@ -2618,7 +2618,7 @@ export class AgentOrchestrator {
         // Consensus: check if sector expert contradicts Tier 1 findings
         if (sectorFindings.length > 0) {
           const allFindingsWithSector = [...allFindings, ...sectorFindings];
-          console.log(`[Orchestrator] Running post-Tier 2 consensus (${sectorFindings.length} new findings from sector expert)`);
+          logger.debug(`[Orchestrator] Running post-Tier 2 consensus (${sectorFindings.length} new findings from sector expert)`);
           const postTier2Debate = await this.runConsensusDebate(
             analysis.id, allFindingsWithSector, verificationContext, enrichedContext
           );
@@ -2627,7 +2627,7 @@ export class AgentOrchestrator {
 
         // Reflexion: auto-critique if confidence < 60%
         if (reflexionEngine.needsReflexion(sectorResult as AnalysisAgentResult, sectorFindings, 2)) {
-          console.log(`[Orchestrator] Tier 2 sector expert needs reflexion`);
+          logger.debug(`[Orchestrator] Tier 2 sector expert needs reflexion`);
           await this.applyReflexion(
             analysis.id,
             sectorExpert.name,
@@ -2685,7 +2685,7 @@ export class AgentOrchestrator {
     for (const batch of finalSynthesisBatches) {
       // REAL-TIME COST CHECK: Before each batch
       if (maxCostUsd && totalCost >= maxCostUsd) {
-        console.log(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
+        logger.debug(`[Orchestrator] Cost limit reached ($${totalCost.toFixed(2)} >= $${maxCostUsd}) during final synthesis`);
         break;
       }
 
@@ -2711,9 +2711,9 @@ export class AgentOrchestrator {
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : "Unknown error";
           if (attempt === 1) {
-            console.log(`[Orchestrator] ${agentName} failed (attempt ${attempt}), retrying... Error: ${errMsg}`);
+            logger.debug(`[Orchestrator] ${agentName} failed (attempt ${attempt}), retrying... Error: ${errMsg}`);
           } else {
-            console.log(`[Orchestrator] ${agentName} failed after ${attempt} attempts: ${errMsg}`);
+            logger.debug(`[Orchestrator] ${agentName} failed after ${attempt} attempts: ${errMsg}`);
             agentResult = {
               agentName,
               success: false,
@@ -2782,7 +2782,7 @@ export class AgentOrchestrator {
     const totalTimeMs = Date.now() - startTime;
     const failedAgents = Object.entries(allResults).filter(([, r]) => !r.success).map(([k, r]) => `${k}: ${r.error ?? "no error msg"}`);
     if (failedAgents.length > 0) {
-      console.log(`[Orchestrator] Failed agents in allResults: ${failedAgents.join(", ")}`);
+      logger.debug(`[Orchestrator] Failed agents in allResults: ${failedAgents.join(", ")}`);
     }
     const allSuccess = Object.values(allResults).every((r) => r.success);
     const orchestrationSummary = stateMachine.getSummary();
@@ -2824,7 +2824,7 @@ export class AgentOrchestrator {
       persistAnalysisSummary: false,
     });
     if (costReport) {
-      console.log(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
+      logger.debug(`[CostMonitor] Analysis completed: $${costReport.totalCost.toFixed(4)} (${costReport.totalCalls} calls)`);
     }
     // DEBUG log removed for production - uncomment for debugging:
     // console.log("[Orchestrator:DEBUG] completeAnalysis done, updating deal status...");
@@ -2844,11 +2844,11 @@ export class AgentOrchestrator {
         if (previousAnalysis) {
           analysisDelta = await calculateAnalysisDelta(analysis.id, previousAnalysis.id);
           if (analysisDelta) {
-            console.log(`[Orchestrator] F40: Delta vs previous analysis: ${analysisDelta.scoreDelta.overall.delta >= 0 ? "+" : ""}${analysisDelta.scoreDelta.overall.delta} points`);
+            logger.debug(`[Orchestrator] F40: Delta vs previous analysis: ${analysisDelta.scoreDelta.overall.delta >= 0 ? "+" : ""}${analysisDelta.scoreDelta.overall.delta} points`);
           }
         }
       } catch (err) {
-        console.error("[Orchestrator] Analysis delta failed:", err);
+        logger.error({ err: err }, "[Orchestrator] Analysis delta failed:");
       }
     }
 
@@ -3193,7 +3193,7 @@ export class AgentOrchestrator {
         // Si thesis-extractor a echoue, on ne peut pas livrer la these → FAILED (le refund
         // est gere par l'appelant Inngest sur result.success === false).
         if (!thesisOutput || !enrichedContext.thesis) {
-          console.error(
+          logger.error(
             `[Orchestrator:FullAnalysis] stopAfterThesis=true mais thesis-extractor a echoue (output=${!!thesisOutput}, thesisCtx=${!!enrichedContext.thesis}).`
           );
           await stateMachine.fail(new Error("Thesis extraction failed during re-extraction"));
@@ -3220,7 +3220,7 @@ export class AgentOrchestrator {
           };
         }
 
-        console.log(
+        logger.debug(
           `[Orchestrator:FullAnalysis] Stop-after-thesis (re-extraction) — analysisId=${analysis.id}, thesisId=${enrichedContext.thesis.id}, verdict=${thesisOutput.verdict}`
         );
 
@@ -4904,7 +4904,7 @@ export class AgentOrchestrator {
       if (result.success && "data" in result) {
         const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
         if (totalViolations > 0) {
-          console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+          logger.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
           (result as { data: unknown }).data = sanitized;
         }
       }
@@ -5069,7 +5069,7 @@ export class AgentOrchestrator {
           enrichedContext.factStoreFormatted = factStoreFormatted;
           enrichedContext.evidenceLedger = buildEvidenceLedgerFromContext(enrichedContext);
           enrichedContext.evidenceLedgerFormatted = formatEvidenceLedgerForPrompt(enrichedContext.evidenceLedger);
-          console.log(`[Orchestrator:${phase.name}] ${agentName}: ${validations.length} fact validations applied`);
+          logger.debug(`[Orchestrator:${phase.name}] ${agentName}: ${validations.length} fact validations applied`);
         }
       }
     }
@@ -5082,7 +5082,7 @@ export class AgentOrchestrator {
         factStoreFormatted,
         enrichedContext.deal,
       );
-      console.log(`[Orchestrator] Rebuilt verificationContext after ${phase.name} with updated factStore`);
+      logger.debug(`[Orchestrator] Rebuilt verificationContext after ${phase.name} with updated factStore`);
     }
 
     // Consensus within phase (if multiple agents in phase)
@@ -5091,7 +5091,7 @@ export class AgentOrchestrator {
         analysisId, phaseFindings, verificationContext, enrichedContext
       );
       totalCost += debateStats.totalTokens * 0.00001;
-      console.log(`[Orchestrator:${phase.name}] Consensus: ${debateStats.debateCount} debates`);
+      logger.debug(`[Orchestrator:${phase.name}] Consensus: ${debateStats.debateCount} debates`);
     }
 
     await updateAnalysisProgress(analysisId, completedCount, initialTotalCost + totalCost);
@@ -5101,7 +5101,7 @@ export class AgentOrchestrator {
       (agentName) => allResults[agentName]?.success
     ).length;
     const phaseFailCount = phase.agents.length - phaseSuccessCount;
-    console.log(
+    logger.debug(
       `[Orchestrator] ${phase.name} complete (${phase.agents.length} agents: ${phaseSuccessCount} succeeded, ${phaseFailCount} failed)`
     );
 
@@ -5110,7 +5110,7 @@ export class AgentOrchestrator {
         .filter((agentName) => !allResults[agentName]?.success)
         .map((agentName) => `${agentName}: ${allResults[agentName]?.error ?? "unknown error"}`)
         .join(", ");
-      console.error(
+      logger.error(
         `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
       );
       throw new Error(`Critical Tier 1 phase failed: ${failedNames}`);
@@ -5121,7 +5121,7 @@ export class AgentOrchestrator {
         .filter((agentName) => !allResults[agentName]?.success)
         .map((agentName) => `${agentName}: ${allResults[agentName]?.error ?? "unknown error"}`)
         .join(", ");
-      console.warn(
+      logger.warn(
         `[Orchestrator] Phase B agent(s) failed (non-fatal, continuing): ${failedNames}`
       );
     }
@@ -5280,11 +5280,11 @@ export class AgentOrchestrator {
           // rejeter un batch partiellement duplique sous concurrence Tier1/Tier2.
           // On ne veut pas crasher l'analyse: on log et on continue, mais l'erreur
           // est surfacee pour investigation (Sentry via logger centralise a venir).
-          console.error(
+          logger.error(
             `[Orchestrator] createFactEventsBatch failed for deal ${dealId}: ${batchResult.error ?? "unknown"}`
           );
         } else {
-          console.log(`[Orchestrator] Persisted ${factEvents.length} validated facts to DB`);
+          logger.debug(`[Orchestrator] Persisted ${factEvents.length} validated facts to DB`);
         }
       }
     }
@@ -5329,7 +5329,7 @@ export class AgentOrchestrator {
     // Skip if no documents with extracted text
     const documentsWithContent = deal.documents.filter(d => d.extractedText);
     if (documentsWithContent.length === 0) {
-      console.log("[Orchestrator:Tier0] No documents with content, skipping fact extraction");
+      logger.debug("[Orchestrator:Tier0] No documents with content, skipping fact extraction");
       return {
         factStore: [],
         factStoreFormatted: "",
@@ -5352,7 +5352,7 @@ export class AgentOrchestrator {
       // Load existing facts if this is an update (for contradiction detection)
       const existingFacts: CurrentFact[] = currentFactsForContext;
       if (isUpdate) {
-        console.log(`[Orchestrator:Tier0] Loaded ${existingFacts.length} existing facts for update`);
+        logger.debug(`[Orchestrator:Tier0] Loaded ${existingFacts.length} existing facts for update`);
       }
 
       // Fetch founder responses stored as FOUNDER_RESPONSE facts
@@ -5374,7 +5374,7 @@ export class AgentOrchestrator {
       }));
 
       if (founderResponses.length > 0) {
-        console.log(`[Orchestrator:Tier0] Loaded ${founderResponses.length} founder responses for fact extraction`);
+        logger.debug(`[Orchestrator:Tier0] Loaded ${founderResponses.length} founder responses for fact extraction`);
       }
 
       // Build context for fact-extractor with founder responses
@@ -5428,7 +5428,7 @@ export class AgentOrchestrator {
       );
 
       if (jobResult.status === 'FAILED') {
-        console.error(`[Orchestrator:Tier0] Fact extraction job failed: ${jobResult.error}`);
+        logger.error(`[Orchestrator:Tier0] Fact extraction job failed: ${jobResult.error}`);
         // Continue without facts rather than failing the entire analysis
         return {
           factStore: existingFacts,
@@ -5443,7 +5443,7 @@ export class AgentOrchestrator {
       const result = jobResult.data!;
 
       if (!result.success || !("data" in result)) {
-        console.error("[Orchestrator:Tier0] Fact extraction failed:", result.error);
+        logger.error({ err: result.error }, "[Orchestrator:Tier0] Fact extraction failed:");
         return {
           factStore: existingFacts,
           factStoreFormatted: formatFactStoreForAgents(existingFacts),
@@ -5482,18 +5482,18 @@ export class AgentOrchestrator {
             "system",
             analysisId ? { runId: analysisId, scope: "tier0-created" } : undefined
           );
-          console.log(`[Orchestrator:Tier0] Persisted ${extractionData.facts.length} facts to database`);
+          logger.debug(`[Orchestrator:Tier0] Persisted ${extractionData.facts.length} facts to database`);
         } catch (persistError) {
-          console.error("[Orchestrator:Tier0] Failed to persist facts:", persistError);
+          logger.error({ err: persistError }, "[Orchestrator:Tier0] Failed to persist facts:");
           // Continue anyway - facts are in memory
         }
       }
 
       // Log contradictions if any
       if (extractionData.contradictions.length > 0) {
-        console.log(`[Orchestrator:Tier0] Detected ${extractionData.contradictions.length} contradictions:`);
+        logger.debug(`[Orchestrator:Tier0] Detected ${extractionData.contradictions.length} contradictions:`);
         for (const c of extractionData.contradictions) {
-          console.log(`  - ${c.factKey}: ${c.significance} (${c.newSource} vs ${c.existingSource})`);
+          logger.debug(`  - ${c.factKey}: ${c.significance} (${c.newSource} vs ${c.existingSource})`);
         }
       }
 
@@ -5501,7 +5501,7 @@ export class AgentOrchestrator {
       const currentFacts = await getCurrentFacts(deal.id);
       const formattedFacts = formatFactStoreForAgents(currentFacts);
 
-      console.log(`[Orchestrator:Tier0] Fact extraction complete: ${extractionData.metadata.factsExtracted} facts, ` +
+      logger.debug(`[Orchestrator:Tier0] Fact extraction complete: ${extractionData.metadata.factsExtracted} facts, ` +
         `${extractionData.metadata.contradictionsDetected} contradictions, ` +
         `avg confidence ${extractionData.metadata.averageConfidence}%`);
 
@@ -5521,7 +5521,7 @@ export class AgentOrchestrator {
         executionTimeMs: Date.now() - startTime,
       };
     } catch (error) {
-      console.error("[Orchestrator:Tier0] Error during fact extraction:", error);
+      logger.error({ err: error }, "[Orchestrator:Tier0] Error during fact extraction:");
 
       // Graceful degradation - return existing facts if available
       const existingFacts = isUpdate ? await getCurrentFacts(deal.id).catch(() => []) : [];
@@ -5562,7 +5562,7 @@ export class AgentOrchestrator {
     // Skip if no documents with extracted text
     const documentsWithContent = deal.documents.filter(d => d.extractedText);
     if (documentsWithContent.length === 0) {
-      console.log("[Orchestrator:CoherenceCheck] No documents with content, skipping coherence check");
+      logger.debug("[Orchestrator:CoherenceCheck] No documents with content, skipping coherence check");
       return {
         report: null,
         cost: 0,
@@ -5638,7 +5638,7 @@ export class AgentOrchestrator {
       );
 
       if (jobResult.status === 'FAILED') {
-        console.error(`[Orchestrator:CoherenceCheck] Coherence check job failed: ${jobResult.error}`);
+        logger.error(`[Orchestrator:CoherenceCheck] Coherence check job failed: ${jobResult.error}`);
         return {
           report: null,
           cost: 0,
@@ -5649,7 +5649,7 @@ export class AgentOrchestrator {
       const result = jobResult.data!;
 
       if (!result.success || !("data" in result)) {
-        console.error("[Orchestrator:CoherenceCheck] Coherence check failed:", result.error);
+        logger.error({ err: result.error }, "[Orchestrator:CoherenceCheck] Coherence check failed:");
         return {
           report: null,
           cost: result.cost,
@@ -5659,7 +5659,7 @@ export class AgentOrchestrator {
 
       const report = (result as { data: DeckCoherenceReport }).data;
 
-      console.log(`[Orchestrator:CoherenceCheck] Complete: score=${report.coherenceScore}, ` +
+      logger.debug(`[Orchestrator:CoherenceCheck] Complete: score=${report.coherenceScore}, ` +
         `grade=${report.reliabilityGrade}, critical=${report.summary.criticalIssues}, ` +
         `warnings=${report.summary.warningIssues}, recommendation=${report.recommendation}`);
 
@@ -5676,7 +5676,7 @@ export class AgentOrchestrator {
         executionTimeMs: Date.now() - startTime,
       };
     } catch (error) {
-      console.error("[Orchestrator:CoherenceCheck] Error during coherence check:", error);
+      logger.error({ err: error }, "[Orchestrator:CoherenceCheck] Error during coherence check:");
       return {
         report: null,
         cost: 0,
@@ -5737,7 +5737,7 @@ export class AgentOrchestrator {
           reusedResult,
           corpusSnapshot,
         );
-        console.log(
+        logger.debug(
           `[Orchestrator:ThesisExtraction] Réutilisée (replay idempotent) thesisId=${existingThesis.id}`
         );
         return reusedOutput;
@@ -5748,7 +5748,7 @@ export class AgentOrchestrator {
       allResults["thesis-extractor"] = thesisResult;
 
       if (!thesisResult.success || !("data" in thesisResult)) {
-        console.warn(`[Orchestrator:ThesisExtraction] Non-fatal failure: ${thesisResult.error ?? "unknown"}`);
+        logger.warn(`[Orchestrator:ThesisExtraction] Non-fatal failure: ${thesisResult.error ?? "unknown"}`);
         return null;
       }
 
@@ -5792,7 +5792,7 @@ export class AgentOrchestrator {
         corpusSnapshot,
       );
 
-      console.log(
+      logger.debug(
         `[Orchestrator:ThesisExtraction] verdict=${canonicalOutput.verdict} confidence=${canonicalOutput.confidence} alerts=${canonicalOutput.alerts.length} (thesisId=${persisted.id})`
       );
       return canonicalOutput;
@@ -5811,7 +5811,7 @@ export class AgentOrchestrator {
             cost: 0,
             error: message,
           };
-      console.error(`[Orchestrator:ThesisExtraction] Crashed (non-fatal):`, err);
+      logger.error({ err: err }, `[Orchestrator:ThesisExtraction] Crashed (non-fatal):`);
       return null;
     }
   }
@@ -5909,7 +5909,7 @@ export class AgentOrchestrator {
       const prefs = (user as unknown as { investmentPreferences?: unknown })?.investmentPreferences;
       return getBAPreferences(prefs as Parameters<typeof getBAPreferences>[0]);
     } catch (error) {
-      console.error("[Orchestrator] Failed to load BA preferences:", error);
+      logger.error({ err: error }, "[Orchestrator] Failed to load BA preferences:");
       return getBAPreferences(null);
     }
   }
@@ -6035,12 +6035,12 @@ export class AgentOrchestrator {
         };
       }
 
-      console.log(
+      logger.debug(
         `[Orchestrator] Thesis reconciled: verdict=${reconcilerOutput.updatedVerdict} ` +
         `(changed=${reconcilerOutput.verdictChanged})`
       );
     } catch (error) {
-      console.error("[Orchestrator] Failed to persist thesis reconciliation:", error);
+      logger.error({ err: error }, "[Orchestrator] Failed to persist thesis reconciliation:");
     }
   }
 
@@ -6050,7 +6050,7 @@ export class AgentOrchestrator {
     enrichedContext: EnrichedAgentContext
   ): Promise<void> {
     if (!thesisId) {
-      console.warn("[Orchestrator:Resume] Analysis has no thesisId; skipping thesis rehydration");
+      logger.warn("[Orchestrator:Resume] Analysis has no thesisId; skipping thesis rehydration");
       return;
     }
 
@@ -6090,7 +6090,7 @@ export class AgentOrchestrator {
       angelDeskVerdict: ad.verdict,
     };
 
-    console.log(
+    logger.debug(
       `[Orchestrator:Resume] Thesis rehydrated from analysis binding: ` +
       `thesisId=${persistedThesis.id} verdict=${persistedThesis.verdict} confidence=${persistedThesis.confidence}`
     );
@@ -6125,7 +6125,7 @@ export class AgentOrchestrator {
 
     const result = await persistExtractedFactsWithMatching(dealId, contextFacts, "system");
     if (!result.success) {
-      console.error(
+      logger.error(
         `[Orchestrator] Failed to persist Context Engine facts for deal ${dealId}: ${result.error ?? "unknown"}`
       );
       return {
@@ -6134,7 +6134,7 @@ export class AgentOrchestrator {
       };
     }
 
-    console.log(
+    logger.debug(
       `[Orchestrator] Context Engine facts persisted: ` +
         `created=${result.createdCount}, superseded=${result.supersededCount}, ` +
         `ignored=${result.ignoredCount}, pending_review=${result.pendingReviewCount}`
@@ -6200,7 +6200,7 @@ export class AgentOrchestrator {
         .map((doc) => doc.extractionRuns?.[0]?.corpusTextHash ?? `${doc.id}:no-strict-run`)
         .sort();
 
-      console.log(`[Orchestrator] Context Engine enrichment with: tagline=${!!extractedData?.tagline}, competitors=${extractedData?.competitors?.length ?? 0}, founders=${mergedFounders.length}`);
+      logger.debug(`[Orchestrator] Context Engine enrichment with: tagline=${!!extractedData?.tagline}, competitors=${extractedData?.competitors?.length ?? 0}, founders=${mergedFounders.length}`);
 
       const contextResult = await enrichDeal(
         {
@@ -6243,7 +6243,7 @@ export class AgentOrchestrator {
         sources: contextResult.sources,
       };
     } catch (error) {
-      console.error("Context Engine error:", error);
+      logger.error({ err: error }, "Context Engine error:");
       return undefined;
     }
   }
@@ -6269,7 +6269,7 @@ export class AgentOrchestrator {
     // Invalidate analysis results cache (by resetting fingerprints)
     const analysisInvalidated = await invalidateDealAnalysisCache(dealId);
 
-    console.log(
+    logger.debug(
       `[Orchestrator] Invalidated cache for deal ${dealId}: ` +
         `${contextInvalidated} context entries, ` +
         `${toolsInvalidated} tool entries, ` +
@@ -6357,7 +6357,7 @@ export class AgentOrchestrator {
     enrichedContext?: EnrichedAgentContext
   ): Promise<{ debateCount: number; totalTokens: number }> {
     const contradictions = await consensusEngine.detectContradictions(allFindings);
-    console.log(`[ConsensusEngine] Detected ${contradictions.length} contradictions`);
+    logger.debug(`[ConsensusEngine] Detected ${contradictions.length} contradictions`);
 
     let debateCount = 0;
     let totalTokens = 0;
@@ -6386,11 +6386,11 @@ export class AgentOrchestrator {
           confidence: debateResult.resolution.confidence.score,
         });
 
-        console.log(
+        logger.debug(
           `[ConsensusEngine] Resolved ${contradiction.topic}: ${debateResult.resolution.resolution}`
         );
       } catch (error) {
-        console.error(`[ConsensusEngine] Failed to debate ${contradiction.id}:`, error);
+        logger.error({ err: error }, `[ConsensusEngine] Failed to debate ${contradiction.id}:`);
       }
     }
 
@@ -6403,7 +6403,7 @@ export class AgentOrchestrator {
         cost: 0,
         data: { resolutions },
       } as unknown as AgentResult;
-      console.log(`[ConsensusEngine] ${resolutions.length} resolutions injected into context for downstream agents`);
+      logger.debug(`[ConsensusEngine] ${resolutions.length} resolutions injected into context for downstream agents`);
     }
 
     return { debateCount, totalTokens };
@@ -6425,7 +6425,7 @@ export class AgentOrchestrator {
     enrichedContext?: EnrichedAgentContext
   ): Promise<{ tokensUsed: number }> {
     try {
-      console.log(`[Reflexion] Applying to ${agentName} (tier=${tier ?? "unknown"}, low confidence)`);
+      logger.debug(`[Reflexion] Applying to ${agentName} (tier=${tier ?? "unknown"}, low confidence)`);
 
       const reflexionResult = await reflexionEngine.reflect({
         agentName,
@@ -6436,7 +6436,7 @@ export class AgentOrchestrator {
         verificationContext,
       });
 
-      console.log(
+      logger.debug(
         `[Reflexion] ${agentName}: ${reflexionResult.critiques.length} critiques, ${reflexionResult.confidenceChange} confidence change`
       );
 
@@ -6459,9 +6459,9 @@ export class AgentOrchestrator {
           if (enrichedContext?.previousResults) {
             enrichedContext.previousResults[agentName] = sanitizeResultForDownstream(reflexionResult.revisedResult);
           }
-          console.log(`[Reflexion] ${agentName}: revised result injected into allResults`);
+          logger.debug(`[Reflexion] ${agentName}: revised result injected into allResults`);
         } else {
-          console.warn(
+          logger.warn(
             `[Reflexion] ${agentName}: revised result REJECTED — missing essential fields (meta/score). ` +
             `Keeping original result. revisedData type=${typeof revisedData}, ` +
             `keys=${revisedData && typeof revisedData === "object" ? Object.keys(revisedData as Record<string, unknown>).join(",") : "N/A"}`
@@ -6471,7 +6471,7 @@ export class AgentOrchestrator {
 
       return { tokensUsed: reflexionResult.tokensUsed ?? 0 };
     } catch (error) {
-      console.error(`[Reflexion] Failed for ${agentName}:`, error);
+      logger.error({ err: error }, `[Reflexion] Failed for ${agentName}:`);
       return { tokensUsed: 0 };
     }
   }
@@ -6562,10 +6562,10 @@ export class AgentOrchestrator {
             average: valuationBenchmarks.average,
           },
         };
-        console.log(`[Orchestrator] Funding DB: ${similarDeals.length} similar deals, ${valuationBenchmarks.count} for benchmarks`);
+        logger.debug(`[Orchestrator] Funding DB: ${similarDeals.length} similar deals, ${valuationBenchmarks.count} for benchmarks`);
       }
     } catch (error) {
-      console.error("[Orchestrator] Failed to fetch funding DB data:", error);
+      logger.error({ err: error }, "[Orchestrator] Failed to fetch funding DB data:");
     }
 
     // Pre-computed financial calculations from fact store
@@ -6656,7 +6656,7 @@ export class AgentOrchestrator {
 
       const calcCount = Object.keys(preComputedCalculations).length;
       if (calcCount > 0) {
-        console.log(`[Orchestrator] Pre-computed ${calcCount} financial calculations from fact store`);
+        logger.debug(`[Orchestrator] Pre-computed ${calcCount} financial calculations from fact store`);
       }
     }
 
@@ -6761,7 +6761,7 @@ export class AgentOrchestrator {
         startTime: new Date(startTimeMs).toISOString(),
       });
     } catch (err) {
-      console.warn("[Orchestrator] persistTierCheckpoint non-fatal:", err);
+      logger.warn({ err: err }, "[Orchestrator] persistTierCheckpoint non-fatal:");
     }
   }
 
@@ -6781,7 +6781,7 @@ export class AgentOrchestrator {
     onProgress?: AnalysisOptions["onProgress"],
     onEarlyWarning?: AnalysisOptions["onEarlyWarning"]
   ): Promise<AnalysisResult> {
-    console.log(`[Orchestrator] Attempting to resume analysis ${analysisId}`);
+    logger.debug(`[Orchestrator] Attempting to resume analysis ${analysisId}`);
 
     // Load analysis data and checkpoint
     const recoveryData = await loadAnalysisForRecovery(analysisId);
@@ -6802,7 +6802,7 @@ export class AgentOrchestrator {
       throw new Error(`Cannot resume analysis ${analysisId}: no checkpoint found`);
     }
 
-    console.log(
+    logger.debug(
       `[Orchestrator] Resuming analysis ${analysisId}: ` +
         `state=${checkpoint.state}, completed=${checkpoint.completedAgents.length}/${analysis.totalAgents}`
     );
@@ -6822,7 +6822,7 @@ export class AgentOrchestrator {
     });
     const dbResults = toAgentResultsRecord(rawDbResults) ?? {};
 
-    console.log(
+    logger.debug(
       `[Orchestrator:Resume] Merge: checkpoint=${Object.keys(checkpointResults).length} results, ` +
       `db=${Object.keys(dbResults).length} results, dbType=${typeof rawDbResults}, dbNull=${rawDbResults == null}`
     );
@@ -6864,7 +6864,7 @@ export class AgentOrchestrator {
     }
 
     stateMachine.onStateChange(async (from, to, trigger) => {
-      console.log(`[StateMachine:Resume] ${from} → ${to} (${trigger})`);
+      logger.debug(`[StateMachine:Resume] ${from} → ${to} (${trigger})`);
       await persistStateTransition(analysis.id, from, to, trigger);
     });
 
@@ -6875,7 +6875,7 @@ export class AgentOrchestrator {
 
     // If state machine is FAILED/COMPLETED, force back to ANALYZING so resume continues
     if (currentState === "FAILED" || currentState === "COMPLETED") {
-      console.log(`[Orchestrator:Resume] State machine was ${currentState}, forcing back to ANALYZING`);
+      logger.debug(`[Orchestrator:Resume] State machine was ${currentState}, forcing back to ANALYZING`);
       stateMachine.forceState("ANALYZING", "resume_from_failed");
       currentState = "ANALYZING";
     }
@@ -6885,7 +6885,7 @@ export class AgentOrchestrator {
       setAnalysisContext(analysis.id);
 
       // Log actual completed agents for debugging
-      console.log(
+      logger.debug(
         `[Orchestrator:Resume] Completed agents (${completedSet.size}): ${[...completedSet].join(", ")}`
       );
 
@@ -6903,9 +6903,9 @@ export class AgentOrchestrator {
       try {
         factStore = await getCurrentFacts(deal.id);
         factStoreFormatted = formatFactStoreForAgents(factStore);
-        console.log(`[Orchestrator:Resume] Restored ${factStore.length} facts from DB`);
+        logger.debug(`[Orchestrator:Resume] Restored ${factStore.length} facts from DB`);
       } catch (error) {
-        console.error("[Orchestrator:Resume] Failed to restore fact store:", error);
+        logger.error({ err: error }, "[Orchestrator:Resume] Failed to restore fact store:");
       }
 
       // Phase 5.1 (Codex round 15 P1) — wire evidence into resume path too.
@@ -6943,7 +6943,7 @@ export class AgentOrchestrator {
 
       const extractedData = this.extractContextSeedFromResults(allResults);
       if (this.hasContextSeed(extractedData)) {
-        console.log(
+        logger.debug(
           `[Orchestrator:Resume] Restored context seed: ` +
           `tagline=${!!extractedData.tagline}, product=${!!extractedData.productName}, ` +
           `competitors=${extractedData.competitors?.length ?? 0}, founders=${extractedData.founders?.length ?? 0}`
@@ -6977,7 +6977,7 @@ export class AgentOrchestrator {
       try {
         await this.rehydrateResumeThesis(analysis.id, analysis.thesisId, enrichedContext);
       } catch (err) {
-        console.warn("[Orchestrator:Resume] Failed to rehydrate thesis context:", err);
+        logger.warn({ err: err }, "[Orchestrator:Resume] Failed to rehydrate thesis context:");
         throw err;
       }
 
@@ -7134,7 +7134,7 @@ export class AgentOrchestrator {
             if (result.success && "data" in result) {
               const { data: sanitized, totalViolations } = sanitizeAgentNarratives((result as { data: unknown }).data);
               if (totalViolations > 0) {
-                console.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
+                logger.warn(`[NarrativeSanitizer] ${agentName}: ${totalViolations} prescriptive violation(s) corrected`);
                 (result as { data: unknown }).data = sanitized;
               }
             }
@@ -7286,7 +7286,7 @@ export class AgentOrchestrator {
 
       const successCount = Object.values(allResults).filter((r) => r.success).length;
       const failCount = Object.values(allResults).filter((r) => !r.success).length;
-      console.log(
+      logger.debug(
         `[Orchestrator:Resume] Saving final results: ${Object.keys(allResults).length} total ` +
         `(${successCount} success, ${failCount} failed), completedCount=${completedCount}, allSuccess=${allSuccess}`
       );
@@ -7316,7 +7316,7 @@ export class AgentOrchestrator {
       const existingResults = toAgentResultsRecord(existingResultsRaw);
       const existingCount = existingResults ? Object.keys(existingResults).length : 0;
       if (Object.keys(allResults).length < existingCount) {
-        console.error(
+        logger.error(
           `[Orchestrator:Resume] ABORT SAVE: allResults (${Object.keys(allResults).length}) < existing DB results (${existingCount}). Keeping existing results.`
         );
         // Merge: keep existing, add new
@@ -7349,7 +7349,7 @@ export class AgentOrchestrator {
 
       await updateDealStatus(deal.id, "IN_DD");
 
-      console.log(
+      logger.debug(
         `[Orchestrator] Successfully resumed and completed analysis ${analysisId}`
       );
 
@@ -7374,7 +7374,7 @@ export class AgentOrchestrator {
         try {
           await stateMachine.fail(error instanceof Error ? error : new Error("Unknown error"));
         } catch (_smErr) {
-          console.error("[Orchestrator:Resume] State machine fail() also threw:", _smErr);
+          logger.error({ err: _smErr }, "[Orchestrator:Resume] State machine fail() also threw:");
         }
       }
 
@@ -7391,7 +7391,7 @@ export class AgentOrchestrator {
 
         let resultsToSave = allResults;
         if (Object.keys(allResults).length < existingCountOnError) {
-          console.error(
+          logger.error(
             `[Orchestrator:Resume] CATCH SAFETY: allResults (${Object.keys(allResults).length}) < existing (${existingCountOnError}). Merging into existing.`
           );
           const existing = { ...(existingOnError ?? {}) };
@@ -7412,7 +7412,7 @@ export class AgentOrchestrator {
           statusOverride: "FAILED",
         });
       } catch (saveErr) {
-        console.error("[Orchestrator:Resume] Failed to save results on error:", saveErr);
+        logger.error({ err: saveErr }, "[Orchestrator:Resume] Failed to save results on error:");
       }
 
       throw error;
@@ -7427,7 +7427,7 @@ export class AgentOrchestrator {
       analysisId,
       reason ?? "Cancelled by user"
     );
-    console.log(`[Orchestrator] Cancelled interrupted analysis ${analysisId}`);
+    logger.debug(`[Orchestrator] Cancelled interrupted analysis ${analysisId}`);
   }
 }
 
