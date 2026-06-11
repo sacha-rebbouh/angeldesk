@@ -23,6 +23,7 @@
 | 2026-05-28 | DIAGNOSTIC | Récidive : 3e occurrence du même pattern "conclure depuis un champ DB / pattern observable sans lire le code" dans la même session (zombie, userPlan=FREE depuis User.subscriptionStatus, incohérence UI/DB non vérifiée) |
 | 2026-06-03 | DIAGNOSTIC | Fix Bug 1 conçu depuis la FORME du crash avant de lire l'exception exacte (pourtant dans analysis.summary) ; gate Codex REQUEST_CHANGES a recadré avant toute implémentation |
 | 2026-06-03 | PRÉCONDITION | Reconduit le pattern "raffiner le graphe stepwise EN PLACE" (splits d-4..d-7) sans réévaluer sa précondition (flag OFF) — désormais ON ; risque cross-deploy noté tôt PUIS écarté, Codex l'a escaladé en blocking |
+| 2026-06-11 | RECHERCHE | Affirmé "aucun AUTRE chemin n'écrit Deal.growthRate" depuis un grep `growthRate:` (object-literal) sur-filtré ; raté l'assignation par propriété `updateData.growthRate = info.growthRateYoY` (persistence orchestrateur) — Codex l'a trouvée au 1er tour du gate |
 
 ---
 
@@ -189,3 +190,11 @@
 - **Comment corrigé** : gate Codex impl REQUEST_CHANGES → bump version 4, route v3 → graphe FROZEN (mêmes step IDs), v4 → split. APPROVE au re-gate.
 - **Impact** : 1 tour de gate (REQUEST_CHANGES → fix → APPROVE), rattrapé AVANT merge/deploy ; zéro run cassé en prod.
 - **Lesson** : (1) quand un pattern n'est sûr que SOUS une précondition (ici « flag OFF / pas de run en vol »), re-vérifier la précondition à CHAQUE réutilisation — un flag qui bascule ON invalide les raccourcis pris quand il était OFF. (2) Quand j'ai DÉJÀ noté un risque dans l'analyse puis que je l'écarte, traiter cet écartement comme suspect : l'avoir écrit signifie qu'une part du raisonnement l'a jugé réel ; exiger une justification explicite (preuve que la précondition tient), pas un « comme avant ».
+
+### 2026-06-11 — RECHERCHE — "Aucun autre chemin d'écriture" affirmé depuis un grep object-literal sur-filtré
+- **Contexte** : F6 (borner `Deal.growthRate`). Avant le gate Codex, je voulais prouver que seuls les 2 schémas Zod (POST `createDealSchema`, PATCH `updateDealSchema`) écrivaient la colonne, pour dimensionner où poser la borne.
+- **Erreur** : grep `growthRate:` (syntaxe clé d'object-literal) + filtres lourds (`grep -v Number( …`), puis affirmé à Codex « aucun AUTRE chemin n'écrit Deal.growthRate ». Faux : `persistence.ts` (orchestrateur, document-extractor) écrit `updateData.growthRate = info.growthRateYoY` — une **assignation par propriété**, pas un object-literal `growthRate:`. Ce 3ᵉ chemin écrit une valeur EXTRAITE par LLM, sans schéma Zod → bypass de la policy + overflow possible.
+- **Cause racine du raisonnement** : le motif de recherche ne couvrait qu'UNE des deux formes d'écriture d'un champ TS. Une colonne se peuple par object-literal (`{ growthRate: x }`, dans `create`/`update data`) ET par assignation différée sur un accumulateur (`obj.growthRate = x`, builder d'updateData). Le grep + les filtres ont éliminé la seconde. J'ai présenté une couverture partielle comme exhaustive.
+- **Comment corrigé** : gate Codex REQUEST_CHANGES au 1er tour, finding précis (fichier:ligne). Vérifié (receiving-code-review) → réel → centralisé les bornes (`growth-rate-bounds.ts`) et borné les 3 chemins (skip+warn sur l'extrait). Re-gate APPROVE.
+- **Impact** : 1 tour de gate ; le bypass aurait survécu sans Codex (la borne aurait été incomplète). Zéro code erroné mergé.
+- **Lesson** : pour prouver « tous les chemins d'écriture de la colonne X », chercher les SITES d'écriture (`.deal.update`/`.create`/`.upsert` + leur `data`) ET les deux formes du champ : object-literal `X:` ET assignation `\.X\s*=`. Ne jamais conclure « exhaustif » depuis un seul motif sur-filtré. Le grep par nom de champ rate les builders d'updateData (accumulateur `Record<string, unknown>`).
