@@ -30,6 +30,10 @@ import {
   resolveCanonicalDealFields,
 } from "@/services/deals/canonical-read-model";
 
+// Bound the portfolio-metrics scan so a power user with thousands of deals
+// can't blow up SSR (each scanned deal resolves canonical signals).
+const PORTFOLIO_METRICS_DEAL_CAP = 200;
+
 const PIPELINE_STATUSES = [
   { value: "SCREENING", label: "Screening", color: "bg-blue-500" },
   { value: "ANALYZING", label: "Analyse", color: "bg-yellow-500" },
@@ -91,13 +95,18 @@ async function getDashboardStats(userId: string) {
         where: { deal: { userId }, status: "COMPLETED" },
         orderBy: { completedAt: "desc" },
         take: 5,
-        include: {
+        select: {
+          id: true,
+          type: true,
+          completedAt: true,
           deal: { select: { id: true, name: true } },
         },
       }),
       // Deals with scores for portfolio metrics (F87)
       prisma.deal.findMany({
         where: { userId },
+        orderBy: { updatedAt: "desc" },
+        take: PORTFOLIO_METRICS_DEAL_CAP,
         select: { id: true, globalScore: true, sector: true },
       }),
       // Credit balance
@@ -220,6 +229,7 @@ async function getDashboardStats(userId: string) {
     avgScore,
     sectorDistribution,
     dealsWithScoresCount: scores.length,
+    portfolioMetricsTruncated: totalDeals > PORTFOLIO_METRICS_DEAL_CAP,
     creditBalance,
   };
 }
@@ -237,6 +247,7 @@ export default async function DashboardPage() {
     avgScore,
     sectorDistribution,
     dealsWithScoresCount,
+    portfolioMetricsTruncated,
     creditBalance,
   } = await getDashboardStats(user.id);
 
@@ -302,6 +313,9 @@ export default async function DashboardPage() {
             <div className="text-2xl font-bold">{avgScore !== null ? `${avgScore}/100` : "-"}</div>
             <p className="text-xs text-muted-foreground">
               {dealsWithScoresCount} deal{dealsWithScoresCount !== 1 ? "s" : ""} scoré{dealsWithScoresCount !== 1 ? "s" : ""}
+              {portfolioMetricsTruncated
+                ? ` · ${PORTFOLIO_METRICS_DEAL_CAP} récents`
+                : ""}
             </p>
           </CardContent>
         </Card>
@@ -426,6 +440,11 @@ export default async function DashboardPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Métriques Portfolio</CardTitle>
+            {portfolioMetricsTruncated && (
+              <CardDescription>
+                Calculées sur les {PORTFOLIO_METRICS_DEAL_CAP} deals les plus récents
+              </CardDescription>
+            )}
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 sm:grid-cols-2">

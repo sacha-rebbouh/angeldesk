@@ -36,6 +36,7 @@ import {
   loadCanonicalDealSignals,
   resolveCanonicalDealFields,
 } from "@/services/deals/canonical-read-model";
+import { loadResults } from "@/services/analysis-results/load-results";
 
 function capitalizeFirst(value: string | null | undefined): string {
   if (!value) return "";
@@ -222,7 +223,6 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
-        results: true,
         totalCost: true,
         totalTimeMs: true,
         completedAt: true,
@@ -237,8 +237,17 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
     }),
   ]);
 
+  // PERF: load the multi-MB results blob-first (Vercel Blob cache) instead of
+  // streaming Analysis.results through Postgres on the SSR hot path.
+  const latestCompletedResults = latestCompletedAnalysis
+    ? await loadResults(latestCompletedAnalysis.id)
+    : null;
+
   const analysisV2ViewModel =
-    latestCompletedAnalysis?.results && typeof latestCompletedAnalysis.results === "object" && !Array.isArray(latestCompletedAnalysis.results)
+    latestCompletedAnalysis &&
+    latestCompletedResults &&
+    typeof latestCompletedResults === "object" &&
+    !Array.isArray(latestCompletedResults)
       ? buildAnalysisV2ViewModel({
           deal: {
             id: deal.id,
@@ -249,7 +258,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
             stage: deal.stage ?? null,
           },
           analysis: {
-            results: latestCompletedAnalysis.results as unknown as ResultsMap,
+            results: latestCompletedResults as unknown as ResultsMap,
             completedAt: latestCompletedAnalysis.completedAt,
             totalCost: typeof latestCompletedAnalysis.totalCost === "number" ? latestCompletedAnalysis.totalCost : null,
             totalTimeMs: typeof latestCompletedAnalysis.totalTimeMs === "number" ? latestCompletedAnalysis.totalTimeMs : null,

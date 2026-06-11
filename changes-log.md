@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Perf — Phase H (H1) : quick fixes read-model (blob-first + select + caps)
+
+### Fichiers
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` : la requête SSR `latestCompletedAnalysis` (findFirst COMPLETED) ne SELECT plus `results` (blob JSON multi-MB tiré par le wire Postgres). Results désormais chargé via `loadResults(latestCompletedAnalysis.id)` — **blob-first** (cache Vercel Blob, fallback DB-column + backfill). Même analyse affichée (latest completed by createdAt), shape identique (`loadResults` retourne `Analysis.results`). Garde du view-model réécrite pour narrower `latestCompletedAnalysis` non-null.
+- `src/app/(dashboard)/dashboard/page.tsx` : (1) `recentAnalyses` `include`→`select` (id, type, completedAt, deal{id,name}) — supprime le pull implicite de TOUS les scalaires Analysis dont `results` (×5). (2) `metricDeals` capé `take: 200` (`PORTFOLIO_METRICS_DEAL_CAP`) + `orderBy updatedAt desc` (sous-ensemble déterministe). (3) Métriques portfolio désormais signalées comme échantillonnées quand `totalDeals > cap` (`portfolioMetricsTruncated`) : sous-titre 'Score moyen' + CardDescription 'Métriques Portfolio' — plus de claim portfolio-wide sur un échantillon.
+- `src/app/(dashboard)/deals/page.tsx` : `deal.findMany` capé `take: 200` (`DEALS_PAGE_CAP`) ; `getDeals` retourne `{ deals, totalCount }` (count() exact en parallèle) → header garde le **total vrai** + hint '· N affichés' si tronqué.
+
+### Description
+Phase H1 du plan post-audit (perf read-model, quick fixes). Cible : les pages chaudes chargeaient le blob `Analysis.results` multi-MB par deal via le wire Postgres (SSR détail) ou tiraient implicitement tous les scalaires Analysis (dashboard). Chaque deal matérialisé déclenche aussi `loadCanonicalDealSignals`→`loadResults` (fan-out blob) → caps `take` comme garde-fou pré-H2. Gate Codex : 1 REQUEST_CHANGES (métriques portfolio tronquées présentées comme globales — truthfulness) → corrigé (libellés conditionnels). Vérifs : tsc 0, eslint 0, suite unit 4384 passed / 9 skipped / 0 failed. Suite : H2 (read-model dénormalisé `DealSignalSummary`, gate stricte + migration).
+
+---
 ## 2026-06-11 — Sécurité/deps — Phase G : CVE xlsx → SheetJS 0.20.3 vendored
 
 ### Fichiers
@@ -407,16 +418,4 @@ MCP officiel Pappers vérifié réel (`mcp.pappers.fr/{clé}`, abonnement payant
 ### Vérif
 12 tests reconciler (dont « Test clé » end-to-end : completeJSON rejette tous les modèles → `execute()` success déterministe + `synthesisDegraded` ; + « Contrat PROD » : `run()` → `success:true`) + test selector `reconciliationDegraded`. Suite agents+thesis+analysis-v2+lib : 1473 passed. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9c : APPROVE.
 
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 9b : idempotence persistence du réconciliateur
-
-### Contexte
-`thesisService.applyReconciliation` réécrivait `reconciledAt: new Date()` à CHAQUE appel → byte-drift au replay d'un step stepwise (alors que la sortie déterministe 9a est stable).
-
-### Changements (`services/thesis/index.ts`)
-- Helper pur `canonicalizeReconciliation(value)` : tri stable RÉCURSIF des clés ET des arrays → comparaison ordre-insensible. Le `reconcilerOutput` n'a aucune valeur volatile (`reconciledAt` est une colonne séparée) → JSON canonique suffit.
-- `applyReconciliation` : garde idempotente AVANT l'update — si `reconciledAt` déjà set + `reconciliationJson` présent + `verdict`/`confidence` identiques + canonique égal → return la thèse existante SANS réécrire (`reconciledAt` préservé). Sinon update normal. La garde superseded (`!isLatest`) reste avant.
-
-### Vérif
-26 tests thesis-service verts (+3 : équivalent→pas de réécriture (notes réordonnées), verdict différent→réécrit, note-only→réécrit). tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9b : APPROVE.
 
