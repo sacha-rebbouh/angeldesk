@@ -1,5 +1,7 @@
 # PROMPT ULTIME - Refonte Consensus Engine & Reflexion Engine
 
+> **ARCHIVED** — superseded by `docs-doctrine/angeldesk-strategic-pivot.md` (doctrine canonique). Conservé pour historique.
+
 > **Document de reference COMPLET pour implementer les deux moteurs de qualite d'Angel Desk.**
 > Ce fichier contient TOUT le code necessaire. Un agent peut l'utiliser directement pour implementer.
 > Version: 3.0 - Ajout edge cases, métriques de succès, calculs en code, et fallbacks robustes.

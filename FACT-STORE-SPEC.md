@@ -2,7 +2,7 @@
 
 > **Version**: 1.0
 > **Date**: 2026-01-28
-> **Statut**: SPEC VALIDÉE - À IMPLÉMENTER
+> **Statut**: IMPLÉMENTÉE (read-model canonique `getCurrentFactsFromView` + FactEvent en prod)
 
 ---
 

@@ -94,9 +94,9 @@ Ordre canonique strict :
 1. **Copilote analytique** (la catégorie)
 2. **Raisonnement sous incertitude** (la doctrine)
 3. **Effets evidence-first** (affirmations factuelles critiques sourcées, contradictions détectées, zones d'incertitude, fraîcheur — décrits comme effets, jamais comme noms de système)
-4. **44 agents en architecture de support** (preuve technique sous le capot, jamais en accroche)
+4. **43 agents en architecture de support** (preuve technique sous le capot, jamais en accroche)
 
-L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitch deck slide 1 ne mentionne pas le nombre.
+L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne mentionne pas *"43 agents"* ni *"Evidence Engine"*. Le pitch deck slide 1 ne mentionne pas le nombre.
 
 ### Règle de séparation langage doctrine / public
 
@@ -112,7 +112,7 @@ L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne
 | **Board AI** | *"Sublimation — délibération qui trouve la vérité"* | *"4 modèles indépendants qui exposent leurs désaccords, leurs angles morts, leurs hypothèses faibles. Le désaccord persistant est une feature, pas un bug."* |
 | **Live Coaching** | *"IA temps réel — quoi répondre au fondateur"* | *"Vérification des preuves en temps réel pendant le call — fait remonter contradictions deck/fondateur, benchmarks dépassés, infos nouvelles, questions à poser maintenant."* |
 | **22 experts sectoriels** | *"Aucun analyste n'est expert en 22 secteurs"* | *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)."* |
-| **44 agents** | Accroche principale | *"Architecture en 4 couches — extraction, analyse horizontale (13 lentilles), expertise sectorielle (22 bibliothèques), synthèse et challenge (6 mécanismes). 44 agents / composants selon convention § 7 (3 + 13 + 22 + 6 ; thesis-reconciler conditionnel hors total), sous le capot."* |
+| **43 agents** | Accroche principale | *"Architecture en 4 couches — extraction, analyse horizontale (12 lentilles), expertise sectorielle (22 bibliothèques), synthèse et challenge (6 mécanismes). 43 agents / composants selon convention § 7 (3 + 12 + 22 + 6 ; thesis-reconciler conditionnel hors total), sous le capot."* |
 | **Scoring** | Score global 0-100 en écran principal | Score subordonné. Dimensions + solidité des preuves + sources + contradictions + questions montrés en premier. |
 
 ### Où ça s'applique concrètement
@@ -199,7 +199,7 @@ npx tsc --noEmit                # Type check
 
 ## ARCHITECTURE ANALYTIQUE — 4 COUCHES
 
-Le nombre "44 agents" est une preuve technique sous le capot, pas une accroche publique. En public, parler d'architecture en 4 couches : extraction, analyse horizontale, expertise sectorielle, synthèse et challenge.
+Le nombre "43 agents" est une preuve technique sous le capot, pas une accroche publique. En public, parler d'architecture en 4 couches : extraction, analyse horizontale, expertise sectorielle, synthèse et challenge.
 
 | Couche | Nb | Rôle | Exécution |
 |------|----|------|-----------|

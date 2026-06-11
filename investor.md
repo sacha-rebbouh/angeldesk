@@ -1,5 +1,7 @@
 # Angel Desk v5.0 - The Context-Aware AI Due Diligence Platform
 
+> **ARCHIVED** — superseded by `docs-doctrine/angeldesk-strategic-pivot.md` (doctrine canonique). Conservé pour historique.
+
 > **La DD d'un fonds VC, accessible a un Business Angel solo.**
 > Pas d'equipe ? Pas de probleme. L'IA fait le travail d'un analyste senior.
 > Multi-model. Context-first. Value-first.

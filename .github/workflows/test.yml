@@ -113,3 +113,24 @@ jobs:
           src/services/evidence/__tests__/attachment-linker-integration.test.ts
           src/services/evidence/__tests__/temporal-extractor-integration.test.ts
           src/services/evidence/__tests__/promote-source-date-integration.test.ts
+
+  # Défense en profondeur supply-chain : le tarball SheetJS vendored (Phase G, fix
+  # CVE) est référencé en `file:` dans package.json. `npm ci` valide déjà son
+  # intégrité via le lockfile ; ce job épingle EN PLUS les octets committés au
+  # SHA-256 audité (cf. vendor/README.md) → un swap silencieux du tarball est
+  # attrapé ici aussi. Léger (checkout + shasum, pas de npm).
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify vendored xlsx tarball SHA-256
+        run: |
+          EXPECTED=8dc73fc3b00203e72d176e85b50938627c7b086e607c682e8d3c22c02bb99fe8
+          ACTUAL=$(shasum -a 256 vendor/xlsx-0.20.3.tgz | awk '{print $1}')
+          echo "expected= $EXPECTED"
+          echo "actual=   $ACTUAL"
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::vendor/xlsx-0.20.3.tgz SHA-256 mismatch — tarball changed unexpectedly (see vendor/README.md)"
+            exit 1
+          fi
+          echo "✓ vendored xlsx tarball integrity verified"

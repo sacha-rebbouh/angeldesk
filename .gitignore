@@ -42,6 +42,8 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the root example template IS committed (no secrets, onboarding doc).
+!/.env.example
 
 # vercel
 .vercel

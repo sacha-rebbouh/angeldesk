@@ -1,4 +1,7 @@
 # Audit des Failles — Angel Desk
+
+> **ARCHIVED** — superseded by `docs-doctrine/angeldesk-strategic-pivot.md` (doctrine canonique). Conservé pour historique.
+
 ## 9 Personas, 9 Perspectives
 
 **Date:** 2026-02-11

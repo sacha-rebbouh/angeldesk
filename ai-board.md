@@ -1,5 +1,7 @@
 # AI BOARD - Specification v1.0
 
+> **ARCHIVED** — superseded by `docs-doctrine/angeldesk-strategic-pivot.md` (doctrine canonique). Conservé pour historique.
+
 > **"Le premier comite d'investissement IA multi-modeles."**
 > 4 LLMs. 0 role assigne. Une deliberation. Un verdict.
 

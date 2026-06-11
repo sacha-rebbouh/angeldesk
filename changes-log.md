@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Docs/CI — Phase I (I3 + I4 + G-différé) : README, .env.example, doc crédits, statuts docs, check SHA xlsx
+
+### Fichiers
+- **I3** — `README.md` : boilerplate create-next-app → README réel (~55 lignes : setup, env requis, **warning migrations prod à la main**, commandes tests, carte des docs). `.env.example` : 11 → couverture complète des vars user-configurables (DB, Clerk, LLM, **DOCUMENT_ENCRYPTION_KEY**, storage, Upstash, Sentry, **DEEP_DIVE_STEPWISE**/LIVE_COACHING_ENABLED/flags, OCR Azure/Google, Recall.ai, notifications, enrichment, dev/test) groupées required/optional ; vars platform-injected (NODE_ENV/VERCEL*/PATH) exclues. `.gitignore` : `!/.env.example` (opt-in root, ws-relay reste ignoré). NOUVEAU `docs-private/credits-refund-flow.md` : cycle débit/refund (pots free/paid Option B, qui débite, états terminaux→refund via watchdog/compensateFailedAnalysis, clés d'idempotence débit + refund scopé, `Analysis.refundedAt`, invariant « refund exactement une fois »).
+- **I4** — `CLAUDE.md` : compte agents **44→43** (4 mentions) — Tier 1 réel = **12** lentilles, pas 13 (`3 + 12 + 22 + 6` ; cohérent avec la table d'architecture du même fichier + le répertoire `tier1/`). 3 statuts de specs corrigés : `FACT-STORE-SPEC.md` « À IMPLÉMENTER » → **IMPLÉMENTÉE** (read-model live) ; `LIVE-COACHING-SPEC.md` « Implémentée » → **+ ARCHIVÉE** (flag off) ; `PLAN-DEEPDIVE-DURABILITY.md` bannière **LIVRÉ EN PROD** (les « main pas touché / NON poussé » sont pré-merge périmés). Bannières `> ARCHIVED — superseded by docs-doctrine/angeldesk-strategic-pivot.md` sur `investor.md`, `ai-board.md`, `AGENT-REFONTE-PROMPT.md`, `REFLEXION-CONSENSUS-ENGINES.md`, `audit-failles-personas.md`.
+- **G-différé** — `.github/workflows/test.yml` : nouveau job `supply-chain` (checkout + shasum, léger) épinglant `vendor/xlsx-0.20.3.tgz` au SHA-256 audité `8dc73fc3…` (échec sur mismatch). Défense en profondeur au-dessus du lockfile.
+
+### Description
+Fin de Phase I (et du plan post-audit M0+M1+M2). I3/I4/G non gatés (docs + CI). Vérifs : YAML CI valide (6 jobs), SHA-check dry-run OK (match), tsc 0, suite unit 4395 passed / 9 skipped / 0 failed. **Plan post-audit COMPLET** (A→I).
+
+---
 ## 2026-06-11 — Tests/doctrine — Phase I (I2) : guards doctrine globés (nouvel agent gardé par défaut)
 
 ### Fichiers
@@ -367,24 +378,6 @@ Codex a trouvé 2 fenêtres de double-envoi : (1) concurrence — claim mémoïs
 
 ### Vérif
 `tsc` clean (hors baseline `exit-strategist.ts` untracked). Tests notif 8/8 : `analysis-ready-email` 6/6 (claim gagnant/perdu, re-check skip concurrent, échec Resend→reset+throw, non-configuré, destinataire absent, assert clé idempotence) + `email-idempotency` 2/2 (header `Idempotency-Key` atteint `fetch`). `doctrine-guard` 10/10 (reword « bloquant »→« plein écran »). Suite complète : aucune régression introduite — 11 fichiers rouges = 6 `*-integration` (Neon capé) + 5 coaching/live (fallout Phase 3, rouges aussi à HEAD, vérifié par stash). Gate Codex : **APPROVE** (round 2).
-
----
-## 2026-06-04 — UI/infra — Phase 3 (refonte 5-sujets) : archivage du Live Coaching
-
-### Contexte
-Refonte 5-sujets. Live Coaching (temps réel Recall/Ably) n'a pas sa place pour l'instant → archivé (réactivable via flag), sans casser Recall ni laisser de drain Neon/LLM résiduel.
-
-### Changements
-- `src/lib/feature-flags.ts` : `isLiveCoachingEnabled()` (défaut false=archivé, runtime).
-- `page.tsx` : onglet + contenu Live gatés + retirés de `allowedTabs`. Popout `live/page.tsx` : redirige vers `/deals/:id` (pas `?tab=live`) quand archivé.
-- Routes **403 après auth** : POST `/live-sessions` (create), `[id]/start`, `[id]/reinvite`, `[id]/retry-report` (LLM), `[id]/participants` (PUT), `[id]` PATCH, `/coaching/{context,reanalyze,ably-token}`.
-- Webhooks **no-op (ACK 200 APRÈS vérif signature/secret, avant DB/LLM)** : `/webhooks/recall`, `[id]/webhook`, `[id]/visual-frame`.
-- `[id]/stop` CONSERVÉ (cleanup : `leaveMeeting` + transition statut) mais rapport post-call LLM + publish Ably gatés sous le flag.
-- Conservé : GET (liste/détail), DELETE (nettoyage). `src/lib/live/*` dormant.
-- `vitest.unit.config.ts` : `LIVE_COACHING_ENABLED=true` par défaut (routes testées en mode activé ; tests archivé-off → Phase 6).
-
-### Vérif
-`tsc` clean (hors baseline `exit-strategist.ts` untracked). 39 tests routes Live verts ; suite complète : seuls 6 `*-integration.test.ts` rouges (Neon capé). Scan auto : aucune route Live write/LLM sans guard. Différé Neon-up : stopper les bots Recall actifs. Gate Codex : **APPROVE** (après 1 round — gate report-LLM de `stop` + PATCH `[id]`).
 
 
 ---
