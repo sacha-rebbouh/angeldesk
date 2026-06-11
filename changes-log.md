@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Sécurité/deps — Phase G : CVE xlsx → SheetJS 0.20.3 vendored
+
+### Fichiers
+- `package.json` : `"xlsx"` `^0.18.5` → `file:vendor/xlsx-0.20.3.tgz`. npm `xlsx` est figé à 0.18.5 (2 HIGH : Prototype Pollution <0.19.3, ReDoS <0.20.2, `fixAvailable:false`) ; SheetJS ne distribue les versions corrigées que via son CDN.
+- NOUVEAU `vendor/xlsx-0.20.3.tgz` (2.4 MB, SHA-256 `8dc73fc3…`) + `vendor/README.md` (provenance, SHA, politique de mise à jour manuelle car hors npm). Tarball committé (référencé `file:`) plutôt qu'URL CDN directe → `npm ci`/build Vercel indépendants de la joignabilité `cdn.sheetjs.com`, byte-reproductibles via lockfile.
+- `package-lock.json` : xlsx 0.20.3 (integrity sha512) ; retrait des transitives 0.18.5 (`adler-32`, `cfb`, `codepage`, `crc-32`, `ssf`…) — 0.20.x est self-contained ; vérifié : aucune n'est importée ailleurs dans `src`.
+
+### Description
+Phase G du plan post-audit (remédiation CVE `xlsx`). Décision **CDN SheetJS vendored vs exceljs routée à Codex** (raisonnement indépendant) : exceljs = migration de modèle de données (le code est couplé profondément au modèle SheetJS — `worksheet["A1"]`, `!ref`, `CellObject.t/.v/.w/.f`, `XLSX.utils.*`, graphe de formules, ~1450 lignes), disproportionnée pour une remédiation CVE → **Option A vendored** (même API, 0 changement de code applicatif). **Golden parse-equivalence** sur 3 fixtures réelles (Antiopea, Norway, Spin-off) avant/après : `buildExcelModelIntelligence` (cœur analytique : formules, dépendances, scores) **byte-identique** sur les 3 ; seule différence = 0.20.3 normalise `\r\n`→`\n` dans les cellules multi-lignes (bénin, invisible au LLM ; aucun code ne dépend de `\r\n`) + rendu marginal de cellules-formules corrompues sur le fichier Norway (pathologique, parsé pareil par les 2 versions). Vérifs : `npm audit --omit=dev` → 0 high/critical (2 GHSA xlsx clearées ; 5 moderate pré-existantes hors xlsx/hors scope), suite Excel 21/21 verte, tsc 0, eslint 0 (1 warning pré-existant `normalizedFormula:1396` non touché), suite unit 4384 passed / 9 skipped / 0 failed. ARRÊT DE SCOPE avant Phase H (perf read-model, session fraîche).
+
+---
 ## 2026-06-11 — Schema/migration — Phase F (F6) : growthRate Decimal(7,2) + bornes Zod
 
 ### Fichiers
@@ -408,19 +419,4 @@ MCP officiel Pappers vérifié réel (`mcp.pappers.fr/{clé}`, abonnement payant
 
 ### Vérif
 26 tests thesis-service verts (+3 : équivalent→pas de réécriture (notes réordonnées), verdict différent→réécrit, note-only→réécrit). tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9b : APPROVE.
-
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 9a : réconciliateur de thèse DURABLE (#1/#11)
-
-### Contexte
-Le réconciliateur de thèse (cœur produit) timeoutait → `success:false` → l'UI montrait « réconciliation non effectuée ». Faits vérifiés en lisant le code : `base-agent.run()` CATCH en interne (jamais de throw) → la boucle retry orchestrateur ne se redéclenche pas ; `llmCompleteJSON` cap chaque modèle à 50s (chaîne 3×50≈150s < 180s agent timeout) ; `llmCompleteJSONValidated` renvoie le `terminalFallbackData` (resolution `terminal_fallback`, success:true) S'IL valide le schéma, sinon throw. Le `terminalFallbackData` de `getThesisCallOptions` était un no-op « keep initial verdict ».
-
-### Changements (`tier3/thesis-reconciler.ts`)
-- `buildDeterministicLLMReconciliation(thesis, guardrails): LLMReconcilerOutput` (PAS `ThesisReconcilerOutput`, Codex #1) : verdict = floor déterministe ; `reconciliationNotes` = challenges (TRI STABLE → idempotence replay 9b) ; `newRedFlags` PRUDENTS (Codex #2) — `THESIS_VS_REALITY` émis SEULEMENT si un champ de thèse est **confidemment matché** (`field` non-null) ET le claim porteur existe ; sinon `reconciliationNote`. Confiance basse.
-- `inferThesisField()` → `… | null` (Codex 9a) : RETIRÉ le défaut `loadBearing` qui fabriquait une association vers `loadBearing[0]` pour toute raison non classable. `DeterministicChallenge.field` nullable (propagé : clé dédup, prompt, tri).
-- `execute()` : passe le déterministe comme `terminalFallbackData` APRÈS le spread `getThesisCallOptions` (override le no-op) ; capture `resolution` → si `terminal_fallback`, note honnête « Réconciliation déterministe — synthèse LLM indisponible ».
-- `criticalSignals` dédup (Codex #2) : retiré `blockers.length +` (un blocker pousse déjà un challenge CRITICAL → double-compte). 1 blocker seul → `vigilance` (était `alert_dominant`). `ThesisReconcilerSchema` exporté pour test.
-
-### Vérif
-10 tests reconciler verts (schéma-valide, verdict=floor, newRedFlags prudents, field-null→note jamais fabriqué, déterministe, blocker-seul→vigilance). Suite agents+thesis+orchestrator : 701 passed. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9a : APPROVE (après 1 REQUEST_CHANGES : défaut loadBearing fabriqué → field null).
 
