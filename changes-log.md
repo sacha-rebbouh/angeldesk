@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-12 — Watchdog/Crédits — Salvage des analyses stepwise livrables + invariant refund/COMPLETED bidirectionnel (Part 1 du chantier memo-generator)
+
+### Contexte
+Post-mortem prod (analysis `cmq9lg9un…`) : le step memo-generator dépasse 300s/Vercel → boucle de retries Inngest → `reapIfStale` jetait + remboursait AVEUGLÉMENT une analyse 21/22 récupérable (synthèse aboutie dans le snapshot `STEPWISE:tier3-post`). Décisions produit Sacha : seuil de sauvetage = `synthesis-deal-scorer.success` dans le snapshot ; livraison dégradée NON remboursée (cohérent avec les analyses dégradées actuelles).
+
+### Fichiers
+- `src/agents/orchestrator/persistence.ts` : NOUVEAU `salvageAnalysisFromSnapshot` (flip ATOMIQUE RUNNING→COMPLETED gated sur statut, merge results + compteurs monotones ; une fois le flip commis le retour est `salvaged:true` même si les effets best-effort throw) ; `runPostCompletionEffects` extrait de `completeAnalysis` (byte-équivalent : blob cache + read-model H2 + signal I1 dégradé) et partagé ; `completeAnalysis` TERMINAL-SAFE (override FAILED → skip si déjà COMPLETED + write conditionnel `NOT COMPLETED`) ; `markAnalysisAsFailed` conditionnel (`NOT COMPLETED`).
+- `src/lib/analysis-compensation.ts` : `trySalvageFromSnapshot` AVANT le flip FAILED dans `reapIfStale` (lecture snapshot en import dynamique ; placeholder `memo-generator` failed explicite ; résumé dégradé ; TOUTE erreur → fall-through vers FAILED+refund) ; outcome `'salvaged'` (SingleReapOutcome + retour `reapStaleAnalyses` additif) ; `resetDealStatusIfIdle` partagé refund/salvage.
+- `src/lib/inngest.ts` : compensations TERMINAL-SAFE — catch deal-analysis relit le statut par `dispatchEventId` (COMPLETED → AUCUN refund) ; `compensateResumeFailure` relit `status` (idem) ; refund À LA DERNIÈRE TENTATIVE SEULEMENT (`isFinalAnalysisAttempt` aligné sémantique SDK `attempt + 1 >= maxAttempts`, fallback `ANALYSIS_FN_RETRIES`, NonRetriableError → immédiat) — ferme le sens inverse « refund à la tentative 0 puis le retry LIVRE » ; fallback cron reaper aligné (`salvaged`/`salvagedIds`).
+- Tests : `stale-analysis-reaper.test.ts` +8 (salvage, seuils, throw snapshot → fall-through, courses, par-analyse `salvaged`) ; NOUVEAU `persistence-salvage.test.ts` (11 : flip gated, merge monotone, courses, completeAnalysis terminal-safe, markAnalysisAsFailed) ; `deal-analysis-inngest-stepwise.test.ts` +10 (compensations terminal-safe + finalité attempt/maxAttempts) ; monotone re-ciblé updateMany.
+
+### Description
+Invariant money-critical fermé dans LES DEUX SENS : « jamais refund+COMPLETED, jamais d'écrasement d'un livré ». Gap résiduel assumé (throw sans ligne Analysis à la tentative 0 + hard-kill à la finale = pas de refund par ce chemin — même profil que le double hard-kill préexistant, watchdog couvre dès qu'une ligne RUNNING existe). Gate Codex : APPROVE après 4 REQUEST_CHANGES successifs (chemin FAILED tardif → resume/markAnalysisAsFailed → sens inverse retry → off-by-one maxAttempts). tsc 0 ; 117 tests verts sur les fichiers concernés ; échecs coaching/live préexistants sur HEAD (prouvé par stash), hors périmètre. Part 2 (borner le LLM memo-generator ~120s) à suivre.
+
+---
 ## 2026-06-11 — Robustesse — Chantier deck-forensics (hors plan post-audit) : un hoquet infra n'avorte plus le Deep Dive
 
 ### Contexte

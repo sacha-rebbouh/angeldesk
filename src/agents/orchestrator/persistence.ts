@@ -226,12 +226,20 @@ export async function completeAnalysis(params: {
   // la TRANSITION vers COMPLETED, pas à chaque appel.
   let previousStatus: string | null = null;
 
-  const analysis = await prisma.$transaction(async (tx) => {
+  const txOutcome = await prisma.$transaction(async (tx) => {
     const current = await tx.analysis.findUnique({
       where: { id: params.analysisId },
-      select: { completedAgents: true, totalCost: true, results: true, status: true },
+      select: { completedAgents: true, totalCost: true, results: true, status: true, dealId: true },
     });
     previousStatus = current?.status ?? null;
+
+    // TERMINAL-SAFE (gate Codex salvage) : ne JAMAIS écraser une analyse déjà
+    // COMPLETED (= LIVRÉE, par complétion normale ou salvage watchdog) avec un
+    // override FAILED. Un worker Inngest tardif qui throw après livraison ferait
+    // sinon passer un livrable facturé pour un échec remboursable.
+    if (params.statusOverride === "FAILED" && current?.status === "COMPLETED") {
+      return { skipped: true as const, dealId: current.dealId };
+    }
 
     // INVARIANT MONOTONE DES RÉSULTATS : ne JAMAIS dropper un agent déjà persisté.
     // completeAnalysis peut être appelé avec un set PARTIEL (chemin stop=thesis_only,
@@ -247,23 +255,70 @@ export async function completeAnalysis(params: {
       (r) => isJsonObject(r) && (r as { success?: unknown }).success === true,
     ).length;
 
-    return tx.analysis.update({
-      where: { id: params.analysisId },
-      data: {
-        status: params.statusOverride ?? "COMPLETED",
-        completedAt: new Date(),
-        // Compteur monotone volontaire (cf. persistence-progress-monotone.test).
-        // La couverture HONNÊTE affichée à l'utilisateur est recalculée côté UI
-        // (analysis-v2 buildDecisionStripModel.coverage), pas via ce champ DB.
-        completedAgents: monotoneCompletedAgents(current?.completedAgents, successfulCount),
-        totalCost: monotoneCost(current?.totalCost, params.totalCost),
-        totalTimeMs: params.totalTimeMs,
-        summary: params.summary,
-        results: mergedResults as Prisma.InputJsonValue,
-        mode: params.mode,
-      },
-    });
+    const data = {
+      status: params.statusOverride ?? "COMPLETED",
+      completedAt: new Date(),
+      // Compteur monotone volontaire (cf. persistence-progress-monotone.test).
+      // La couverture HONNÊTE affichée à l'utilisateur est recalculée côté UI
+      // (analysis-v2 buildDecisionStripModel.coverage), pas via ce champ DB.
+      completedAgents: monotoneCompletedAgents(current?.completedAgents, successfulCount),
+      totalCost: monotoneCost(current?.totalCost, params.totalCost),
+      totalTimeMs: params.totalTimeMs,
+      summary: params.summary,
+      results: mergedResults as Prisma.InputJsonValue,
+      mode: params.mode,
+    };
+
+    if (params.statusOverride === "FAILED") {
+      // Écriture CONDITIONNELLE : ferme aussi la course read→write (une complétion
+      // commitée entre le findUnique ci-dessus et ce write ne sera jamais écrasée).
+      const res = await tx.analysis.updateMany({
+        where: { id: params.analysisId, NOT: { status: "COMPLETED" } },
+        data,
+      });
+      if (res.count === 0) {
+        return { skipped: true as const, dealId: current?.dealId ?? null };
+      }
+      return { skipped: false as const, dealId: current?.dealId ?? null };
+    }
+
+    const row = await tx.analysis.update({ where: { id: params.analysisId }, data });
+    return { skipped: false as const, dealId: row.dealId };
   });
+
+  if (txOutcome.skipped) {
+    logger.warn(
+      { analysisId: params.analysisId },
+      "completeAnalysis: FAILED override ignoré — analyse déjà COMPLETED (livrée), aucun écrasement ni effet"
+    );
+    return;
+  }
+
+  if (txOutcome.dealId) {
+    await runPostCompletionEffects({
+      analysisId: params.analysisId,
+      dealId: txOutcome.dealId,
+      mergedResults,
+      status: params.statusOverride ?? "COMPLETED",
+      previousStatus,
+    });
+  }
+}
+
+/**
+ * Effets post-complétion partagés (extraits BYTE-ÉQUIVALENTS de completeAnalysis,
+ * réutilisés par salvageAnalysisFromSnapshot) : cache blob des results, read-model
+ * AnalysisSignalSummary (Phase H2), signal Sentry « completed degraded » (Phase I1).
+ * Tous best-effort : la DB porte déjà la vérité canonique à ce stade.
+ */
+async function runPostCompletionEffects(params: {
+  analysisId: string;
+  dealId: string;
+  mergedResults: Record<string, unknown>;
+  status: "COMPLETED" | "FAILED";
+  previousStatus: string | null;
+}): Promise<void> {
+  const { analysisId, dealId, mergedResults, status, previousStatus } = params;
 
   // PERF: Upload results to Blob storage for fast retrieval.
   // The DB results blob (several MB) takes 30s+ to load from Neon over network.
@@ -271,25 +326,25 @@ export async function completeAnalysis(params: {
   try {
     const { uploadFile } = await import("@/services/storage");
     const jsonBuffer = Buffer.from(JSON.stringify(mergedResults));
-    await uploadFile(`analysis-results/${params.analysisId}.json`, jsonBuffer, {
+    await uploadFile(`analysis-results/${analysisId}.json`, jsonBuffer, {
       access: "private",
       allowOverwrite: true,
     });
     logger.debug({
-      analysisId: params.analysisId,
+      analysisId,
       sizeKb: Math.round(jsonBuffer.length / 1024),
     }, "Results cached to blob");
   } catch (err) {
     // Non-blocking: DB has the data, blob is just a fast cache
-    logger.warn({ err, analysisId: params.analysisId }, "Failed to cache results to blob");
+    logger.warn({ err, analysisId }, "Failed to cache results to blob");
   }
 
   // Phase H2 — warm the denormalized read-model (AnalysisSignalSummary) so the hot
   // SSR pages skip loadResults. Best-effort (the upsert never throws) and the read
   // self-corrects on miss, so this is an optimisation, not a correctness invariant.
   // Skip FAILED completions: only a COMPLETED analysis is canonical-eligible.
-  if ((params.statusOverride ?? "COMPLETED") === "COMPLETED") {
-    await upsertAnalysisSignalSummary(params.analysisId, analysis.dealId, mergedResults);
+  if (status === "COMPLETED") {
+    await upsertAnalysisSignalSummary(analysisId, dealId, mergedResults);
 
     // Phase I1 — surface "completed but degraded" analyses to monitoring. Agent
     // failures are swallowed into results (success:false) and the analysis still
@@ -307,8 +362,8 @@ export async function completeAnalysis(params: {
       if (failedAgents.length > 0) {
         logger.error(
           {
-            analysisId: params.analysisId,
-            dealId: analysis.dealId,
+            analysisId,
+            dealId,
             failedAgents,
             failedCount: failedAgents.length,
           },
@@ -317,8 +372,90 @@ export async function completeAnalysis(params: {
       }
     }
   }
+}
 
-  return analysis;
+/**
+ * Sauvetage watchdog (stale-reaper) : flip ATOMIQUE RUNNING→COMPLETED d'une analyse
+ * figée dont le dernier snapshot stepwise contient un livrable exploitable.
+ *
+ * Contrat distinct de completeAnalysis (qui DOIT pouvoir re-compléter une analyse
+ * déjà terminale — chemins set partiel / double-complétion) : ici le flip est GATE
+ * sur status=RUNNING (`updateMany` conditionnel) — seule la transition gagnante
+ * écrit results/summary et déclenche les effets post-complétion. Une complétion
+ * normale ou un reap FAILED commis entre-temps gagne la course → count=0 → on
+ * n'écrase RIEN et l'appelant n'applique aucun effet (ni refund, ni reset deal).
+ *
+ * Le merge results + compteurs monotones suivent les mêmes invariants que
+ * completeAnalysis (jamais dropper un agent déjà persisté, jamais régresser).
+ */
+export async function salvageAnalysisFromSnapshot(params: {
+  analysisId: string;
+  results: Record<string, unknown>;
+  summary: string;
+  totalCost: number;
+  totalTimeMs: number;
+}): Promise<{ salvaged: boolean; dealId: string | null }> {
+  const serializedResults = JSON.parse(JSON.stringify(params.results)) as Record<string, unknown>;
+  let mergedResults: Record<string, unknown> = serializedResults;
+
+  const txOutcome = await prisma.$transaction(async (tx) => {
+    const current = await tx.analysis.findUnique({
+      where: { id: params.analysisId },
+      select: { completedAgents: true, totalCost: true, results: true, status: true, dealId: true },
+    });
+    if (!current || current.status !== "RUNNING") {
+      return { flipped: false, dealId: current?.dealId ?? null };
+    }
+
+    mergedResults = mergeAnalysisResults(current.results, serializedResults);
+    const successfulCount = Object.values(mergedResults).filter(
+      (r) => isJsonObject(r) && (r as { success?: unknown }).success === true,
+    ).length;
+
+    // Gate atomique : re-vérifie status=RUNNING AU MOMENT de l'écriture (le read
+    // ci-dessus peut être périmé sous READ COMMITTED). Le seul écrivain concurrent
+    // plausible sur une analyse figée 20+ min est l'autre watchdog (scan global vs
+    // per-analyse) ou une complétion tardive — dans les deux cas le perdant du gate
+    // s'abstient intégralement.
+    const flip = await tx.analysis.updateMany({
+      where: { id: params.analysisId, status: "RUNNING" },
+      data: {
+        status: "COMPLETED",
+        completedAt: new Date(),
+        completedAgents: monotoneCompletedAgents(current.completedAgents, successfulCount),
+        totalCost: monotoneCost(current.totalCost, params.totalCost),
+        totalTimeMs: params.totalTimeMs,
+        summary: params.summary,
+        results: mergedResults as Prisma.InputJsonValue,
+      },
+    });
+    return { flipped: flip.count === 1, dealId: current.dealId };
+  });
+
+  if (!txOutcome.flipped || !txOutcome.dealId) {
+    return { salvaged: false, dealId: txOutcome.dealId };
+  }
+
+  // Le flip est COMMIS : à partir d'ici le résultat est salvaged:true quoi qu'il
+  // arrive (un throw des effets best-effort ne doit pas faire croire à l'appelant
+  // que le sauvetage a échoué — il retomberait sur le chemin FAILED+refund alors
+  // que l'analyse est déjà COMPLETED).
+  try {
+    await runPostCompletionEffects({
+      analysisId: params.analysisId,
+      dealId: txOutcome.dealId,
+      mergedResults,
+      status: "COMPLETED",
+      // Gate RUNNING gagné → transition certaine vers COMPLETED : le signal I1
+      // « completed degraded » doit partir (le memo manquant y figure en failed).
+      previousStatus: "RUNNING",
+    });
+  } catch (err) {
+    logPersistenceError("salvageAnalysisFromSnapshot.postCompletionEffects", err, {
+      analysisId: params.analysisId,
+    });
+  }
+  return { salvaged: true, dealId: txOutcome.dealId };
 }
 
 /**
@@ -1201,14 +1338,24 @@ export async function markAnalysisAsFailed(
   reason: string
 ): Promise<void> {
   try {
-    await prisma.analysis.update({
-      where: { id: analysisId },
+    // TERMINAL-SAFE (gate Codex salvage) : écriture CONDITIONNELLE — ne JAMAIS
+    // écraser une analyse déjà COMPLETED (livrée, ex. salvage watchdog commis
+    // entre le read RUNNING du chemin resume et cet appel).
+    const res = await prisma.analysis.updateMany({
+      where: { id: analysisId, NOT: { status: "COMPLETED" } },
       data: {
         status: "FAILED",
         completedAt: new Date(),
         summary: `Analysis interrupted: ${reason}`,
       },
     });
+    if (res.count === 0) {
+      logger.warn(
+        { analysisId, reason },
+        "markAnalysisAsFailed: ignoré — analyse déjà COMPLETED (livrée) ou inexistante"
+      );
+      return;
+    }
 
     if (process.env.NODE_ENV === "development") {
       console.log(`[Checkpoint] Marked analysis ${analysisId} as FAILED: ${reason}`);

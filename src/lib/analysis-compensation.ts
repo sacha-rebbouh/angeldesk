@@ -48,20 +48,28 @@ export async function compensateFailedAnalysis(params: {
   } catch (err) {
     logger.error({ err, dealId: params.dealId, userId: params.userId }, 'Inngest refund failed for failed analysis');
   }
+  await resetDealStatusIfIdle(params.dealId);
+}
+
+/**
+ * Remet le deal en IN_DD s'il ne reste aucune autre analyse RUNNING. Partagé par
+ * la compensation (FAILED+refund) et le sauvetage (COMPLETED dégradé sans refund).
+ */
+async function resetDealStatusIfIdle(dealId: string): Promise<void> {
   try {
     const anotherRunningAnalysis = await prisma.analysis.findFirst({
       where: {
-        dealId: params.dealId,
+        dealId,
         status: "RUNNING",
       },
       select: { id: true },
     });
 
     if (!anotherRunningAnalysis) {
-      await prisma.deal.update({ where: { id: params.dealId }, data: { status: 'IN_DD' } });
+      await prisma.deal.update({ where: { id: dealId }, data: { status: 'IN_DD' } });
     }
   } catch (err) {
-    logger.error({ err, dealId: params.dealId }, 'Inngest deal status reset failed');
+    logger.error({ err, dealId }, 'Inngest deal status reset failed');
   }
 }
 
@@ -77,17 +85,101 @@ interface ReapableAnalysis {
 }
 
 /**
- * Reape UNE analyse si figée : RUNNING + dernière activité (dernier checkpoint, sinon
- * `startedAt`) au-delà du cutoff. Flip atomique RUNNING→FAILED (seule la transition
- * gagnante rembourse) + refund + reset deal. Source UNIQUE de la logique de reap,
- * partagée par le scan global (`reapStaleAnalyses`) et le watchdog par-analyse.
- * Retourne true si reapée, false sinon (fraîche, abstention, course perdue, userId manquant).
+ * Agent-seuil du sauvetage « livrable dégradé » (décision produit 2026-06-12) : si la
+ * synthèse transversale a abouti dans le snapshot, le cœur du livrable (21 agents +
+ * signal/dimensions) existe → on livre COMPLETED dégradé SANS refund au lieu de
+ * jeter+rembourser. En dessous de ce seuil (pas de synthèse), le livrable serait
+ * creux → FAILED + refund comme avant.
  */
-async function reapIfStale(a: ReapableAnalysis, cutoff: Date, nowMs: number): Promise<boolean> {
+export const SALVAGE_THRESHOLD_AGENT = "synthesis-deal-scorer";
+
+/**
+ * Tentative de sauvetage AVANT le flip FAILED : lit le dernier snapshot stepwise
+ * (STEPWISE:*) ; si l'agent-seuil y est en succès, complète l'analyse en dégradé
+ * depuis snapshot.allResults (placeholder memo-generator en échec si absent, résumé
+ * dégradé) via un flip atomique RUNNING→COMPLETED, PAS de refund.
+ *
+ * Retourne 'salvaged' si CE chemin a gagné le flip ; null sinon (pas de snapshot,
+ * seuil non atteint, course perdue, ou TOUTE erreur — lecture/validation snapshot,
+ * écriture). null = l'appelant retombe sur le reap FAILED+refund existant :
+ * fail-open vers le remboursement, jamais de blocage du watchdog.
+ */
+async function trySalvageFromSnapshot(a: ReapableAnalysis, nowMs: number): Promise<'salvaged' | null> {
+  try {
+    const { readLatestStepwiseSnapshot } = await import("@/agents/orchestrator/full-analysis-snapshot");
+    const snapshot = await readLatestStepwiseSnapshot(a.id);
+    if (!snapshot) return null;
+
+    const threshold = snapshot.allResults[SALVAGE_THRESHOLD_AGENT] as { success?: unknown } | undefined;
+    if (threshold?.success !== true) return null;
+
+    const results: Record<string, unknown> = { ...snapshot.allResults };
+    // Le seuil garantit que tout ce qui précède memo-generator (dernier batch) est
+    // dans le snapshot — seule pièce potentiellement manquante. Entrée failed
+    // explicite (pas une absence muette) : la couverture UI et le signal I1
+    // « completed degraded » la voient.
+    if (!results["memo-generator"]) {
+      results["memo-generator"] = {
+        agentName: "memo-generator",
+        success: false,
+        executionTimeMs: 0,
+        cost: 0,
+        error:
+          "Interrompu (timeout infrastructure) — analyse finalisée par le watchdog sans le memo",
+      };
+    }
+
+    const { generateFullAnalysisSummary } = await import("@/agents/orchestrator/summary");
+    const summary =
+      "Analyse finalisée automatiquement après une interruption d'infrastructure : " +
+      "le memo n'a pas pu être généré ; les autres analyses sont complètes.\n\n" +
+      generateFullAnalysisSummary(results as Parameters<typeof generateFullAnalysisSummary>[0]);
+
+    const { salvageAnalysisFromSnapshot } = await import("@/agents/orchestrator/persistence");
+    const { salvaged } = await salvageAnalysisFromSnapshot({
+      analysisId: a.id,
+      results,
+      summary,
+      totalCost: snapshot.totalCost,
+      totalTimeMs: Math.max(0, nowMs - snapshot.startTimeMs),
+    });
+    return salvaged ? 'salvaged' : null;
+  } catch (err) {
+    logger.error(
+      { err, analysisId: a.id, dealId: a.dealId },
+      '[stale-reaper] salvage attempt failed — falling back to FAILED+refund'
+    );
+    return null;
+  }
+}
+
+/**
+ * Reape UNE analyse si figée : RUNNING + dernière activité (dernier checkpoint, sinon
+ * `startedAt`) au-delà du cutoff. D'abord tentative de SAUVETAGE (snapshot stepwise
+ * exploitable → flip atomique RUNNING→COMPLETED dégradé, sans refund) ; sinon flip
+ * atomique RUNNING→FAILED (seule la transition gagnante rembourse) + refund + reset
+ * deal. Source UNIQUE de la logique de reap, partagée par le scan global
+ * (`reapStaleAnalyses`) et le watchdog par-analyse.
+ * Retourne 'salvaged' | 'reaped' si CE chemin a terminalisé l'analyse, null sinon
+ * (fraîche, abstention, course perdue, userId manquant).
+ */
+async function reapIfStale(a: ReapableAnalysis, cutoff: Date, nowMs: number): Promise<'salvaged' | 'reaped' | null> {
   // Signal de vivacité : dernier checkpoint écrit, sinon startedAt.
   const lastActivity = a.checkpoints[0]?.createdAt ?? a.startedAt;
-  if (!lastActivity) return false; // aucune activité datable → on s'abstient
-  if (new Date(lastActivity) >= cutoff) return false; // encore frais → vivant
+  if (!lastActivity) return null; // aucune activité datable → on s'abstient
+  if (new Date(lastActivity) >= cutoff) return null; // encore frais → vivant
+
+  // Sauvetage d'abord : une analyse 21/22 avec synthèse aboutie est un livrable,
+  // pas un déchet. Si le flip salvage gagne, AUCUN refund (décision produit).
+  const salvaged = await trySalvageFromSnapshot(a, nowMs);
+  if (salvaged) {
+    await resetDealStatusIfIdle(a.dealId);
+    logger.warn(
+      { analysisId: a.id, dealId: a.dealId, lastActivity },
+      '[stale-reaper] stale RUNNING analysis salvaged → COMPLETED degraded (no refund), deal IN_DD'
+    );
+    return 'salvaged';
+  }
 
   // Flip atomique : seule la transition gagnante déclenche le refund.
   const flip = await prisma.analysis.updateMany({
@@ -100,14 +192,14 @@ async function reapIfStale(a: ReapableAnalysis, cutoff: Date, nowMs: number): Pr
         'par le watchdog pour autoriser la relance. Crédits remboursés.',
     },
   });
-  if (flip.count !== 1) return false; // déjà terminalisée par un autre chemin
+  if (flip.count !== 1) return null; // déjà terminalisée par un autre chemin
 
   if (!a.deal?.userId) {
     logger.error(
       { analysisId: a.id, dealId: a.dealId },
       '[stale-reaper] flipped FAILED but deal has no userId — cannot refund'
     );
-    return false;
+    return null;
   }
 
   await compensateFailedAnalysis({
@@ -120,7 +212,7 @@ async function reapIfStale(a: ReapableAnalysis, cutoff: Date, nowMs: number): Pr
     { analysisId: a.id, dealId: a.dealId, lastActivity },
     '[stale-reaper] stale RUNNING analysis reaped → FAILED + refunded + deal IN_DD'
   );
-  return true;
+  return 'reaped';
 }
 
 /**
@@ -148,6 +240,8 @@ export async function reapStaleAnalyses(nowMs: number = Date.now()): Promise<{
   scanned: number;
   reaped: number;
   reapedIds: string[];
+  salvaged: number;
+  salvagedIds: string[];
 }> {
   const cutoff = new Date(nowMs - STALE_ANALYSIS_REAP_MS);
 
@@ -168,23 +262,36 @@ export async function reapStaleAnalyses(nowMs: number = Date.now()): Promise<{
   });
 
   const reapedIds: string[] = [];
+  const salvagedIds: string[] = [];
   for (const a of running) {
-    if (await reapIfStale(a, cutoff, nowMs)) reapedIds.push(a.id);
+    const outcome = await reapIfStale(a, cutoff, nowMs);
+    if (outcome === 'reaped') reapedIds.push(a.id);
+    else if (outcome === 'salvaged') salvagedIds.push(a.id);
   }
 
-  if (reapedIds.length > 0) {
-    logger.warn({ scanned: running.length, reaped: reapedIds.length, reapedIds }, '[stale-reaper] run complete');
+  if (reapedIds.length > 0 || salvagedIds.length > 0) {
+    logger.warn(
+      { scanned: running.length, reaped: reapedIds.length, reapedIds, salvaged: salvagedIds.length, salvagedIds },
+      '[stale-reaper] run complete'
+    );
   }
-  return { scanned: running.length, reaped: reapedIds.length, reapedIds };
+  return {
+    scanned: running.length,
+    reaped: reapedIds.length,
+    reapedIds,
+    salvaged: salvagedIds.length,
+    salvagedIds,
+  };
 }
 
 /**
  * Issue d'un check par-analyse (watchdog événementiel) :
+ * - 'salvaged' : était figée mais livrable → flippée COMPLETED dégradée, SANS refund
  * - 'reaped'   : était figée → flippée FAILED + remboursée
  * - 'terminal' : n'est plus RUNNING (terminée / disparue) → plus rien à surveiller
  * - 'alive'    : encore RUNNING et fraîche → continuer à surveiller
  */
-export type SingleReapOutcome = { status: 'reaped' | 'terminal' | 'alive' };
+export type SingleReapOutcome = { status: 'salvaged' | 'reaped' | 'terminal' | 'alive' };
 
 /**
  * Watchdog par-analyse (résolu par id, chemin resume). Reape CETTE analyse si figée.
@@ -209,7 +316,7 @@ export async function reapStaleAnalysisById(
   });
   if (!a || a.status !== 'RUNNING') return { status: 'terminal' };
   const cutoff = new Date(nowMs - STALE_ANALYSIS_REAP_MS);
-  return { status: (await reapIfStale(a, cutoff, nowMs)) ? 'reaped' : 'alive' };
+  return { status: (await reapIfStale(a, cutoff, nowMs)) ?? 'alive' };
 }
 
 /**
@@ -238,5 +345,5 @@ export async function reapStaleAnalysisByDispatchEventId(
   if (!a) return { status: 'alive' };
   if (a.status !== 'RUNNING') return { status: 'terminal' };
   const cutoff = new Date(nowMs - STALE_ANALYSIS_REAP_MS);
-  return { status: (await reapIfStale(a, cutoff, nowMs)) ? 'reaped' : 'alive' };
+  return { status: (await reapIfStale(a, cutoff, nowMs)) ?? 'alive' };
 }

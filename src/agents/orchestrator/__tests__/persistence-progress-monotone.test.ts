@@ -6,6 +6,7 @@ const prismaMocks = vi.hoisted(() => {
     analysis: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     analysisCheckpoint: {
       create: vi.fn(),
@@ -68,7 +69,8 @@ describe("analysis progress persistence monotonicity", () => {
     prismaMocks.prisma.$transaction.mockImplementation(
       async (callback: (tx: typeof prismaMocks.prisma) => unknown) => callback(prismaMocks.prisma)
     );
-    prismaMocks.prisma.analysis.update.mockResolvedValue({ id: "analysis_1" });
+    prismaMocks.prisma.analysis.update.mockResolvedValue({ id: "analysis_1", dealId: "deal_1" });
+    prismaMocks.prisma.analysis.updateMany.mockResolvedValue({ count: 1 });
     prismaMocks.prisma.analysisCheckpoint.create.mockResolvedValue({ id: "checkpoint_1" });
   });
 
@@ -112,8 +114,11 @@ describe("analysis progress persistence monotonicity", () => {
       },
     });
 
-    expect(prismaMocks.prisma.analysis.update).toHaveBeenCalledWith(
+    // Le write FAILED passe désormais par updateMany CONDITIONNEL (NOT COMPLETED,
+    // terminal-safe — gate Codex salvage) ; l'invariant monotone reste identique.
+    expect(prismaMocks.prisma.analysis.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: { id: "analysis_1", NOT: { status: "COMPLETED" } },
         data: expect.objectContaining({
           completedAgents: 3,
           totalCost: 1.25,
