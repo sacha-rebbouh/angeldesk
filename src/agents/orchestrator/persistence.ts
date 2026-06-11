@@ -8,6 +8,7 @@ import {
 } from "@/services/corpus";
 import { loadResults } from "@/services/analysis-results/load-results";
 import { isGrowthRateInRange } from "@/services/deals/growth-rate-bounds";
+import { upsertAnalysisSignalSummary } from "@/services/deals/analysis-signal-summary";
 import type {
   AgentResult,
   RedFlagResult,
@@ -276,6 +277,14 @@ export async function completeAnalysis(params: {
   } catch (err) {
     // Non-blocking: DB has the data, blob is just a fast cache
     logger.warn({ err, analysisId: params.analysisId }, "Failed to cache results to blob");
+  }
+
+  // Phase H2 — warm the denormalized read-model (AnalysisSignalSummary) so the hot
+  // SSR pages skip loadResults. Best-effort (the upsert never throws) and the read
+  // self-corrects on miss, so this is an optimisation, not a correctness invariant.
+  // Skip FAILED completions: only a COMPLETED analysis is canonical-eligible.
+  if ((params.statusOverride ?? "COMPLETED") === "COMPLETED") {
+    await upsertAnalysisSignalSummary(params.analysisId, analysis.dealId, mergedResults);
   }
 
   return analysis;

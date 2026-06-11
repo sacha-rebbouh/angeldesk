@@ -1,6 +1,19 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Perf — Phase H (H2b) : service signal-summary + write completeAnalysis + read self-correcting
+
+### Fichiers
+- `src/services/analysis-results/score-extraction.ts` : `extractCanonicalExtractedInfo` + type `CanonicalExtractedInfo` (+ helpers `isRecord`/`readString`) DÉPLACÉS ici depuis canonical-read-model (module neutre « pure extraction », à côté d'`extractAnalysisScores`) → évite le cycle service ↔ read-model.
+- NOUVEAU `src/services/deals/analysis-signal-summary.ts` : `CURRENT_SIGNAL_SUMMARY_SCHEMA_VERSION=1` ; `computeAnalysisSignalSummary(results)` (pur) ; `readAnalysisSignalSummaries(ids)` bulk findMany filtré sur la version courante, **best-effort** (try/catch → Map vide sur erreur, ex. table absente pendant la fenêtre de migration manuelle D4 → tous misses → fallback loadResults, zéro crash SSR) ; `upsertAnalysisSignalSummary(analysisId,dealId,results)` best-effort (ne throw jamais, log.warn). `rowToData` reconstruit `extractedInfo=null` si les 5 colonnes sont null (miroir du contrat d'extraction).
+- `src/agents/orchestrator/persistence.ts` `completeAnalysis` : upsert du summary **HORS transaction**, après le blob upload, garde `statusOverride !== FAILED`. Divergence assumée de la reco Codex « même transaction » : un échec d'écriture du cache ne doit pas rollback une complétion terminale réussie (sinon l'analyse retombe RUNNING). Le read self-correcting couvre l'absence → l'écriture est une pure optimisation.
+- `src/services/deals/canonical-read-model.ts` : le bloc `loadResults` par-deal remplacé par lecture du read-model (`readAnalysisSignalSummaries`) ; misses uniquement → `loadResults` + `computeAnalysisSignalSummary` + ré-`upsert`. Hot path = 0 blob. Comportement scores/extracted-info préservé EXACTEMENT (null semantics, Float). Type `CanonicalExtractedInfo` ré-exporté.
+- NOUVEAUX tests : `analysis-signal-summary.test.ts` (contrat compute, float 79.5 préservé, garbage→null) ; `canonical-read-model-signal-summary.test.ts` (hit = 0 loadResults/0 upsert ; miss = loadResults + upsert 1× + hit==miss equivalence ; cache read throws → fallback loadResults ; upsert throws → read renvoie quand même). 6 tests.
+
+### Description
+Phase H2b du plan post-audit. Élimine le `loadResults(blob multi-MB)` par-deal sur les 3 pages SSR via le read-model `AnalysisSignalSummary` (clé analysisId, immuable → sans staleness). Read ET write best-effort → le read-model est une optimisation, jamais une dépendance dure (table manquante / cache cassé → dégrade au comportement pré-H2). Gate Codex H2b : 1 REQUEST_CHANGES (cache read non gardé → risque de crash SSR pendant la fenêtre de déploiement avant migration manuelle) → corrigé (read best-effort + test). Vérifs : tsc 0, eslint 0, suite unit 4390 passed / 9 skipped / 0 failed. Suite : H2c (script backfill dry-run).
+
+---
 ## 2026-06-11 — Schema/migration — Phase H (H2a) : table AnalysisSignalSummary (read-model dénormalisé)
 
 ### Fichiers
@@ -406,11 +419,5 @@ Sur une analyse Avekapeti rendue en prod, l'utilisateur a vu deux défauts : (#1
 
 ### Vérif
 analysis-v2 53 tests ; suite unit complète 4338 passed / 2 skipped ; tsc clean (hors `exit-strategist.ts`). Gate Codex : APPROVE (après 1 REQUEST_CHANGES — couverture P0 incomplète + sujet investisseur + period helper).
-
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 8c : Pappers MCP (décision argent → utilisateur)
-
-### Décision
-MCP officiel Pappers vérifié réel (`mcp.pappers.fr/{clé}`, abonnement payant à crédits, essai 2 semaines). Décision argent posée à l'utilisateur (AskUserQuestion) → **« Rester au plancher »**. 8a/8b reste la solution livrée pour #6 ; ni clé REST ni MCP provisionnés maintenant. MCP scopé et différé (revisité quand budget tranché). Aucun changement de code (la notice « couverture légale à vérifier » couvre l'UX en attendant).
 
 
