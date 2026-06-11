@@ -18,13 +18,18 @@ describe("deck-forensics B16 timeout hardening", () => {
     expect(source).not.toContain("timeoutMs: 150000");
   });
 
-  it("bounds secondary document context and falls back only after provider timeout", () => {
+  it("bounds secondary document context and falls back on provider timeout OR empty_response", () => {
     const source = readFileSync("src/agents/tier1/deck-forensics.ts", "utf8");
 
     expect(source).toContain("DECK_FORENSICS_OTHER_DOC_MAX_CHARS");
     expect(source).toContain("buildDeckForensicsPromptContext");
     expect(source).toContain("compactExtractedInfoForPrompt");
     expect(source).toContain('model: "GEMINI_3_FLASH"');
-    expect(source).toContain("Gemini Pro timed out");
+    // Robustesse (Opt 1) : le fallback Gemini 3 Flash couvre désormais le timeout
+    // ET la réponse vide (empty_response), pas seulement le timeout.
+    expect(source).toContain("isEmptyResponseError");
+    expect(source).toContain("falling back to Gemini 3 Flash");
+    // Une erreur non transitoire (ni timeout ni empty_response) remonte toujours.
+    expect(source).toContain("if (!fallbackReason)");
   });
 });

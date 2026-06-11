@@ -10,6 +10,7 @@ import { extractFactsFromDealContext } from "@/services/context-engine/fact-norm
 import { getCacheManager } from "@/services/cache";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { isTransientInfraErrorMessage } from "@/lib/transient-errors";
 import { getBAPreferences, type BAPreferences } from "@/services/benchmarks";
 import {
   generateDealFingerprint,
@@ -5106,14 +5107,34 @@ export class AgentOrchestrator {
     );
 
     if (phase.name.includes("Phase A") && phaseFailCount > 0) {
-      const failedNames = phase.agents
-        .filter((agentName) => !allResults[agentName]?.success)
+      const failedAgents = phase.agents.filter(
+        (agentName) => !allResults[agentName]?.success
+      );
+      const failedNames = failedAgents
         .map((agentName) => `${agentName}: ${allResults[agentName]?.error ?? "unknown error"}`)
         .join(", ");
-      logger.error(
-        `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
+      // Opt 2 (robustesse deck-forensics) : un hoquet INFRA transitoire
+      // (empty_response, timeout, 429/5xx) sur le seul agent critique de Phase A ne
+      // doit pas tuer tout le Deep Dive (coûteux). On continue alors en mode DÉGRADÉ :
+      // l'agent reste success:false (jamais converti en signal/red flag), completeAnalysis
+      // remonte la dégradation (signal Sentry I1), et le résultat final n'est pas
+      // « pleinement réussi ». Une VRAIE erreur (schéma, bug, non transitoire) avorte
+      // toujours — on ne masque jamais un problème non infra.
+      const allTransient = failedAgents.every((agentName) =>
+        isTransientInfraErrorMessage(allResults[agentName]?.error)
       );
-      throw new Error(`Critical Tier 1 phase failed: ${failedNames}`);
+      if (allTransient) {
+        // warn (pas error) : le signal Sentry CENTRAL de dégradation part déjà à
+        // completeAnalysis (I1). Éviter une 2ᵉ issue Sentry par analyse dégradée.
+        logger.warn(
+          `[Orchestrator] ${phase.name} infra failure — continuing DEGRADED (no abort): ${failedNames}`
+        );
+      } else {
+        logger.error(
+          `[Orchestrator] ABORTING remaining phases: critical agent(s) failed in ${phase.name} — ${failedNames}`
+        );
+        throw new Error(`Critical Tier 1 phase failed: ${failedNames}`);
+      }
     }
 
     if (phase.name.includes("Phase B") && phaseFailCount > 0) {

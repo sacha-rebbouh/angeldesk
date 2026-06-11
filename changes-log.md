@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Robustesse — Chantier deck-forensics (hors plan post-audit) : un hoquet infra n'avorte plus le Deep Dive
+
+### Contexte
+Découvert au test local de la branche : `deck-forensics` (seul agent critique de Phase A) a renvoyé un `empty_response` Gemini déterministe sur un deck mince → tout le Deep Dive avorté (FAILED). Pré-existant (sur main aussi). Diagnostic routé à Codex **en indépendance** : cause = 3 choix qui se composent (deck-forensics seul en Phase A + `maxRetries:0` + fallback interne timeout-seulement + abort Phase A fatal). Décision Sacha : implémenter Opt 1 + Opt 2 (accepte que le dégradé soit **facturé, pas remboursé**).
+
+### Fichiers
+- NOUVEAU `src/lib/transient-errors.ts` : `isTransientInfraErrorMessage(msg)` **STRICT** — marqueurs phrase non ambigus (rate limit, timeout, service unavailable, internal server error, empty_response…) + code HTTP **uniquement en contexte de statut explicite** (jamais un nombre nu type « score 500 out of range »). Strict car un faux positif MASQUERAIT un vrai défaut au gate critique.
+- `src/agents/tier1/deck-forensics.ts` (**Opt 1**) : le fallback Gemini 3 Flash se déclenche désormais sur timeout **OU `empty_response`** (avant : timeout seul). `isEmptyResponseError` ajouté ; prompt de secours = « analyse minimale honnête, n'invente rien ». Erreur non transitoire → remonte (pas de masquage).
+- `src/agents/orchestrator/index.ts` (**Opt 2**, garde Phase A) : si l'échec de Phase A est **uniquement** une erreur infra transitoire → continue en **DÉGRADÉ** (plus d'abort de tout le Deep Dive) ; l'agent reste `success:false` (jamais converti en signal/red flag) ; `logger.warn` (le signal Sentry central part à completeAnalysis/I1). Échec **non** transitoire → abort conservé.
+- Tests : `transient-errors.test.ts` (strict + décoys nombres-nus → false) ; `deck-forensics-timeout-b16.test.ts` MAJ (fallback empty_response). Routeur `isRetryableError` **inchangé** (reste laxiste — sur-rejouer est inoffensif ; strictesses voulues différentes).
+
+### Description
+Chantier de robustesse **séparé du plan post-audit** (sur la branche `refonte/5-sujets`, commits distincts). Interaction **refund** assumée : dégradé → analyse `COMPLETED` (success:false), pas `FAILED` → pas de remboursement (l'investisseur paie un Deep Dive sans vérif forensique du deck). Validé end-to-end zéro-LLM en local (completeAnalysis dégradé → read-model H2 écrit + signal I1 émis). Gate Codex : APPROVE (après 1 REQUEST_CHANGES — classifieur trop large + double signal Sentry + flake temporel pré-existant `reanalysis-reservation` écarté avec preuve 3 runs verts). tsc 0, suite 4399 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-11 — Docs/CI — Phase I (I3 + I4 + G-différé) : README, .env.example, doc crédits, statuts docs, check SHA xlsx
 
 ### Fichiers
@@ -358,26 +373,6 @@ Refonte 5-sujets, S1. Le mémo d'investissement était aminci sur toute la chaî
 
 ### Vérif
 `tsc` clean (hors baseline `exit-strategist.ts` untracked). 225 tests verts sur les 2 zones touchées (`analysis-v2/__tests__/` + `tier3/__tests__/`) + nouveau test scrub label `financialSummary`. Baseline rouge inchangée (Neon capé : 6 `*-integration` + 5 coaching/live). Gate Codex : round 1 REQUEST_CHANGES (label `financialSummary` non scrubé) → corrigé + test → **APPROVE** round 2. Phase 5b (scrub doctrine classe « verdict » + guard/fixture/tests) = commit suivant.
-
----
-## 2026-06-04 — UX/infra — Phase 4 (refonte 5-sujets) : masque « analyse en cours » + email idempotent
-
-### Contexte
-Refonte 5-sujets (S4, Phase 1 seule). Une analyse Deep Dive est longue ; rien n'empêchait l'utilisateur de naviguer ailleurs en croyant l'analyse perdue. Objectif : masque plein écran au niveau page/onglets pendant qu'une analyse tourne + email « analyse prête » à la complétion. PAS de cancel, PAS de refund.
-
-### Changements
-- `prisma/schema.prisma` : 2 colonnes nullable sur `Analysis` — `analysisReadyEmailClaimedAt` / `analysisReadyEmailSentAt` (idempotence email). Client régénéré (`prisma generate`, sans DB). **Migration NON appliquée** (Neon capé) → générée en Phase 6.
-- `src/services/notifications/analysis-ready-email.ts` (NEW) : `sendAnalysisReadyNotification()` — **claim ATOMIQUE** (`updateMany where {id, sentAt:null, claimedAt:null}` → `count===1`) puis send Resend, `sentAt` au succès / reset `claimedAt`+throw à l'échec (retry Inngest). Claim ET send en `step.run` distincts. URL deal via env SERVEUR (`APP_URL`/`VERCEL_URL`).
-- `src/services/notifications/email.ts` : `isEmailConfigured()` + `sendAnalysisReadyEmail()` (template HTML doctrine-safe, aucun langage prescriptif).
-- `src/lib/inngest.ts` : appel best-effort sur succès de `dealAnalysisFunction` ET `dealAnalysisResumeFunction` (try/catch : un échec d'email ne fait pas échouer une analyse réussie). FAILED → pas d'email.
-- `src/components/deals/analysis-v2/analysis-running-overlay.tsx` (NEW) : masque plein écran `fixed inset-0 z-[60]`, dérivé du statut RUNNING serveur (poll, même queryKey que AnalysisV2Live), `beforeunload` informatif + verrou de scroll.
-- `src/app/(dashboard)/deals/[dealId]/page.tsx` : monte l'overlay au niveau page (au-dessus des onglets + chat).
-
-### Hardening idempotence (gate Codex round 1 → REQUEST_CHANGES, corrigé)
-Codex a trouvé 2 fenêtres de double-envoi : (1) concurrence — claim mémoïsé `true` au retry après reset+throw alors qu'un autre run a envoyé ; (2) succès Resend puis échec de l'`update(sentAt)` → replay renvoie. Root cause : le step send renvoyait sans condition. Fix : **clé d'idempotence provider** `Idempotency-Key: analysis-ready/${analysisId}` (Resend dédoublonne 24h — doc vérifiée) + **re-check `sentAt`** en tête du step send. Exactly-once garanti au niveau provider.
-
-### Vérif
-`tsc` clean (hors baseline `exit-strategist.ts` untracked). Tests notif 8/8 : `analysis-ready-email` 6/6 (claim gagnant/perdu, re-check skip concurrent, échec Resend→reset+throw, non-configuré, destinataire absent, assert clé idempotence) + `email-idempotency` 2/2 (header `Idempotency-Key` atteint `fetch`). `doctrine-guard` 10/10 (reword « bloquant »→« plein écran »). Suite complète : aucune régression introduite — 11 fichiers rouges = 6 `*-integration` (Neon capé) + 5 coaching/live (fallout Phase 3, rouges aussi à HEAD, vérifié par stash). Gate Codex : **APPROVE** (round 2).
 
 
 ---
