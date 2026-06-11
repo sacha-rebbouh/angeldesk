@@ -11,6 +11,10 @@ import {
   loadCanonicalDealSignals,
   resolveCanonicalAnalysisScores,
 } from "@/services/deals/canonical-read-model";
+import {
+  GROWTH_RATE_MAX,
+  GROWTH_RATE_MIN,
+} from "@/services/deals/growth-rate-bounds";
 
 const createDealSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -22,7 +26,7 @@ const createDealSchema = z.object({
   instrument: z.nativeEnum(FundingInstrument).optional(),
   geography: z.string().optional(),
   arr: z.number().positive().optional(),
-  growthRate: z.number().optional(),
+  growthRate: z.number().min(GROWTH_RATE_MIN).max(GROWTH_RATE_MAX).optional(),
   amountRequested: z.number().positive().optional(),
   valuationPre: z.number().positive().optional(),
 });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DealStage, DealStatus, FundingInstrument, Prisma } from "@prisma/client";
 import type { ExtractedFact, FactCategory } from "@/services/fact-store/types";
+import { GROWTH_RATE_MAX, GROWTH_RATE_MIN } from "./growth-rate-bounds";
 
 export const updateDealSchema = z.object({
   name: z.string().min(1).optional(),
@@ -12,7 +13,12 @@ export const updateDealSchema = z.object({
   instrument: z.nativeEnum(FundingInstrument).nullable().optional(),
   geography: z.string().nullable().optional(),
   arr: z.number().positive().nullable().optional(),
-  growthRate: z.number().nullable().optional(),
+  growthRate: z
+    .number()
+    .min(GROWTH_RATE_MIN)
+    .max(GROWTH_RATE_MAX)
+    .nullable()
+    .optional(),
   amountRequested: z.number().positive().nullable().optional(),
   valuationPre: z.number().positive().nullable().optional(),
   status: z.nativeEnum(DealStatus).nullable().optional(),

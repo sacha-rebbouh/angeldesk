@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   checkRateLimitDistributed: vi.fn(),
   dealCount: vi.fn(),
   dealFindMany: vi.fn(),
+  dealCreate: vi.fn(),
   handleApiError: vi.fn(),
   loadCanonicalDealSignals: vi.fn(),
   getCurrentFactString: vi.fn(),
@@ -26,7 +27,7 @@ vi.mock("@/lib/prisma", () => ({
     deal: {
       count: mocks.dealCount,
       findMany: mocks.dealFindMany,
-      create: vi.fn(),
+      create: mocks.dealCreate,
     },
   },
 }));
@@ -42,7 +43,7 @@ vi.mock("@/services/deals/canonical-read-model", () => ({
   resolveCanonicalAnalysisScores: mocks.resolveCanonicalAnalysisScores,
 }));
 
-const { GET } = await import("../route");
+const { GET, POST } = await import("../route");
 
 describe("GET /api/deals", () => {
   beforeEach(() => {
@@ -123,5 +124,47 @@ describe("GET /api/deals", () => {
       totalPages: 1,
       hasMore: false,
     });
+  });
+});
+
+describe("POST /api/deals growthRate bounds", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requireAuth.mockResolvedValue({ id: "user_1" });
+    mocks.checkRateLimitDistributed.mockResolvedValue({ allowed: true });
+    mocks.handleApiError.mockImplementation((error: unknown) => {
+      throw error;
+    });
+  });
+
+  const postWith = (growthRate: number) =>
+    POST(
+      new NextRequest("http://localhost/api/deals", {
+        method: "POST",
+        body: JSON.stringify({ name: "Hypergrowth Co", growthRate }),
+      })
+    );
+
+  it("rejects a growthRate above the Decimal(7,2) ceiling without touching the DB", async () => {
+    await expect(postWith(150_000)).rejects.toThrow();
+    expect(mocks.dealCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects a growthRate below the -100% floor without touching the DB", async () => {
+    await expect(postWith(-150)).rejects.toThrow();
+    expect(mocks.dealCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts a high growth (5000%) that the old Decimal(5,2) column rejected", async () => {
+    mocks.dealCreate.mockResolvedValue({ id: "deal_new", growthRate: 5000 });
+
+    const response = await postWith(5000);
+
+    expect(response.status).toBe(201);
+    expect(mocks.dealCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ growthRate: 5000 }),
+      })
+    );
   });
 });

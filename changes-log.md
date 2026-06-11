@@ -1,6 +1,20 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Schema/migration — Phase F (F6) : growthRate Decimal(7,2) + bornes Zod
+
+### Fichiers
+- `prisma/schema.prisma` : `Deal.growthRate` passe de `Decimal(5,2)` (plafond ±999.99) à `Decimal(7,2)` (±99999.99). La précision (5,2) faisait échouer l'insert (`numeric field overflow`) pour tout deal à forte croissance (>999%).
+- NOUVEAU `prisma/migrations/20260611001644_growthrate_decimal_precision/migration.sql` : `ALTER TABLE "Deal" ALTER COLUMN "growthRate" SET DATA TYPE DECIMAL(7,2)`. Migration générée APRÈS `0_baseline` (jamais édité). Élargissement pur → aucune valeur existante perdue (≤999.99 rentre dans 99999.99).
+- NOUVEAU `src/services/deals/growth-rate-bounds.ts` : source de vérité unique des bornes (`GROWTH_RATE_MIN=-100`, `GROWTH_RATE_MAX=99999.99`, `isGrowthRateInRange()`). Plancher -100 (le CA ne décroît pas de plus de 100% YoY) ; plafond aligné sur la colonne.
+- `src/app/api/deals/route.ts` (POST `createDealSchema`) + `src/services/deals/manual-fact-overrides.ts` (PATCH `updateDealSchema`) : `growthRate` gagne `.min(GROWTH_RATE_MIN).max(GROWTH_RATE_MAX)` (avant : aucune borne → garbage/overflow possible). Rejet (400) hors plage, jamais de clamp silencieux.
+- `src/agents/orchestrator/persistence.ts` (gate Codex) : le 3ᵉ chemin d'écriture — `processAgentResult`/document-extractor écrit la valeur growthRate EXTRAITE (sortie LLM) sans schéma Zod — applique désormais `isGrowthRateInRange` : **skip + `logger.warn`** hors plage (pas de clamp d'une donnée inférée). Sans ce guard, une extraction hallucinée pouvait overflow la colonne ou contourner la policy.
+- Tests : `deals/__tests__/route.test.ts` +3 POST (rejet >plafond / <plancher sans toucher la DB ; acceptation 5000% que l'ancien (5,2) rejetait) ; NOUVEAU `growth-rate-bounds.test.ts` (bornes + non-finis) ; NOUVEAU `persistence-growthrate-bounds.test.ts` (extrait in-range persisté / out-of-range skip+warn).
+
+### Description
+Phase F (F6) du plan post-audit. ⚠️ **ACTION SACHA : appliquer la migration en prod Neon À LA MAIN** (comme D4 — `angeldesk_prod_migrations.md`), après merge ; NON appliquée automatiquement. L'`ALTER` peut prendre un bref ACCESS EXCLUSIVE (réécriture numeric) — table Deal petite, sous-seconde. Validé sur docker postgres:16 vierge : `migrate deploy` (baseline + nouvelle) OK + `migrate diff` post-deploy vide. Preuve typmod : `12345.67::numeric(7,2)` OK vs `numeric(5,2)` → overflow. Gate Codex : 1 REQUEST_CHANGES (3ᵉ chemin d'écriture growthRate non borné dans la persistance orchestrateur + centralisation des bornes) → corrigé. Vérifs : tsc 0, eslint 0, suite unit 4384 passed / 9 skipped / 0 failed. Fin de Phase F. Suite : Phase G (xlsx).
+
+---
 ## 2026-06-11 — Tests/billing — Phase F (F5) : guards billing resume regex→comportementaux
 
 ### Fichiers
@@ -409,21 +423,4 @@ Le réconciliateur de thèse (cœur produit) timeoutait → `success:false` → 
 
 ### Vérif
 10 tests reconciler verts (schéma-valide, verdict=floor, newRedFlags prudents, field-null→note jamais fabriqué, déterministe, blocker-seul→vigilance). Suite agents+thesis+orchestrator : 701 passed. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9a : APPROVE (après 1 REQUEST_CHANGES : défaut loadBearing fabriqué → field null).
-
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 8a/8b : Pappers / couverture légale (#6)
-
-### Contexte
-Le red flag CRITICAL « Absence de Vérification Légale (K-bis) » (devils-advocate, Avekapeti) a pour CAUSE « registre Pappers indisponible » (notre outil n'a pas pu interroger le registre — clé `PAPPERS_API_KEY` absente en prod), PAS « société risquée ». Il gonflait le compte de risques critiques et trahissait la machinerie comme un risque société.
-
-### Changements (8a — reframe, plancher doctrine)
-- `lib/presentation.ts` : `isLegalRegistryUnavailableSignal(text)` — **signature EXPLICITE** (résolution Codex), jamais une heuristique floue : exige À LA FOIS (1) un token de **CONNECTEUR/REGISTRE = l'outil interrogé** (`pappers`, `registre officiel/du commerce/national/des sociétés`, `greffe`, `infogreffe`, `companies house`, `societe.com`) — **`k-bis` EXCLU** car c'est un DOCUMENT (« K-bis indisponible/non fourni/non vérifié » = manque côté fondateur, vrai item de diligence) ; ET (2) un token explicite d'**ÉCHEC OUTIL** (`indisponible`, `non disponible`, `impossible de vérifier/interroger/consulter`, `pas pu (être) vérifier/interroger/consulter`). **Volontairement EXCLUS** (resserrements Codex r1/r2) : `non vérifié(s)`, `absence de vérification`, `n'a pas pu` non contraint — états ambigus. La conjonction « le CONNECTEUR est indisponible » isole l'échec outil sans jamais déclasser un vrai risque (litige, requalification, **procédure collective au greffe**, doc manquant). Constantes notice `LEGAL_COVERAGE_GAP_TITLE`/`_DETAIL`.
-- `lib/selectors.ts` : helper partagé `redFlagSignalBlob(rf)` (title+description+impact+evidence+**location**) utilisé par les 3 chemins (alignement Codex #2, plus de fuite si la source n'est que dans `location`). (a) `extractRanksFromTier1RedFlags` retire les flags à signature « connecteur indisponible » (plus de faux risque critique, total #21 diminué d'autant) ; (b) `detectLegalCoverageGap(results)` → `buildDecisionSectionModel.legalCoverageGap` (1 notice consolidée, honnête) ; (c) `buildSignalsSectionModel.concerns` filtre les mêmes (pas d'alerte de dimension) ; (d) mémo généré `criticalRisks` filtre les mêmes (no-op « non fourni » pour Avekapeti, future-proof).
-- `sections/decision-section.tsx` : Callout neutre « Couverture légale à vérifier » (limite de couverture de l'outil, pas un risque avéré) quand `legalCoverageGap`.
-
-### 8b — REST (diagnostic, secret jamais loggé)
-- Confirmé : `connectors/pappers.ts` lit bien `process.env.PAPPERS_API_KEY` (pas `n_API_KEY`). La clé n'est mise que dans le query `api_token` ; aucun log ne contient l'URL ni la clé (lignes warn/error = codes statut / chaînes statiques). Indispo Avekapeti = `unconfiguredCritical` (clé absente en prod, 19/19 autres connecteurs OK). Provisionnement clé (REST payant / MCP) = décision argent → Phase 8c. Aucun changement de code connecteur (déjà sûr, Surgical).
-
-### Vérif
-42 tests verts analysis-v2 (35 → +5 unit signature dont décoys fondateur/document, +2 guard VM #6). tsc clean (hors `exit-strategist.ts`). Validé sur données réelles : le fixture hostile reprend VERBATIM le flag devils-advocate Avekapeti (matche via « registre officiel … indisponible »).
 

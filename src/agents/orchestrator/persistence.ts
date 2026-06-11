@@ -7,6 +7,7 @@ import {
   getCorpusSnapshotDocumentIds,
 } from "@/services/corpus";
 import { loadResults } from "@/services/analysis-results/load-results";
+import { isGrowthRateInRange } from "@/services/deals/growth-rate-bounds";
 import type {
   AgentResult,
   RedFlagResult,
@@ -560,7 +561,17 @@ export async function processAgentResult(
           updateData.arr = info.arr;
         }
         if (info.growthRateYoY && !deal.growthRate) {
-          updateData.growthRate = info.growthRateYoY;
+          // La valeur extraite (sortie LLM) ne passe par aucun schéma Zod ici :
+          // on applique la même borne que les routes (skip + warn, jamais de
+          // clamp silencieux d'une donnée inférée — cf. growth-rate-bounds).
+          if (isGrowthRateInRange(info.growthRateYoY)) {
+            updateData.growthRate = info.growthRateYoY;
+          } else {
+            logger.warn(
+              { dealId, growthRateYoY: info.growthRateYoY },
+              "Skipped out-of-range extracted growthRate"
+            );
+          }
         }
         if (info.amountRaising && !deal.amountRequested) {
           updateData.amountRequested = info.amountRaising;
