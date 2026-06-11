@@ -685,6 +685,10 @@ model Analysis {
   checkpoints        AnalysisCheckpoint[]
   extractionRunLinks AnalysisExtractionRun[]
 
+  // Phase H2 — read-model dénormalisé : signaux canoniques (scores + extracted-info)
+  // pré-calculés pour éviter le loadResults(blob) par-deal sur les pages SSR chaudes.
+  signalSummary AnalysisSignalSummary?
+
   createdAt DateTime @default(now())
 
   @@index([dealId])
@@ -699,6 +703,50 @@ model Analysis {
 enum AnalysisType {
   SCREENING
   FULL_DD
+}
+
+// ANALYSIS SIGNAL SUMMARY (Phase H2) — read-model dénormalisé, clé = analysisId.
+// (scores, extracted-info) sont des fonctions PURES et déterministes de Analysis.results,
+// donc immuables une fois l'analyse COMPLETED → cache sans staleness. Le chemin de lecture
+// (loadCanonicalDealSignals) recalcule la sélection canonique (cheap, sans blob) puis lit
+// cette table par analysisId au lieu de loadResults(blob multi-MB) par deal. Self-correcting :
+// sur miss / schemaVersion obsolète, le read retombe sur loadResults + ré-upsert. L'écriture
+// (completeAnalysis, best-effort hors transaction) n'est qu'une OPTIMISATION, jamais la source
+// de vérité — donc rater un chemin de complétion ne corrompt rien (le read se répare).
+model AnalysisSignalSummary {
+  analysisId String   @id
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  // Dénormalisé pour batch read / backfill / debug. Pas de FK Deal : la cascade
+  // Deal → Analysis → Summary suffit (suppression deal supprime ses analyses → leurs summaries).
+  dealId String
+
+  // Scores canoniques (extractAnalysisScores). Float (pas Int) pour préserver la fidélité
+  // EXACTE avec la sortie `number` d'extractAnalysisScores (les sous-scores de dimension sont
+  // clampés mais pas arrondis) → hit == miss == comportement actuel, aucune dérive d'affichage.
+  globalScore     Float?
+  teamScore       Float?
+  marketScore     Float?
+  productScore    Float?
+  financialsScore Float?
+
+  // Extracted-info canonique (extractCanonicalExtractedInfo).
+  sector      String?
+  stage       String?
+  instrument  String?
+  geography   String?
+  description String? @db.Text
+
+  // Version du format d'extraction. Un changement de logique extractAnalysisScores /
+  // extractCanonicalExtractedInfo → bump → les anciennes lignes deviennent des misses contrôlés
+  // (recalculées à la lecture), sans migration de données.
+  schemaVersion Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dealId])
+  @@index([schemaVersion])
 }
 
 // THESIS — Representation structuree de la these d'investissement de la societe,

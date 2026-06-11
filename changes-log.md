@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Schema/migration — Phase H (H2a) : table AnalysisSignalSummary (read-model dénormalisé)
+
+### Fichiers
+- `prisma/schema.prisma` : NOUVEAU model `AnalysisSignalSummary` — read-model dénormalisé, **clé = analysisId** (`@id`), pas dealId. Raison (design routé à Codex indépendant) : `extractAnalysisScores` + `extractCanonicalExtractedInfo` sont des fonctions PURES de `Analysis.results`, immuable une fois COMPLETED → cache **sans staleness**. Le read recalcule la sélection canonique (cheap, sans blob) puis lit par analysisId. Colonnes : 5 scores `Float?` (DOUBLE PRECISION — fidélité EXACTE avec la sortie `number`, sous-scores de dimension clampés mais pas arrondis), 5 extracted-info `String?` (`description @db.Text`), `dealId` dénormalisé NOT NULL (backfill/debug, pas de FK Deal), `schemaVersion Int @default(1)` (bump → anciennes lignes = misses contrôlés recalculés), timestamps. FK `analysisId → Analysis(id) onDelete: Cascade`. Index `dealId` + `schemaVersion`. Back-relation `Analysis.signalSummary`.
+- NOUVEAU `prisma/migrations/20260611012015_analysis_signal_summary/migration.sql` : CREATE TABLE additif pur + 2 index + FK cascade. Générée APRÈS `0_baseline` (jamais édité) via `migrate diff --from-url <docker> --to-schema-datamodel`.
+
+### Description
+Phase H2a du plan post-audit (perf read-model). Élimine le `loadResults(blob multi-MB)` par-deal sur les 3 pages SSR. Design **routé à Codex en indépendance d'abord** (contexte neutre, sans ma conclusion) : Codex a proposé clé=analysisId + read self-correcting + write best-effort, ce que j'ai adopté (diverge du plan littéral « 1 row/deal » mais strictement plus robuste). Validé sur **docker postgres:16 vierge** : `migrate deploy` (3 migrations) propre + `migrate diff` post-deploy = empty (zéro drift) + `migrate status` up to date ; `\d` confirme FK cascade + index + double precision + schemaVersion default 1. Gate Codex H2a : APPROVE (note : `updatedAt` NOT NULL sans default SQL → backfill via Prisma upsert/createMany, jamais raw SQL). tsc 0. ⚠️ **ACTION SACHA : appliquer la migration en prod Neon À LA MAIN après merge** (D4). Suite : H2b (service + write completeAnalysis + read self-correcting).
+
+---
 ## 2026-06-11 — Perf — Phase H (H1) : quick fixes read-model (blob-first + select + caps)
 
 ### Fichiers
@@ -402,20 +412,5 @@ analysis-v2 53 tests ; suite unit complète 4338 passed / 2 skipped ; tsc clean 
 
 ### Décision
 MCP officiel Pappers vérifié réel (`mcp.pappers.fr/{clé}`, abonnement payant à crédits, essai 2 semaines). Décision argent posée à l'utilisateur (AskUserQuestion) → **« Rester au plancher »**. 8a/8b reste la solution livrée pour #6 ; ni clé REST ni MCP provisionnés maintenant. MCP scopé et différé (revisité quand budget tranché). Aucun changement de code (la notice « couverture légale à vérifier » couvre l'UX en attendant).
-
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 9c : UI honnête réconciliation (#11)
-
-### Contexte
-9a fait que le réconciliateur RÉUSSIT (terminal_fallback → `success:true`) même quand les LLM échouent → il n'apparaît plus dans le bandeau « agents non aboutis » (#1 résolu par 9a, fin du cadrage « 1 petit agent »). Reste à signaler honnêtement le NOUVEL état : réconciliation aboutie MAIS en mode déterministe (synthèse LLM indisponible).
-
-### Changements
-- `thesis/types.ts` : champ STRUCTURÉ optionnel `synthesisDegraded?` sur `ThesisReconcilerOutput` (rétrocompat).
-- `tier3/thesis-reconciler.ts` `execute()` : `synthesisDegraded = (resolution === "terminal_fallback")` — marqueur structuré, jamais une heuristique texte.
-- `analysis-v2/lib/selectors.ts` `buildThesisSectionModel` : `reconciliationDegraded` (= reconciled && `data.synthesisDegraded`) ajouté au `ThesisSectionModel`.
-- `analysis-v2/sections/thesis-section.tsx` : bandeau honnête (tone info) « Réconciliation en mode déterministe » — verdict + frictions viennent des signaux structurés, sans rédaction par modèle. Le bandeau « non effectuée » reste pour les vrais échecs. page-shell NON touché (le réconciliateur réussit → plus « agent non abouti »).
-
-### Vérif
-12 tests reconciler (dont « Test clé » end-to-end : completeJSON rejette tous les modèles → `execute()` success déterministe + `synthesisDegraded` ; + « Contrat PROD » : `run()` → `success:true`) + test selector `reconciliationDegraded`. Suite agents+thesis+analysis-v2+lib : 1473 passed. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 9c : APPROVE.
 
 
