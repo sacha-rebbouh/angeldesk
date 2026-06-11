@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-11 — Tests/billing — Phase F (F5) : guards billing resume regex→comportementaux
+
+### Fichiers
+- SUPPRIMÉ `src/app/api/analyze/__tests__/route-resume-billing-guards.test.ts` (3 guards par source-string `readFileSync`+`toContain`, brittle).
+- NOUVEAU `src/lib/__tests__/analysis-compensation-refund.test.ts` : `compensateFailedAnalysis` rembourse le montant EXPLICITE (refundAmount) vs le prix plein (CREDIT_COSTS) ; ignore refundAmount<=0.
+- `src/lib/__tests__/deal-analysis-inngest-stepwise.test.ts` : +2 tests du chaînon central — `dealAnalysisResumeFunction` lit `event.data.resumeRefundAmount/resumeRefundKey` et les passe à `compensateFailedAnalysis` (helper `invokeResumeHandler` + `resumeAnalysis` au mock @/agents).
+
+### Description
+Phase F (F5) du plan post-audit : les 3 invariants de facturation du resume étaient gardés par regex source-string (cassent au rename, ou passent alors que la logique a changé). Remplacés par des assertions COMPORTEMENTALES aux 3 niveaux de la chaîne : route émet `resumeRefundAmount` (route.test.ts:333), le handler Inngest le transmet (nouveaux tests), `compensateFailedAnalysis` rembourse le montant exact (nouveau test). Gate Codex : 1 REQUEST_CHANGES (le chaînon central handler→compensation manquait) → corrigé → APPROVE. Vérifs : tsc 0, eslint 0, suite unit 4375 passed / 0 failed. Reste F6 (migration growthRate) — session fraîche.
+
+---
 ## 2026-06-11 — Crédits/money — Phase F (F4) : addCredits idempotent (anti double-crédit, avant câblage Stripe)
 
 ### Fichiers
@@ -415,15 +426,4 @@ Le red flag CRITICAL « Absence de Vérification Légale (K-bis) » (devils-advo
 
 ### Vérif
 42 tests verts analysis-v2 (35 → +5 unit signature dont décoys fondateur/document, +2 guard VM #6). tsc clean (hors `exit-strategist.ts`). Validé sur données réelles : le fixture hostile reprend VERBATIM le flag devils-advocate Avekapeti (matche via « registre officiel … indisponible »).
-
----
-## 2026-06-03 — Refonte analysis-v2 — Phase 7 : consolidation risques (source unique) + mémo (#20/#21/#22)
-
-### Changements
-- `lib/selectors.ts` : `consolidateRiskRanks()` = SOURCE UNIQUE (Codex #10) — fusionne dealbreakers QM + red flags Tier 1, **dédup par topic** (`inferRedFlagTopic`, réutilise le service `red-flag-dedup`), **représentant par sévérité max** (pas de premier-vu qui masque un CRITICAL), tri stable. `buildDecisionSectionModel.ranks` l'utilise (liste complète déduplicée #21, fin du cap muet à 8). `buildMemoSectionModel` : `totalCriticalRisks` + `topPriorities` (tous champs scrubés) partagés ; criticalRisks généré scrubés + `presentableSource` ; reconstitué = liste consolidée. Fin des `compactString` dans le mémo.
-- `sections/memo-section.tsx` : #20 sous-titre neutre + note finale sans disclaimer redondant ; #21 `CompleteRisksHint` standalone (compte les **topics CRITICAL distincts** affichés, lien vers `#decision`) ; #22 bloc « Priorités d'investigation » surfacé aussi dans le mémo généré (`PrioritiesList`).
-- Guards : dédup par topic (2 flags valorisation → 1), `totalCriticalRisks` exposé, `topPriorities` scrubés.
-
-### Vérif
-35 tests verts. tsc clean (hors `exit-strategist.ts`). Gate Codex Phase 7 : APPROVE (après 2 REQUEST_CHANGES : représentant par sévérité + comptage par topic distinct + hint standalone + scrub tous champs).
 

@@ -11,13 +11,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   runAnalysis: vi.fn(),
+  resumeAnalysis: vi.fn(),
   compensateFailedAnalysis: vi.fn(),
   // Statut terminal PERSISTÉ (nouvelle source de vérité du gate refund/email) + spy de l'email.
   findUnique: vi.fn(),
   sendNotif: vi.fn(),
 }));
 
-vi.mock("@/agents", () => ({ orchestrator: { runAnalysis: mocks.runAnalysis } }));
+vi.mock("@/agents", () => ({ orchestrator: { runAnalysis: mocks.runAnalysis, resumeAnalysis: mocks.resumeAnalysis } }));
 vi.mock("@/lib/analysis-compensation", () => ({
   compensateFailedAnalysis: mocks.compensateFailedAnalysis,
   reapStaleAnalyses: vi.fn(),
@@ -39,7 +40,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: { analysis: { findUnique: mocks.findUni
 
 // step-runner NON mocké : on veut le vrai InngestStepRunner pour l'assertion instanceof.
 const { InngestStepRunner } = await import("@/agents/orchestrator/step-runner");
-const { dealAnalysisFunction } = await import("../inngest");
+const { dealAnalysisFunction, dealAnalysisResumeFunction } = await import("../inngest");
 
 type StepLike = { run: <T>(name: string, fn: () => Promise<T>) => Promise<T> };
 
@@ -52,6 +53,21 @@ async function invokeHandler(data: Record<string, unknown>): Promise<{ stepRunCa
     },
   };
   const handler = (dealAnalysisFunction as unknown as {
+    fn: (input: { event: { data: unknown }; step: StepLike }) => Promise<unknown>;
+  }).fn;
+  await handler({ event: { data }, step });
+  return { stepRunCalls };
+}
+
+async function invokeResumeHandler(data: Record<string, unknown>): Promise<{ stepRunCalls: string[] }> {
+  const stepRunCalls: string[] = [];
+  const step: StepLike = {
+    run: async (name, fn) => {
+      stepRunCalls.push(name);
+      return fn();
+    },
+  };
+  const handler = (dealAnalysisResumeFunction as unknown as {
     fn: (input: { event: { data: unknown }; step: StepLike }) => Promise<unknown>;
   }).fn;
   await handler({ event: { data }, step });
@@ -139,5 +155,56 @@ describe("dealAnalysisFunction — D.5d-1d branchement stepwise (sticky)", () =>
     expect(mocks.sendNotif).toHaveBeenCalledTimes(1);
     expect(stepRunCalls).not.toContain("refund-on-failure");
     expect(mocks.compensateFailedAnalysis).not.toHaveBeenCalled();
+  });
+});
+
+// F5 — chaînon central du guard billing resume (event → compensation). Vérifie
+// que dealAnalysisResumeFunction LIT event.data.resumeRefundAmount/resumeRefundKey
+// et les passe à compensateFailedAnalysis. Si ce mapping saute, le resume échoué
+// rembourserait plein tarif (double-refund) — les tests des endpoints (route +
+// compensateFailedAnalysis) ne le verraient pas.
+describe("dealAnalysisResumeFunction — chaînon billing event→compensation (F5)", () => {
+  it("passe resumeRefundAmount/resumeRefundKey de l'event à compensateFailedAnalysis (refund partiel exact)", async () => {
+    mocks.resumeAnalysis.mockResolvedValue({ success: false, sessionId: "an_resume" });
+    // Statut terminal FAILED → chemin refund (compensate-resume-failure).
+    mocks.findUnique.mockResolvedValue({ status: "FAILED", type: "full_analysis" });
+
+    const { stepRunCalls } = await invokeResumeHandler({
+      analysisId: "an_resume",
+      dealId: "deal_1",
+      userId: "user_1",
+      resumeRefundKey: "refund:resume:an_resume:attempt_1",
+      resumeRefundAmount: 3,
+    });
+
+    expect(stepRunCalls).toContain("compensate-resume-failure");
+    expect(mocks.compensateFailedAnalysis).toHaveBeenCalledTimes(1);
+    expect(mocks.compensateFailedAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({
+        analysisId: "an_resume",
+        dealId: "deal_1",
+        userId: "user_1",
+        type: "full_analysis",
+        refundIdempotencyKey: "refund:resume:an_resume:attempt_1",
+        refundAmount: 3,
+      })
+    );
+    expect(mocks.sendNotif).not.toHaveBeenCalled();
+  });
+
+  it("resumeRefundAmount absent → refundAmount undefined transmis (compensation bascule sur le refund plein)", async () => {
+    mocks.resumeAnalysis.mockResolvedValue({ success: false, sessionId: "an_resume2" });
+    mocks.findUnique.mockResolvedValue({ status: "FAILED", type: "full_analysis" });
+
+    await invokeResumeHandler({
+      analysisId: "an_resume2",
+      dealId: "deal_1",
+      userId: "user_1",
+      resumeRefundKey: "refund:resume:an_resume2:attempt_1",
+    });
+
+    expect(mocks.compensateFailedAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ refundAmount: undefined })
+    );
   });
 });
