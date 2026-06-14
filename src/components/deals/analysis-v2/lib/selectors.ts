@@ -1,4 +1,4 @@
-import type { EvidenceSolidity, Orientation } from "@/lib/ui-configs";
+import type { EvidenceSolidity, Orientation, DeckCoherenceBand } from "@/lib/ui-configs";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
 
 import {
@@ -275,6 +275,19 @@ function extractVigilanceSignals(results: ResultsMap | null | undefined, limit: 
   return out;
 }
 
+/**
+ * Bande verbale de cohérence du deck — dérive le score interne (deck-coherence-
+ * checker) en bande qualitative. Le NOMBRE n'est jamais restitué (doctrine
+ * dé-scorisation) ; seule la bande alimente le libellé verbal et le ton.
+ */
+function deckCoherenceBand(score: number | null): DeckCoherenceBand | null {
+  if (score == null) return null;
+  if (score >= 80) return "strong";
+  if (score >= 60) return "moderate";
+  if (score >= 40) return "weak";
+  return "incoherent";
+}
+
 export function buildDecisionStripModel(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { results: ResultsMap | null | undefined; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }, thesis: { verdict?: string | null; reformulated?: string | null } | null) {
   const header = extractDealHeader(deal, analysis);
   const orientation = aggregateOrientation(analysis.results) as Orientation | null;
@@ -325,7 +338,7 @@ export function buildDecisionStripModel(deal: { id: string; name?: string | null
     orientation,
     solidity,
     alertDistribution,
-    coherenceScore: coherenceScore != null ? Math.round(coherenceScore) : null,
+    coherenceBand: deckCoherenceBand(coherenceScore != null ? Math.round(coherenceScore) : null),
     contradictionsCritical,
     totalContradictions,
     thesisVerdict,

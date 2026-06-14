@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3-b — Cohérence du deck verbale dans analysis-v2 (retrait du coherenceScore /100)
+
+### Fichiers
+- `src/lib/ui-configs.ts` : NOUVEAUX `DECK_COHERENCE_VALUES` (strong/moderate/weak/incoherent) + `DECK_COHERENCE_LABELS` (Forte / Modérée / Faible / Très faible). Restitution verbale, aucun nombre.
+- `src/components/deals/analysis-v2/lib/selectors.ts` : NOUVEAU helper `deckCoherenceBand(score)` (seuils 80/60/40). `buildDecisionStripModel` émet désormais `coherenceBand` (bande verbale) au lieu de `coherenceScore` (nombre). Le nombre brut reste interne (lu par `solidity-aggregator` pour dériver la solidité — inchangé).
+- `src/components/deals/analysis-v2/decision-strip.tsx` : le card « Cohérence du deck » affiche `DECK_COHERENCE_LABELS[band]` (plus de `X / 100`) ; ton couleur dérivé de la bande (mapping identique aux anciens seuils).
+- `src/components/deals/analysis-v2/__tests__/doctrine-runtime-guard.test.ts` : guard — `buildDecisionStripModel` n'expose plus `coherenceScore`, émet une bande verbale, libellé sans `/100` ni chiffre ; bande nulle quand le score est absent.
+
+### Description
+Cible explicite du plan (le `coherenceScore/100` repéré dans analysis-v2). Transformation nombre → verbal sur la surface canonique. Le score de cohérence du deck reste autorisé en mécanique INTERNE (il alimente la dérivation de la solidité des preuves) mais n'est plus jamais RESTITUÉ. Aucune autre surface ne consommait `model.coherenceScore` (vérifié : seul `decision-strip`). Aucune topologie de graphe durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Backlog P3/P4 noté par le gate : le libellé coverage `Score de synthèse` dans `TIER3_EXPECTED` (selectors.ts) reste une terminologie score-oriented (hors card cohérence). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; suite unit 4508 passed (+2) / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3-a — Scrub des notes de deal du contexte LLM du chat (première micro-étape P3)
 
 ### Fichiers

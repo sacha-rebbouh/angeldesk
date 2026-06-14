@@ -449,6 +449,24 @@ export function getEvidenceSolidityLabel(
 }
 
 // =============================================================================
+// Cohérence documentaire (deck-coherence-checker) — restitution VERBALE
+// =============================================================================
+// Bande qualitative dérivée des seuils internes du score de cohérence du deck.
+// Doctrine dé-scorisation : AUCUNE note /100 restituée — seul le libellé verbal
+// est rendu (le nombre reste une mécanique interne non restituée, p. ex. la
+// dérivation de la solidité des preuves).
+
+export const DECK_COHERENCE_VALUES = ["strong", "moderate", "weak", "incoherent"] as const;
+export type DeckCoherenceBand = (typeof DECK_COHERENCE_VALUES)[number];
+
+export const DECK_COHERENCE_LABELS: Record<DeckCoherenceBand, string> = {
+  strong: "Forte",
+  moderate: "Modérée",
+  weak: "Faible",
+  incoherent: "Très faible",
+};
+
+// =============================================================================
 // Enum FR Labels — centralized translations for agent output enums
 // English business terms (Burn Rate, ARR, Churn) stay in EN with tooltips
 // =============================================================================
