@@ -178,7 +178,6 @@ export interface BoardInput {
     // Tier 0: Base agents
     tier0?: {
       documentExtractor?: unknown;  // Extracted data from documents
-      dealScorer?: unknown;         // Quick scoring
       redFlagDetector?: unknown;    // Red flags detection
     };
 

@@ -504,7 +504,6 @@ export class BoardOrchestrator {
       // Tier 0: Base agents
       agentOutputs.tier0 = {
         documentExtractor: scrubbed["document-extractor"],
-        dealScorer: scrubbed["deal-scorer"],
         redFlagDetector: scrubbed["red-flag-detector"],
       };
 

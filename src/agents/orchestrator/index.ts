@@ -371,6 +371,13 @@ export class AgentOrchestrator {
           isUpdate,
         });
         break;
+      // `full_dd` : alias legacy remappé vers `full_analysis` à la route
+      // (LEGACY_TYPE_REPLACEMENTS). Garde défensif : depuis le retrait de
+      // deal-scorer (P4), ANALYSIS_CONFIGS.full_dd.agents = [] → un éventuel
+      // event interne legacy `type=full_dd` tomberait dans runBaseAnalysis avec
+      // 0 agent (= succès vide trompeur). On le mappe explicitement sur le même
+      // chemin que `full_analysis`.
+      case "full_dd":
       case "full_analysis":
         result = await this.runFullAnalysis(deal as DealWithDocs, dealId, onProgress, {
           mode,

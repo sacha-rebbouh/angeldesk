@@ -1,10 +1,10 @@
-import type { RedFlagResult, ScoringResult, ExtractionResult } from './common';
+import type { RedFlagResult, ExtractionResult } from './common';
 import type { DeckForensicsResult, FinancialAuditResult, MarketIntelResult, CompetitiveIntelResult, TeamInvestigatorResult, TechnicalDDResult, TechStackDDResult, TechOpsDDResult, LegalRegulatoryResult, CapTableAuditResult, GTMAnalystResult, CustomerIntelResult, ExitStrategistResult, QuestionMasterResult } from './tier1';
 import type { ContradictionDetectorResult, ConditionsAnalystResult, SynthesisDealScorerResult, DevilsAdvocateResult, MemoGeneratorResult } from './tier3';
 
 // Analysis session types
 export type AnalysisAgentResult =
-  | ExtractionResult | RedFlagResult | ScoringResult
+  | ExtractionResult | RedFlagResult
   | DeckForensicsResult | FinancialAuditResult | MarketIntelResult | CompetitiveIntelResult
   | TeamInvestigatorResult | TechnicalDDResult | TechStackDDResult | TechOpsDDResult
   | LegalRegulatoryResult | CapTableAuditResult | GTMAnalystResult | CustomerIntelResult

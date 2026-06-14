@@ -1,14 +1,12 @@
 import type { AgentResult, EnrichedAgentContext, AgentContext } from "../types";
 import { redFlagDetector } from "../red-flag-detector";
 import { documentExtractor } from "../document-extractor";
-import { dealScorer } from "../deal-scorer";
 import type { BaseAgentName } from "./types";
 
 // Base agent registry (existing agents)
 export const BASE_AGENTS: Record<BaseAgentName, { run: (context: AgentContext) => Promise<AgentResult> }> = {
   "red-flag-detector": redFlagDetector,
   "document-extractor": documentExtractor,
-  "deal-scorer": dealScorer,
 };
 
 // Type for dynamic agent modules
