@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P1 — Fondation de compatibilité scoreless (additif strict, 0 fichier existant modifié)
+
+### Fichiers
+- NOUVEAU `src/services/signal-profile/index.ts` : (1) `DoctrineOrientation` 4 valeurs (clés EN + libellés FR `DOCTRINE_ORIENTATION_CONFIG`) + `toDoctrineOrientation()` mapper canonique UNIQUE 5→4 au boundary (collapse verrouillé vigilance→contrasted ; `not_exploitable` seulement via `opts.notExploitable` ; switch exhaustif `never` → throw sur valeur corrompue, jamais de fallback flou ni dérivation depuis score) ; (2) `AnalysisSignalProfile` contrat de sortie SCORELESS (orientation doctrine, evidenceSolidity réutilise le type 5 valeurs ui-configs, dominantSignals[] modèle POSITIF, dimensionCoverage[], criticalRisks: CriticalRiskRef[] ; aucun champ numérique de note) ; (3) `scrubSynthesisScoreData`/`scrubScoresFromResults` retrait des champs de note de deal (overallScore/score/grade/scoreBreakdown/dimensionScores[].score+weightedScore/comparativeRanking percentiles/signalContribution.score+scoreNote), pur+immutable+idempotent ; (4) `readDoctrineOrientation` bi-reader durable old/new (profil scoreless prioritaire, sinon verdict legacy mappé ; JAMAIS dérivé d'un score).
+- NOUVEAU `src/services/signal-profile/__tests__/signal-profile.test.ts` : 25 tests (mapper, scrubber immutabilité/idempotence/invariant "aucun champ de note sérialisé", bi-reader durabilité old-snapshot + preuve "jamais dérivé d'un score").
+
+### Description
+P1 du chantier dé-scorisation (`PLAN-DESCORING.md`). FONDATION PURE : primitives construites + testées, AUCUN câblage runtime (zéro changement de comportement). S'aligne sur la fondation "scoring 2 axes" Phase A/2 existante (Tier3SignalContribution, EVIDENCE_SOLIDITY_VALUES, orientation-solidity-display.tsx) sans la dupliquer. Gate Codex : APPROVE — découpage "fondation pure en P1, câblage en P2/P3" validé (décision (a)). **Conditions dures verrouillées pour P2/P3** : (1) centraliser le scrub runtime des contextes LLM (memo-generator injecte plusieurs scores — `scrubScoresFromResults` ne cible que synthesis-deal-scorer) ; (2) ne PAS émettre `low/strong/moderate` en evidenceSolidity sans décision doctrinale / mapper explicite ; (3) câblage scrubber+bi-reader = condition dure du gate P2/P3. tsc 0 ; suite unit complète 4457 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Doctrine (dé-scorisation P0) — « aucune note de deal restituée, jamais » + allowlist/banned-list
 
 ### Fichiers
