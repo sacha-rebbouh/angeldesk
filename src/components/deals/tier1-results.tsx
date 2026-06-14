@@ -1698,7 +1698,6 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
 
   // v2.0 data extraction
   const findings = isV2 ? data.findings : null;
-  const scoreValue = isV2 ? data.score?.value : data.capTableScore;
   const redFlags = isV2 ? data.redFlags : null;
   const narrative = isV2 ? data.narrative : null;
   const alertSignal = isV2 ? data.alertSignal : null;
@@ -2095,7 +2094,6 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
 }) {
   // v2.0 data extraction
   const findings = data.findings;
-  const scoreValue = data.score?.value;
   const redFlags = data.redFlags ?? [];
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
@@ -2471,7 +2469,6 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
 }) {
   // v2.0 data extraction
   const findings = data.findings;
-  const scoreValue = data.score?.value;
   const redFlags = data.redFlags ?? [];
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
@@ -2967,7 +2964,6 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
 }) {
   // v2.0 data extraction
   const findings = data.findings;
-  const scoreValue = data.score?.value;
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
   const signalIntensity = data.signalIntensity;

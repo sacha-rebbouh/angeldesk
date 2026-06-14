@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 11/N (C4) — tier1-results.tsx : cleanup vars mortes (clôt le fichier)
+
+### Fichiers
+- `src/components/deals/tier1-results.tsx` : retrait des 4 variables mortes `scoreValue` (cartes cap-table, gtm, customer, question-master), rendues inutiles par l'étape C1 (remplacement du `ScoreBadge` de tête par `Tier1SignalChip`). Aucune autre logique touchée.
+
+### Description
+Étape 4/4 (cleanup) qui **clôt le chantier tier1-results.tsx** (C1 chips de tête, C2 sous-scores par dimension, C3 résumé agrégé scoreless, C4 cleanup). Plus aucune note de deal restituée dans le fichier (vérifié : zéro `/100` hors commentaires, zéro `ScoreBadge`, zéro grade A-F, zéro sous-score d'appréciation ; allowlist conservée = métriques observables + confiances par item). Warning eslint `hiddenCriticalCount` **préexistant** (présent dès le HEAD pré-session `6796cca`, non induit) laissé en place par principe Karpathy. **Gate Codex APPROVE** (cleanup pur confirmé). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 54 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 10/N (C3) — tier1-results.tsx : résumé agrégé scoreless (BadgePair + dimensions verbales)
 
 ### Fichiers
