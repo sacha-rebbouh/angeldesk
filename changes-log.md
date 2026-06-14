@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 2/N — tier3-results.tsx entièrement scoreless
+
+### Fichiers
+- `src/components/deals/tier3-results.tsx` : suite du keystone (modèle BadgePair gaté APPROVE). (1) `SynthesisScorerCard` header : « Score Final » → « Verdict de synthèse », `VerdictBadge`+`ScoreBadge`+`AdjustedScoreBadge` → `BadgePair(orientation, solidity)` (props). (2) bloc « Scores par dimension » (`dimensionScores[].score` /100) supprimé. (3) bloc « Comparative Ranking » supprimé (`percentileOverall`/`percentileSector` = percentiles DE SCORE bannis) + caveat + vars dérivées mortes. (4) scepticisme /100 (hero tile + card bar) → verdict VERBAL `skepticismAssessment.verdict` via `SKEPTICISM_VERDICT_LABELS`. (5) tuile « Fiabilité données » (`scorerData.confidence`%) supprimée (doctrine rejette « Confiance » comme axe → solidité de la BadgePair) ; grille hero 3→2 cols. (6) `ContradictionDetectorCard` : jauge « Consistency Score » /100 + ScoreBadge supprimées ; tonalité de l'encart résumé re-dérivée des comptes de contradictions (`criticalCount`/`highCount`, observables). (7) `showNoGo` : `overallScore < 35` (score-based, flaggé Codex) → `verdict === "alert_dominant"`. (8) wordings « Score global non applicable/masqué » → « Orientation non applicable/masquée ». (9) dead-code induit retiré : `VerdictBadge`, imports `VERDICT_CONFIG`/`ScoreBadge`/`AdjustedScoreBadge`, prop `resolutions` du card.
+
+### Description
+tier3-results.tsx ne restitue plus AUCUNE note de deal (grep `overallScore`/`/100`/`percentile`/`dimensionScores`/`ScoreBadge` = 0 hors commentaire). Remplacements verbaux score-indépendants. **Gate Codex APPROVE** ; nits non bloquants appliqués (casts inline du verdict scepticisme retirés — `DevilsAdvocateData.skepticismAssessment.verdict` est typé ; commentaires « masquer score » → « masquer l'orientation »). Nit différé : `Tier3ResultsProps.resolutions` reste déclaré + passé par `analysis-panel.tsx` mais inutilisé → sera retiré au micro-step analysis-panel. Conservé (allowlist) : counts observables (contradictions/risques), `RecommendationBadge` (verbal), `narrative.summary`. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests deals+signal-profile+analysis-v2 551 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 1/N — tier3 hero scoreless (orientation × solidité via BadgePair v2)
 
 ### Fichiers
