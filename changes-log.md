@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (PDF) étape 6/6 — nettoyage helpers/composants de rendu de score morts
+
+### Fichiers
+- `src/lib/pdf/pdf-components.tsx` : suppression de `ScoreCircle` (rendait `{score}/100` en SVG) et `ScoreBar` (rendait `{score}/100`). Imports `Svg`/`Circle`/`Path` (utilisés seulement par ScoreCircle) et `scoreColor` retirés.
+- `src/lib/pdf/pdf-helpers.ts` : suppression de `scoreColor`, `scoreBgColor`, `recLabel` (labeller orientation 5 valeurs), `fmtWeight` (devenu inutilisé après PDF-5). Doc de `proofLabel` reformulée (ne référence plus `recLabel`).
+- `src/lib/pdf/__tests__/pdf-helpers-proof-label.test.ts` : commentaire reformulé (ne référence plus le helper `recLabel` supprimé).
+
+### Description
+Clôture du sous-chantier PDF. `ScoreCircle`/`recLabel`/`fmtWeight` rendus morts par mes changements (PDF-1/2/5) ; `ScoreBar`/`scoreBgColor` étaient préexistant-morts — supprimés malgré la règle Karpathy « signal-only » car ce sont des primitives de RENDU DE SCORE (`/100`) que le chantier de-scorisation autorise à retirer et que les source-guards P6 banniraient (gate Codex : arbitrage APPROVE explicite). `scoreColor` devient mort une fois ScoreCircle+ScoreBar retirés. Conservés signal-only : `RecommendationBadge` (badge VERBAL d'orientation, pas une primitive de score) + `improvedDealScore` (type `NegotiationData` jamais rendu → producteur = P4). Conservés allowlist : `confidenceScore` (red-flags, % par flag), `w.confidence` (early-warnings, % par alerte) = confiances PAR ITEM. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (PDF) étape 5/N — tier1-agents scoreless (retrait scores par agent + sous-scores)
 
 ### Fichiers
