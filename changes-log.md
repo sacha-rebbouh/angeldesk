@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — sweep complétude — team-management (scores fondateurs)
+
+### Fichiers
+- `src/components/deals/team-management.tsx` : carte fondateur (onglet Équipe) dé-scorée. Avatar : nombre `overallFounderScore` (coloré) → initiale du nom. Grille 4 `ScoreMiniBar` (Domain/Startup XP/Execution/Network /100) **supprimée**. Caveat provenance « Scores estimés depuis le deck » → « Analyse estimée depuis le deck » (sorti du gate scores). Retirés : composant `ScoreMiniBar`, helpers locaux `getScoreColor`/`getScoreBg`, icônes Target/TrendingUp/Zap/Network, consts `scores`/`overallScore` (orphelins). **Conservé verbal natif** : strengths/concerns/redFlags/background/highlights. **Carry interne (Option B, → P4)** : interface `AnalysisScores` + `VerifiedInfo.scores` (data shape team-investigator, plus lue en rendu).
+
+### Description
+**Découverte sweep complétude** : surface de restitution de scores NON listée dans le RESTE du relais. Producteur `team-investigator` inchangé (P4, ordre additif). **Gate Codex APPROVE.** tsc 0 ; doctrine guards 27 verts. Sweep en cours : restent analysis-complete-view (score/100·grade), deck-coherence-report (coherenceScore/100), board thesis-debate (avgSolidity/100) ; thesis « Confiance /100 » à classer (allowlist per-item vs note).
+
+---
 ## 2026-06-15 — Dé-scorisation — étape G4-b — cleanup composants + helpers de score orphelins
 
 ### Fichiers
