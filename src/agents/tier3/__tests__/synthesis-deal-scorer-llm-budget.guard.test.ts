@@ -12,8 +12,12 @@
  *    disableModelFallback (pas de failover cross-modèle long), maxRetries borné.
  * 2. AUCUN appel `llmCompleteJSON<LLMSynthesisResponse>` n'est fait sans ce bornage.
  * 3. config.timeoutMs < plafond Vercel 300s, avec marge pour rehydrate/write snapshot.
- * 4. Le pire cas execute() (2 appels in-execute × budget par appel) tient SOUS config.timeoutMs,
- *    laissant de la marge pour le post-traitement (F37 percentile).
+ * 4. Le pire cas execute() (1 appel in-execute × budget par appel) tient SOUS config.timeoutMs,
+ *    avec une large marge pour rehydrate/write snapshot.
+ *
+ * Chantier P4 — l'ancien retry « dimensions » (2e appel conditionnel) et le
+ * post-traitement F37 (percentile de score) sont retirés : execute() ne fait
+ * plus qu'UN appel LLM borné, ce qui renforce la marge anti-boucle 300s.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -25,7 +29,7 @@ const source = readFileSync(AGENT_PATH, "utf-8");
 const PER_CALL_BUDGET_MS = 100_000;
 const CONFIG_TIMEOUT_MS = 220_000;
 const VERCEL_STEP_BUDGET_MS = 300_000;
-const MAX_IN_EXECUTE_CALLS = 2; // 1er appel + 1 retry conditionnel (canRetry)
+const MAX_IN_EXECUTE_CALLS = 1; // P4 — un seul appel LLM (retry « dimensions » retiré)
 
 describe("synthesis-deal-scorer — budget deadline-aware (anti boucle 300s)", () => {
   it("définit SYNTHESIS_LLM_CALL_OPTIONS avec timeoutMs, disableModelFallback, maxRetries bornés", () => {
@@ -41,7 +45,8 @@ describe("synthesis-deal-scorer — budget deadline-aware (anti boucle 300s)", (
 
   it("tous les appels llmCompleteJSON<LLMSynthesisResponse> portent SYNTHESIS_LLM_CALL_OPTIONS", () => {
     const calls = source.match(/llmCompleteJSON<LLMSynthesisResponse>\([^)]*\)/g) ?? [];
-    expect(calls.length, "aucun appel llmCompleteJSON<LLMSynthesisResponse> trouvé").toBeGreaterThanOrEqual(2);
+    // P4 — exactement 1 appel (le retry « dimensions » a été retiré).
+    expect(calls.length, "appel llmCompleteJSON<LLMSynthesisResponse> attendu (exactement 1 après P4)").toBe(MAX_IN_EXECUTE_CALLS);
     for (const call of calls) {
       expect(call, `appel non borné détecté: ${call}`).toContain("SYNTHESIS_LLM_CALL_OPTIONS");
     }
@@ -60,8 +65,8 @@ describe("synthesis-deal-scorer — budget deadline-aware (anti boucle 300s)", (
     expect(VERCEL_STEP_BUDGET_MS - CONFIG_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
   });
 
-  it("le pire cas execute() (2 appels in-execute bornés) tient sous config.timeoutMs", () => {
-    // 2 × 100s = 200s < 220s → marge pour le post-traitement F37 (Promise.race 10s) + overhead.
+  it("le pire cas execute() (1 appel in-execute borné) tient sous config.timeoutMs", () => {
+    // P4 — 1 × 100s = 100s < 220s → large marge pour rehydrate + write snapshot.
     expect(MAX_IN_EXECUTE_CALLS * PER_CALL_BUDGET_MS).toBeLessThan(CONFIG_TIMEOUT_MS);
   });
 });

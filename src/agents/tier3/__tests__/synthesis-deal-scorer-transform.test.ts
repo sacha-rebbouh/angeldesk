@@ -165,9 +165,9 @@ describe("transformResponse — invariants A2 (D1 + D2)", () => {
       expect(result.signalContribution.evidenceSolidity).toBeNull();
     });
 
-    it("signalContribution.score === overallScore (cohérence dimensionnelle)", () => {
-      expect(result.signalContribution.score).toBe(result.overallScore);
-    });
+    // Chantier P4 — l'invariant `signalContribution.score === overallScore` est
+    // supprimé : la synthèse ne produit plus de note de deal (ni `overallScore`,
+    // ni `signalContribution.score`). L'orientation reste portée par `verdict`.
 
     it("investmentRecommendation.action === verdict (cohérence interne action↔verdict)", () => {
       expect(result.investmentRecommendation.action).toBe(result.verdict);
@@ -416,5 +416,32 @@ describe("P2 — orientation SCORELESS (poisoned score + modèle positif)", () =
     expect(favorable.length).toBeGreaterThanOrEqual(1);
     expect(unfavorable.length).toBeGreaterThanOrEqual(1);
     expect(unfavorable[0].severity).toBe("HIGH");
+  });
+
+  it("P4 — AUCUNE mention de note (X/100, grade) ne fuit dans la sortie (forces + titres red flags scrubbés)", () => {
+    // Le prompt LLM instruit encore des scores → forces et titres de red flags
+    // peuvent contenir « X/100 » / grade. Le scrub final (deepStripScoreMentions)
+    // doit les retirer de TOUS les champs texte restitués, signalProfile inclus.
+    const ctx = makeCoverageContext(10, {
+      "financial-auditor": [
+        { severity: "CRITICAL", title: "Marge brute faible 25/100", description: "noté 25/100 par l'auditeur" },
+      ],
+    });
+    const llmResponse = makeMinimalLLMResponse({
+      keyStrengths: ["Equipe technique 92/100", "Traction forte grade A"],
+      keyWeaknesses: ["Churn eleve 30/100"],
+      findings: {
+        recommendation: { action: "contrasted", verdict: "contrasted", rationale: "Deal contrasté, score global 58/100." },
+      },
+    });
+    const result = transformResponse(llmResponse, ctx);
+
+    const serialized = JSON.stringify(result);
+    expect(serialized, "aucun « X/100 » ne doit subsister").not.toMatch(/\d{1,3}\s*\/\s*100/);
+    expect(serialized, "aucun « grade A-F » ne doit subsister").not.toMatch(/\bgrade\s*:?\s*[A-F]\b/i);
+    // Le texte qualitatif reste présent (seule la note est retirée).
+    expect(result.keyStrengths.join(" ")).toContain("Equipe technique");
+    expect(result.signalProfile.dominantSignals.some((s) => s.statement.includes("Equipe technique"))).toBe(true);
+    expect(result.signalProfile.dominantSignals.some((s) => s.statement.includes("Marge brute faible"))).toBe(true);
   });
 });

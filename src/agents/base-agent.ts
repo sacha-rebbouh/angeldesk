@@ -1406,29 +1406,16 @@ ${sanitizedDeal.description}
     }
 
     if (this.config.name === "synthesis-deal-scorer") {
-      const overallScore = typeof data.overallScore === "number" ? data.overallScore : undefined;
-      const dimensionScores = Array.isArray(data.dimensionScores) ? data.dimensionScores : [];
-      const comparativeRanking = isPlainRecord(data.comparativeRanking) ? data.comparativeRanking : undefined;
-      if (overallScore === undefined) issues.push("Missing overallScore");
-      if (dimensionScores.length === 0) issues.push("Missing dimensionScores");
-      if (!comparativeRanking) {
-        partialIssues.push("Missing comparativeRanking");
-      } else if (
-        comparativeRanking.insufficientData === true ||
-        comparativeRanking.method === "INSUFFICIENT_DATA" ||
-        comparativeRanking.method === "UNAVAILABLE"
-      ) {
-        partialIssues.push("Comparative ranking has insufficient benchmark data");
-      }
-      if (overallScore !== undefined && dimensionScores.length > 0) {
-        const weighted = dimensionScores.reduce((sum, dimension) => {
-          if (!isPlainRecord(dimension)) return sum;
-          const weightedScore = typeof dimension.weightedScore === "number" ? dimension.weightedScore : 0;
-          return sum + weightedScore;
-        }, 0);
-        if (Math.abs(weighted - overallScore) > 20) {
-          partialIssues.push(`overallScore diverges from dimension weighted sum by ${Math.round(Math.abs(weighted - overallScore))} pts`);
-        }
+      // Chantier P4 — contrat SCORELESS : on ne valide plus overallScore /
+      // dimensionScores / comparativeRanking (note de deal retirée de la
+      // production). La garantie structurée de sortie est le profil de signal
+      // scoreless (orientation doctrine + couverture par dimension).
+      const signalProfile = isPlainRecord(data.signalProfile) ? data.signalProfile : undefined;
+      if (!signalProfile) {
+        issues.push("Missing signalProfile");
+      } else {
+        if (typeof signalProfile.orientation !== "string") issues.push("Missing signalProfile.orientation");
+        if (!Array.isArray(signalProfile.dimensionCoverage)) partialIssues.push("Missing signalProfile.dimensionCoverage");
       }
     }
 
@@ -1463,7 +1450,10 @@ ${sanitizedDeal.description}
       return ["meta", "score", "findings", "redFlags", "questions", "alertSignal", "narrative"];
     }
     if (this.config.name === "synthesis-deal-scorer") {
-      return ["overallScore", "dimensionScores", "investmentRecommendation", "keyStrengths", "keyWeaknesses", "criticalRisks"];
+      // Chantier P4 — contrat SCORELESS : `overallScore` / `dimensionScores`
+      // retirés des champs requis (note de deal non produite) ; `verdict` +
+      // `signalProfile` (orientation scoreless) deviennent les garants.
+      return ["verdict", "investmentRecommendation", "keyStrengths", "keyWeaknesses", "criticalRisks", "signalProfile"];
     }
     if (this.config.name === "memo-generator") {
       return ["executiveSummary", "companyOverview", "investmentHighlights", "keyRisks", "dueDiligenceFindings", "nextSteps"];

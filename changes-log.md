@@ -1,6 +1,19 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P4-a — synthesis-deal-scorer : retrait de la PRODUCTION de note de deal
+
+### Fichiers
+- `src/agents/tier3/synthesis-deal-scorer.ts` (cœur, −296/+67) : `transformResponse` ne produit plus `overallScore` / `confidence` / `dimensionScores` / `scoreBreakdown` / `comparativeRanking`. Supprimés : extraction dimensionScores + calcul overallScore pondéré, caps de cohérence (Rule 1 skepticism, Rule 2 critical), meta-gate thèse (Rule 4), pénalité de score (Rule 3 ; le **relevé** `partialAgents` est conservé pour `keyWeaknesses`), confidence + pénalité, `patchScoreInText`, helper mort `normalizeDimensionWeight`. `execute()` : un SEUL appel LLM (retry « dimensions » retiré, sans objet en scoreless) + **bloc F37 retiré** (percentile DE SCORE via `percentile-calculator` → écriture comparativeRanking + confidence = note de deal bannie). Rationale restituée scrubbée via `stripDealScoreMentions` (remplace le patch). `buildSignalContribution(orientation, context)` ne porte plus `score`. Type `SynthesisDealScorerData` : 5 champs de score rendus **OPTIONNELS** (compat durable snapshots en vol + historiques + lecteurs défensifs `?? null`). Orientation 100% scoreless (`finalVerdict` + `signalProfile`) inchangée.
+- `src/agents/types.ts` + `src/agents/type-modules/tier3.ts` : mêmes 5 champs de score rendus OPTIONNELS dans les copies dupliquées de `SynthesisDealScorerData`.
+- `src/agents/base-agent.ts` : contrat de sortie synthesis SCORELESS. `getRequiredOutputContractFields` → `["verdict", "investmentRecommendation", "keyStrengths", "keyWeaknesses", "criticalRisks", "signalProfile"]` (overallScore/dimensionScores retirés). Bloc de validation synthesis : check structurel `signalProfile.orientation` + `dimensionCoverage` (au lieu de overallScore/dimensionScores/comparativeRanking). Sinon CONTRACT_BROKEN → `success:false`.
+- `src/agents/tier3/__tests__/synthesis-deal-scorer-transform.test.ts` : invariant `signalContribution.score === overallScore` supprimé (les deux champs n'existent plus).
+- `src/agents/tier3/__tests__/synthesis-deal-scorer-llm-budget.guard.test.ts` : `MAX_IN_EXECUTE_CALLS` 2→1 ; assertion count `>=2`→`toBe(1)` (retry retiré) ; doc/worst-case alignés (1×100s, F37 retiré).
+
+### Description
+**Chantier dé-scorisation, P4-a (retrait des scores producteurs, ordre additif).** La synthèse ne RESTITUE plus de note depuis P3 ; ici on retire sa **production** (1er producteur). Ordre ADDITIF : champs de note rendus optionnels (PAS supprimés du type) → snapshots stepwise en vol + analyses historiques + lecteurs défensifs (persistence `if (overallScore != null)`, score-extraction) compilent et tolèrent l'absence. La persistence (`Deal.*Score` gatée sur `overallScore != null`) **skippe** naturellement le write pour les nouveaux runs. **Pas de bump `STEPWISE_GRAPH_VERSION` (reste 4)** : ni topologie ni step-ids changés ; le contrat de sortie n'est validé qu'à la PRODUCTION (pas au replay du snapshot). Clé durable `"synthesis-deal-scorer"` inchangée. Gain collatéral : 1 appel LLM au lieu de 2. **Différé (micro-étapes P4 suivantes)** : prompt LLM (instruit encore score/dimensions, ignorés), purge finale des champs optionnels + write persistence inerte, retrait `percentile-calculator` (P5), type mort `SynthesisDealScorerDataV2`. tsc 0 ; suite unit complète 4515 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-15 — Dé-scorisation — sweep complétude — 3 surfaces (analysis-complete-view, deck-coherence, board thesis-debate)
 
 ### Fichiers

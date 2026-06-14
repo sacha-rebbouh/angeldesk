@@ -3257,10 +3257,13 @@ export interface ContradictionDetectorResult extends AgentResult {
 
 // Synthesis Deal Scorer Agent
 export interface SynthesisDealScorerData {
-  overallScore: number; // 0-100
+  // Chantier P4 — note de deal retirée de la PRODUCTION (la synthèse ne peuple
+  // plus ces champs). Conservés OPTIONNELS pour la compat durable (snapshots
+  // stepwise en vol + analyses historiques + lecteurs défensifs `?? null`).
+  overallScore?: number; // 0-100
   verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
-  confidence: number; // 0-100
-  dimensionScores: {
+  confidence?: number; // 0-100
+  dimensionScores?: {
     dimension: string;
     score: number;
     weight: number;
@@ -3268,13 +3271,13 @@ export interface SynthesisDealScorerData {
     sourceAgents: string[];
     keyFactors: string[];
   }[];
-  scoreBreakdown: {
+  scoreBreakdown?: {
     strengthsContribution: number;
     weaknessesDeduction: number;
     riskAdjustment: number;
     opportunityBonus: number;
   };
-  comparativeRanking: {
+  comparativeRanking?: {
     percentileOverall: number;
     percentileSector: number;
     percentileStage: number;

@@ -58,6 +58,7 @@ import {
   deriveSynthesisSignalIntensity,
   deriveScoreIndependentOrientation,
   decideNotExploitable,
+  deepStripScoreMentions,
 } from "@/services/signal-profile";
 import type {
   AnalysisSignalProfile,
@@ -228,15 +229,25 @@ export interface SynthesisDealScorerDataV2 {
 
 // Pour compatibilité avec l'ancien type exporté
 export interface SynthesisDealScorerData {
-  overallScore: number;
+  /**
+   * Chantier P4 — Champs de NOTE DE DEAL retirés de la PRODUCTION. La synthèse
+   * ne les peuple plus (`transformResponse` n'émet plus de score / dimensions /
+   * breakdown / percentile de score / confidence globale). Conservés OPTIONNELS
+   * pour la compat durable : d'anciens snapshots stepwise en vol et des analyses
+   * historiques en DB les portent encore, et des lecteurs défensifs
+   * (`?? null`, `data?.overallScore != null`) doivent continuer à compiler.
+   * La purge finale du type (+ du write persistence devenu inerte) est une
+   * micro-étape P4 ultérieure, puis P5 droppe les colonnes DB.
+   */
+  overallScore?: number;
   /**
    * Profil de signal Phase A — type unifié `Tier3Orientation` (équivalent
    * structurel à l'union string littérale précédente). Cf. `src/agents/types.ts`
    * et `src/agents/tier3/schemas/common.ts:Tier3OrientationSchema`.
    */
   verdict: Tier3Orientation;
-  confidence: number;
-  dimensionScores: {
+  confidence?: number;
+  dimensionScores?: {
     dimension: string;
     score: number;
     weight: number;
@@ -244,13 +255,13 @@ export interface SynthesisDealScorerData {
     sourceAgents: string[];
     keyFactors: string[];
   }[];
-  scoreBreakdown: {
+  scoreBreakdown?: {
     strengthsContribution: number;
     weaknessesDeduction: number;
     riskAdjustment: number;
     opportunityBonus: number;
   };
-  comparativeRanking: {
+  comparativeRanking?: {
     percentileOverall: number;
     percentileSector: number;
     percentileStage: number;
@@ -289,9 +300,10 @@ export interface SynthesisDealScorerData {
    * `orientation` (4 valeurs doctrine) + solidité + signaux dominants +
    * couverture par dimension + risques critiques, DÉRIVÉS sans aucun score
    * numérique. Détecté par le bi-reader `readDoctrineOrientation` (présence de
-   * `dominantSignals` + `dimensionCoverage`). Les champs `overallScore` /
-   * `dimensionScores` / `scoreBreakdown` restent émis (ordre additif, retirés
-   * en P4) mais ne pilotent PLUS l'orientation.
+   * `dominantSignals` + `dimensionCoverage`). Chantier P4 : les champs
+   * `overallScore` / `dimensionScores` / `scoreBreakdown` / `comparativeRanking`
+   * / `confidence` ne sont PLUS émis (production retirée) — seul ce profil
+   * scoreless et `verdict` pilotent l'orientation restituée.
    */
   signalProfile: AnalysisSignalProfile;
 }
@@ -313,8 +325,9 @@ export interface SynthesisDealScorerResult extends AgentResult {
  * génération complète de plus sur un autre modèle) pouvait consommer tout le budget 300s →
  * kill Vercel mid-write → boucle de retries Inngest (post-mortem cmq9lg9un…).
  *
- * - `timeoutMs: 100_000` borne CHAQUE appel (l'in-execute retry en fait au plus 2, gardés par
- *   `canRetry` ; 2×100s + F37 ≈ 210s < config.timeoutMs 220s).
+ * - `timeoutMs: 100_000` borne CHAQUE appel. Chantier P4 : execute() ne fait plus
+ *   qu'UN seul appel LLM (retry « dimensions » + post-traitement F37 retirés) →
+ *   1×100s ≪ config.timeoutMs 220s, marge anti-boucle 300s renforcée.
  * - `disableModelFallback: true` coupe le failover cross-modèle long (cf. reconciler 6752c9e).
  * - `maxRetries: 1` borne le retry router same-model (2 tentatives partageant les 100s).
  *
@@ -518,88 +531,19 @@ ${weightsTable}
 
 Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
-    // Call LLM with retry: if dimensional scores are missing, retry once with explicit instruction.
-    // Time-budget aware: only retry if we have enough time left (< 50% of timeout used).
-    let data: LLMSynthesisResponse;
-    const callStart = Date.now();
-    const firstAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt, SYNTHESIS_LLM_CALL_OPTIONS);
-    const firstCallMs = Date.now() - callStart;
-    const firstBreakdown = firstAttempt.data.score?.breakdown ?? firstAttempt.data.dimensionScores ?? [];
+    // Chantier P4 — un SEUL appel LLM. L'ancien retry « dimensions » re-promptait
+    // le modèle pour obtenir `score.breakdown`, qui alimentait l'ancien
+    // overallScore/dimensionScores. La dérivation est désormais 100% scoreless
+    // (orientation + signalProfile dérivés des red flags consolidés + couverture
+    // + solidité), donc relancer pour ce breakdown n'a plus d'objet. Aligné avec
+    // le budget deadline-aware P2-d (un appel borné, pas de seconde génération).
+    const { data } = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt, SYNTHESIS_LLM_CALL_OPTIONS);
 
-    if (firstBreakdown.length >= 3) {
-      data = firstAttempt.data;
-    } else {
-      const timeRemaining = this.config.timeoutMs - firstCallMs;
-      const canRetry = timeRemaining > firstCallMs * 1.2; // need ~120% of first call for retry + post-processing
-      if (canRetry) {
-        console.warn(
-          `[synthesis-deal-scorer] LLM returned ${firstBreakdown.length} dimension scores — retrying (${Math.round(timeRemaining / 1000)}s remaining)`
-        );
-        const retryPrompt = prompt + `\n\n---\n\n**INSTRUCTION CRITIQUE**: Ta réponse DOIT inclure "score.breakdown" avec AU MINIMUM 6 dimensions (Team, Financials, Market, Product/Tech, GTM/Traction, Competitive), chacune avec "criterion", "weight", "score" et "justification". Sans ce breakdown, l'analyse est inutilisable.`;
-        const retryAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(retryPrompt, SYNTHESIS_LLM_CALL_OPTIONS);
-        data = retryAttempt.data;
-      } else {
-        console.warn(
-          `[synthesis-deal-scorer] LLM returned ${firstBreakdown.length} dimension scores — skipping retry (only ${Math.round(timeRemaining / 1000)}s left, first call took ${Math.round(firstCallMs / 1000)}s)`
-        );
-        data = firstAttempt.data;
-      }
-    }
-
-    // Transform and validate the response
-    const result = this.transformResponse(data, context);
-
-    // F37: Override LLM percentiles with deterministic DB calculation
-    // Use a 10s timeout to avoid blocking when Neon DB is unstable
-    try {
-      const { calculateDealPercentile } = await import("@/services/funding-db/percentile-calculator");
-      const dbPercentile = await Promise.race([
-        calculateDealPercentile(
-          result.overallScore,
-          context.canonicalDeal.sector ?? null,
-          context.canonicalDeal.stage ?? null,
-        ),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("F37 percentile DB timeout (10s)")), 10000)
-        ),
-      ]);
-      result.comparativeRanking = {
-        percentileOverall: dbPercentile.percentileOverall,
-        percentileSector: dbPercentile.percentileSector,
-        percentileStage: dbPercentile.percentileStage,
-        similarDealsAnalyzed: dbPercentile.similarDealsAnalyzed,
-        method: dbPercentile.method,
-        insufficientData: dbPercentile.method === "INSUFFICIENT_DATA",
-        calculationDetail: dbPercentile.calculationDetail,
-      };
-      if (dbPercentile.method === "INSUFFICIENT_DATA") {
-        console.warn(`[synthesis-deal-scorer] F37: Percentile based on ${dbPercentile.similarDealsAnalyzed} deals only (${dbPercentile.method})`);
-        result.confidence = Math.min(result.confidence, 60);
-        result.keyWeaknesses = [
-          ...new Set([
-            ...result.keyWeaknesses,
-            `Benchmark percentile statistically weak: only ${dbPercentile.similarDealsAnalyzed} comparable deals available.`,
-          ]),
-        ].slice(0, 5);
-        result.criticalRisks = [
-          ...new Set([
-            ...result.criticalRisks,
-            "Comparative ranking is insufficiently supported and must not be treated as statistically robust.",
-          ]),
-        ].slice(0, 3);
-      }
-    } catch (err) {
-      console.warn("[synthesis-deal-scorer] F37 percentile calculation failed:", err);
-      result.comparativeRanking = {
-        ...result.comparativeRanking,
-        method: "UNAVAILABLE",
-        insufficientData: true,
-        calculationDetail: "Percentile calculation failed; comparative ranking unavailable.",
-      };
-      result.confidence = Math.min(result.confidence, 55);
-    }
-
-    return result;
+    // Transform and validate the response (dérivation 100% scoreless).
+    // Chantier P4 — l'ancien bloc F37 (percentile DE SCORE via percentile-calculator
+    // → écriture de comparativeRanking + confidence) est retiré : c'est une note de
+    // deal (percentile de score) bannie par la doctrine § Restitution analytique.
+    return this.transformResponse(data, context);
   }
 
   // ===========================================================================
@@ -1263,67 +1207,14 @@ Aucune incohérence majeure détectée entre les agents.`;
     // Toute `action`/`orientation`/`verdict` produite par le LLM est TOLÉRÉE en
     // entrée mais JAMAIS préservée en sortie : pas de canal d'orientation
     // concurrent piloté par le LLM (recadrage gate Codex P2-a). Seuls les
-    // contenus qualitatifs du LLM (rationale, conditions, forces/faiblesses,
-    // breakdown dimensionnel) sont repris.
-
-    // Extract dimension scores with backward compatibility
-    const rawDimensionData = data.score?.breakdown ?? data.dimensionScores ?? [];
-    const dimensionScores = rawDimensionData.map((d) => {
-      // Handle both formats: breakdown (criterion/justification) and dimensionScores (dimension/keyFactors)
-      const dAny = d as Record<string, unknown>;
-      const dimensionName = (dAny.criterion ?? dAny.dimension ?? "Unknown") as string;
-      const scoreVal = (dAny.score as number) != null ? Math.min(100, Math.max(0, dAny.score as number)) : 0;
-      const rawWeight = (dAny.weight as number) ?? 0;
-      const weightVal = normalizeDimensionWeight(rawWeight);
-      const justificationVal = dAny.justification as string | undefined;
-
-      return {
-        dimension: dimensionName,
-        score: scoreVal,
-        weight: weightVal,
-        weightedScore: Math.round(scoreVal * weightVal),
-        sourceAgents: (dAny.sourceAgents as string[]) ?? [],
-        keyFactors: (dAny.keyFactors as string[]) ?? (justificationVal ? [justificationVal] : []),
-      };
-    });
-
-    // Score logic:
-    // 1. If LLM produced dimensions, compute weighted average from them
-    // 2. Compare LLM's overall score with its own dimensional breakdown
-    // 3. If divergence is too large, prefer the dimensional computation (LLM showed its work)
-    // 4. If no dimensions at all (retry also failed), use LLM's raw score
-    const llmScore = data.score?.value ?? data.overallScore;
-    let overallScore: number;
-
-    if (dimensionScores.length > 0) {
-      const computedWeighted = Math.round(
-        dimensionScores.reduce((sum, d) => sum + d.weightedScore, 0)
-      );
-
-      if (llmScore != null) {
-        const divergence = Math.abs(llmScore - computedWeighted);
-        if (divergence > 15) {
-          // LLM score diverges significantly from its own dimensional breakdown.
-          // Always prefer the computed weighted average — the LLM showed its work
-          // in the dimensions, the overall score is often influenced by subjective
-          // "gut feeling" adjustments that create instability between runs.
-          console.warn(
-            `[SynthesisDealScorer] LLM score (${llmScore}) diverges from its own dimensions (${computedWeighted}) by ${divergence} pts — using weighted average`
-          );
-          overallScore = computedWeighted;
-        } else {
-          overallScore = llmScore;
-        }
-      } else {
-        overallScore = computedWeighted;
-      }
-    } else {
-      // No dimensions even after retry — use LLM's raw score (last resort)
-      overallScore = llmScore ?? 0;
-      if (overallScore === 0 && llmScore == null) {
-        console.warn(`[SynthesisDealScorer] No dimensions and no LLM score — defaulting to 0`);
-      }
-    }
+    // contenus qualitatifs du LLM (rationale, conditions, forces/faiblesses)
+    // sont repris.
+    //
+    // Chantier P4 — La PRODUCTION de note de deal est retirée : plus de calcul
+    // `overallScore` / `dimensionScores` / `scoreBreakdown` / `comparativeRanking`
+    // / `confidence`, plus de caps de cohérence numériques ni de meta-gate de
+    // score. Seule la dérivation scoreless (`finalVerdict` + `signalProfile`)
+    // ci-dessous pilote la restitution.
 
     // Extract key strengths/weaknesses
     // IMPORTANT: topStrengths is explicitly "strengths" from the LLM.
@@ -1345,51 +1236,12 @@ Aucune incohérence majeure détectée entre les agents.`;
       })
       .filter((text): text is string => !!text && text !== "");
 
-    // P2 — L'orientation N'EST PLUS dérivée du score (cf. doctrine § 4 +
-    // PLAN-DESCORING.md). La dérivation score-indépendante est calculée plus
-    // bas (`finalVerdict`) à partir de l'intensité des red flags consolidés,
-    // de la couverture par dimension et de la solidité des preuves. Le score
-    // reste calculé (ordre additif, retiré en P4) mais ne pilote plus rien.
-    let finalOverallScore = Math.round(Math.min(100, Math.max(0, overallScore)));
-
-    // =========================================================================
-    // POST-LLM COHERENCE VALIDATION (in code, not prompt)
-    // =========================================================================
-
-    // Rule 1: If alertSignal shows dominant alerts AND skepticism > 80 → cap score at 40
-    const alertRec = data.alertSignal?.recommendation?.toLowerCase() ?? "";
-    const isAlertDominant = alertRec.includes("alert_dominant") || alertRec === "stop";
-    const daResult = context.previousResults?.["devils-advocate"];
-    const daData = daResult?.success && daResult && "data" in daResult && daResult.data
-      ? daResult.data as Record<string, unknown>
-      : null;
-    const daFindings = daData?.findings as Record<string, unknown> | undefined;
-    const skepticismAssessment = daFindings?.skepticismAssessment as { score?: number } | undefined;
-    const skepticismScore = skepticismAssessment?.score ?? 0;
-
-    if (isAlertDominant && skepticismScore > 80 && finalOverallScore > 40) {
-      console.warn(
-        `[SynthesisDealScorer] Coherence cap: alertSignal="${alertRec}" + skepticism=${skepticismScore} → capping score from ${finalOverallScore} to 40`
-      );
-      finalOverallScore = 40;
-    }
-
-    // Rule 2: If score > 85 but has CRITICAL red flags → cap at 70
-    if (finalOverallScore > 85 && criticalRisks.length > 0) {
-      console.warn(
-        `[SynthesisDealScorer] Coherence cap: score=${finalOverallScore} with ${criticalRisks.length} CRITICAL red flags → capping at 70`
-      );
-      finalOverallScore = 70;
-    }
-
-    // P1 Rule 3: Penalite contractStatus — un Tier1 retourne PARTIAL_UNVERIFIED
-    // quand son output LLM manque des champs de contrat (benchmarks vides,
-    // dimensions manquantes, etc.). Ces agents ne doivent PAS peser autant qu'un
-    // output VALID dans le score global. On applique -2 pts par agent partiel
-    // (cap a -10) + on baisse la confidence.
-    // FIX (audit P1 #9) : thesis-extractor est maintenant dans la liste des contributeurs
-    // soumis a la contract penalty. Si l'extracteur retourne PARTIAL_UNVERIFIED
-    // (ex: loadBearing vide, alerts manquant), meme penalite -2 pts que les Tier 1.
+    // Agents Tier1/Tier0.5 en contrat partiel (PARTIAL_UNVERIFIED) : leur output
+    // LLM manque des champs de contrat (benchmarks vides, dimensions manquantes,
+    // loadBearing vide…). Chantier P4 : plus AUCUNE pénalité de score (la note de
+    // deal n'est plus produite) ni de cap/meta-gate numérique. On conserve ce
+    // relevé uniquement pour signaler la donnée structurante manquante dans
+    // `keyWeaknesses` (cf. plus bas).
     const tier1Contributors = [
       "financial-auditor", "team-investigator", "competitive-intel",
       "market-intelligence", "tech-stack-dd", "tech-ops-dd",
@@ -1403,33 +1255,6 @@ Aucune incohérence majeure détectée entre les agents.`;
       if (!r) continue;
       const status = (r as { contractStatus?: string }).contractStatus;
       if (status === "PARTIAL_UNVERIFIED") partialAgents.push(name);
-    }
-    if (partialAgents.length > 0) {
-      const penalty = Math.min(10, partialAgents.length * 2);
-      const prior = finalOverallScore;
-      finalOverallScore = Math.max(0, finalOverallScore - penalty);
-      console.warn(
-        `[SynthesisDealScorer] Contract penalty: ${partialAgents.length} agents PARTIAL_UNVERIFIED (${partialAgents.join(", ")}) → -${penalty} pts (${prior} → ${finalOverallScore})`
-      );
-    }
-
-    // Rule 4: Thesis meta-gate — si la these (Tier 0.5) a ete jugee fragile
-    // (alert_dominant ou vigilance) ET le BA n'a pas explicitement bypass,
-    // on applique un cap de 50/100 pour interdire le faux confort d'un 72/100
-    // alors que la these ne tient pas. Le verdict UI affichera en plus une
-    // notice "Score non applicable — these non validee".
-    // Source: context.thesis est injecte par orchestrator via EnrichedAgentContext
-    // Source: context.analysis.thesisBypass: BA a choisi "continue" malgre these fragile
-    const thesisCtx = (context as unknown as { thesis?: { verdict?: string } }).thesis;
-    const analysisCtx = (context as unknown as { analysis?: { thesisBypass?: boolean } }).analysis;
-    const thesisVerdict = thesisCtx?.verdict ?? null;
-    const thesisBypass = analysisCtx?.thesisBypass ?? false;
-    const fragileThesis = thesisVerdict === "alert_dominant" || thesisVerdict === "vigilance";
-    if (fragileThesis && !thesisBypass && finalOverallScore > 50) {
-      console.warn(
-        `[SynthesisDealScorer] Thesis meta-gate: thesisVerdict="${thesisVerdict}" + !bypass → capping score from ${finalOverallScore} to 50`
-      );
-      finalOverallScore = 50;
     }
 
     // =========================================================================
@@ -1480,76 +1305,30 @@ Aucune incohérence majeure détectée entre les agents.`;
       criticalRisks: this.buildCriticalRiskRefs(consolidatedFlags),
     };
 
-    // If the score was overridden by the guard-fou, patch any mention of the old
-    // LLM score in the narrative/rationale text fields to avoid contradictions
-    // between the displayed score and the text (e.g. score=46 but text says "21/100").
-    const scoreWasOverridden = llmScore != null && finalOverallScore !== llmScore;
-    const patchScoreInText = (text: string): string => {
-      if (!scoreWasOverridden || !text) return text;
-      // Replace patterns like "21/100", "score de 21", "score: 21", "score est de 21"
-      const llmStr = String(llmScore);
-      return text
-        .replace(new RegExp(`\\b${llmStr}/100\\b`, "g"), `${finalOverallScore}/100`)
-        .replace(new RegExp(`score\\s+(?:de|est de|final(?:\\s+est)?\\s+de|:)\\s+${llmStr}\\b`, "gi"), (match) =>
-          match.replace(llmStr, String(finalOverallScore))
-        );
-    };
-
-    // Extract rationale and patch score references if needed
+    // Rationale restituée : scrubbée de toute mention de note de deal (chantier
+    // P4 — aucun score n'est plus produit ni « patché » ; on retire les
+    // éventuels « X/100 » que le LLM aurait glissés dans son texte libre).
     const rawRationale = data.findings?.recommendation?.rationale ??
                         data.investmentRecommendation?.rationale ??
                         data.investmentThesis?.summary ??
                         data.recommendation?.rationale ??
-                        "Analyse complétée — consultez les scores par dimension pour le détail.";
+                        "Analyse complétée — consultez les signaux par dimension pour le détail.";
 
-    // P1 — Si des agents Tier1 sont en PARTIAL_UNVERIFIED, baisser la confidence
-    // rapportee et injecter un keyWeakness explicite.
-    const rawConfidence = (data.meta?.confidenceLevel ?? data.confidence) != null
-      ? Math.min(100, Math.max(0, (data.meta?.confidenceLevel ?? data.confidence)!))
-      : 0;
-    const confidencePenalty = partialAgents.length * 5;
-    const finalConfidence = Math.max(0, rawConfidence - confidencePenalty);
+    // P1 — Si des agents Tier1 sont en PARTIAL_UNVERIFIED, injecter un
+    // keyWeakness explicite (donnée structurante manquante).
     if (partialAgents.length > 0) {
       keyWeaknesses.unshift(
         `${partialAgents.length} agent${partialAgents.length > 1 ? "s" : ""} Tier1 en contrat partiel: ${partialAgents.slice(0, 3).join(", ")}${partialAgents.length > 3 ? "..." : ""}. Analyse complete mais donnees structurantes manquantes.`
       );
     }
 
-    return {
-      overallScore: finalOverallScore,
+    const result: SynthesisDealScorerData = {
       verdict: finalVerdict,
-      confidence: finalConfidence,
-      dimensionScores,
-      // scoreBreakdown is DERIVED from dimensionScores — never trust LLM's self-reported
-      // adjustments (it fabricates post-hoc justifications for its gut-feeling score).
-      scoreBreakdown: {
-        strengthsContribution: dimensionScores
-          .filter(d => d.score >= 60)
-          .reduce((sum, d) => sum + Math.round((d.score - 50) * d.weight), 0),
-        weaknessesDeduction: Math.abs(dimensionScores
-          .filter(d => d.score < 40)
-          .reduce((sum, d) => sum + Math.round((d.score - 50) * d.weight), 0)),
-        riskAdjustment: 0,
-        opportunityBonus: 0,
-      },
-      comparativeRanking: {
-        percentileOverall: data.findings?.marketPosition?.percentileOverall ??
-                          data.comparativeRanking?.percentileOverall ?? 0,
-        percentileSector: data.findings?.marketPosition?.percentileSector ??
-                         data.comparativeRanking?.percentileSector ?? 0,
-        percentileStage: data.findings?.marketPosition?.percentileStage ??
-                        data.comparativeRanking?.percentileStage ?? 0,
-        similarDealsAnalyzed: data.findings?.marketPosition?.similarDealsAnalyzed ??
-                             data.comparativeRanking?.similarDealsAnalyzed ?? 0,
-        method: data.comparativeRanking?.method,
-        insufficientData: data.comparativeRanking?.insufficientData,
-        calculationDetail: data.comparativeRanking?.calculationDetail,
-      },
       investmentRecommendation: {
         // P2 — `action` reflète DÉTERMINISTIQUEMENT `finalVerdict` (orientation
         // scoreless), jamais une valeur d'orientation pilotée par le LLM.
         action: finalVerdict,
-        rationale: patchScoreInText(rawRationale),
+        rationale: rawRationale,
         conditions: data.findings?.recommendation?.conditions ??
                    data.investmentRecommendation?.conditions ??
                    data.recommendation?.conditions,
@@ -1560,19 +1339,25 @@ Aucune incohérence majeure détectée entre les agents.`;
       keyStrengths: Array.isArray(keyStrengths) ? keyStrengths.slice(0, 8) : [],
       keyWeaknesses: Array.isArray(keyWeaknesses) ? keyWeaknesses.slice(0, 8) : [],
       criticalRisks: Array.isArray(criticalRisks) ? criticalRisks.slice(0, 8) : [],
-      // Phase A slice A2 — Contribution Tier 3 (D1 + D2 verrouillés).
-      // - orientation : strictement alignée sur `finalVerdict` (déterministe).
-      // - evidenceSolidity : null en A2 — sera renseigné par le service
-      //   Solidité en A6 (D2 : `contradictory` / `insufficient` / null seulement,
-      //   aucun mapping depuis score/confidence).
-      // - score : score final agrégé (secondaire, dimensionnel).
-      // - criticalRisks : refs constructibles depuis les flags CRITICAL.
-      // Phase A slice A6 — evidenceSolidity dérivé déterministe depuis le
-      // service Evidence Solidity (jamais fabriqué depuis score/confidence).
-      signalContribution: this.buildSignalContribution(finalVerdict, finalOverallScore, context),
+      // Phase A slice A2/A6 — Contribution Tier 3 : `orientation` strictement
+      // alignée sur `finalVerdict` (déterministe), `evidenceSolidity` dérivé par
+      // le service Evidence Solidity (jamais depuis un score), `criticalRisks`
+      // depuis les flags CRITICAL. Chantier P4 : plus de champ `score` (note de
+      // deal retirée de la production).
+      signalContribution: this.buildSignalContribution(finalVerdict, context),
       // P2 — Profil SCORELESS dérivé sans aucun score (cf. bloc dérivation).
       signalProfile,
     };
+
+    // Chantier P4 (recadrage gate Codex) — scrub FINAL de TOUS les champs texte
+    // restitués : le prompt LLM instruit encore des scores/dimensions, donc forces,
+    // faiblesses, risques, conditions, rationale ET les libellés de signalProfile
+    // (dominantSignals issus des forces ET des titres de red flags, criticalRisks)
+    // peuvent contenir « X/100 » ou un grade. `deepStripScoreMentions` retire ces
+    // patterns de note partout (idempotent ; n'altère ni les enums orientation/
+    // solidité ni les métriques observables / « X/10 »). Le nettoyage du prompt
+    // lui-même reste une micro-étape P4 ultérieure.
+    return deepStripScoreMentions(result);
   }
 
   /**
@@ -1582,17 +1367,18 @@ Aucune incohérence majeure détectée entre les agents.`;
    * D2 verrouillé : `value` ∈ {`contradictory`, `insufficient`, null}.
    * Le service ne lit JAMAIS score / overallScore / confidence
    * (cf. source-guard `no-confidence-input.guard.test.ts`).
+   *
+   * Chantier P4 : le champ `score` (note de deal) n'est plus émis — la
+   * contribution ne porte que l'orientation + la solidité des preuves.
    */
   private buildSignalContribution(
     orientation: Tier3Orientation,
-    score: number,
     context: EnrichedAgentContext,
   ): Tier3SignalContribution {
     const solidity = buildEvidenceSolidityForContext(context);
     const base: Tier3SignalContribution = {
       orientation,
       evidenceSolidity: solidity.value,
-      score,
     };
     if (solidity.value !== null && solidity.rationale) {
       base.evidenceSolidityRationale = solidity.rationale;
@@ -1781,11 +1567,6 @@ interface LLMSynthesisResponse {
   keyStrengths?: string[];
   keyWeaknesses?: string[];
   criticalRisks?: string[];
-}
-
-function normalizeDimensionWeight(weight: number): number {
-  if (!Number.isFinite(weight) || weight <= 0) return 0;
-  return weight > 1 ? weight / 100 : weight;
 }
 
 // =============================================================================
