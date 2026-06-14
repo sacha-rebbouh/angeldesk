@@ -195,17 +195,9 @@ function getFindings(data: unknown): Array<{ label: string; value: string }> {
     .slice(0, 8);
 }
 
-function getScore(data: unknown): string {
-  const value = valueAt(data, ["score", "value"]);
-  const grade = text(valueAt(data, ["score", "grade"]));
-  if (typeof value === "number") return grade ? `${value}/100 · ${grade}` : `${value}/100`;
-  return grade;
-}
-
 function CompleteAgentCard({ name, result }: { name: string; result: AgentResult }) {
   const narrative = getNarrative(result.data);
   const findings = getFindings(result.data);
-  const score = getScore(result.data);
   const errorInfo = result.error ? formatDetailedError(name, result.error) : null;
   const redFlags = result.success
     ? extractDecisionRisks({ [name]: result })
@@ -232,7 +224,6 @@ function CompleteAgentCard({ name, result }: { name: string; result: AgentResult
             <Badge variant={result.success ? "secondary" : "outline"}>
               {result.success ? "Analyse disponible" : "Analyse manquante"}
             </Badge>
-            {score && <Badge variant="outline">{score}</Badge>}
           </div>
         </div>
       </div>

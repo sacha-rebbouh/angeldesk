@@ -2,8 +2,8 @@
 
 /**
  * ThesisDebateView — affiche le Round 0 (THESIS_DEBATE) du Board IA.
- * Chaque membre (Claude / GPT / Gemini / Grok) donne son score de solidite
- * de la these + critique majeure + recommandations au BA.
+ * Chaque membre (Claude / GPT / Gemini / Grok) expose son adhesion a la these,
+ * sa critique majeure et ses recommandations au BA.
  */
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -28,22 +28,10 @@ const AGREEMENT_CONFIG: Record<ThesisDebateResponse["agreement"], { label: strin
   strong_disagree: { label: "Fort desaccord", color: "bg-red-100 text-red-800 border-red-300", icon: AlertTriangle },
 };
 
-function solidityColor(score: number): string {
-  if (score >= 80) return "bg-green-500";
-  if (score >= 60) return "bg-blue-500";
-  if (score >= 40) return "bg-amber-500";
-  if (score >= 20) return "bg-orange-500";
-  return "bg-red-500";
-}
-
 export function ThesisDebateView({ responses }: ThesisDebateViewProps) {
   if (responses.length === 0) {
     return null;
   }
-
-  const avgSolidity = Math.round(
-    responses.reduce((sum, r) => sum + r.response.thesisSolidityScore, 0) / responses.length
-  );
 
   return (
     <Card className="border-2 border-slate-300" role="region" aria-label="Round 0 — Debat sur la these">
@@ -53,7 +41,7 @@ export function ThesisDebateView({ responses }: ThesisDebateViewProps) {
           Round 0 — Debat sur la these d&apos;investissement
         </CardTitle>
         <CardDescription>
-          Solidite moyenne percue par les {responses.length} membres IA : <strong>{avgSolidity}/100</strong>
+          These debattue par les {responses.length} membres IA — adhesions, desaccords et critiques exposes ci-dessous.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -70,18 +58,6 @@ export function ThesisDebateView({ responses }: ThesisDebateViewProps) {
                       <AgreementIcon className="h-2.5 w-2.5 mr-0.5" />
                       {cfg.label}
                     </Badge>
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-xs text-muted-foreground">Solidite</div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-20 h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className={cn("h-full", solidityColor(r.response.thesisSolidityScore))}
-                        style={{ width: `${r.response.thesisSolidityScore}%` }}
-                      />
-                    </div>
-                    <span className="text-xs font-bold tabular-nums">{r.response.thesisSolidityScore}</span>
                   </div>
                 </div>
               </div>
