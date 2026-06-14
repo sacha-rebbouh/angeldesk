@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (PDF) étape 4/N — tier2-expert scoreless (retrait sous-scores /100)
+
+### Fichiers
+- `src/lib/pdf/pdf-sections/tier2-expert.tsx` : 5 retraits de note de deal — (1) « Score sectoriel: X/100 » (`data.sectorScore`) ; (2) `SectorFit` « Score fit: X/100 » (`f.score`) + champ type ; (3) `AiExtended` « Score moat: X/100 » (`moat.overallMoatScore`) + champ type ; (4) `PropTechExtended` « Score résilience: X/100 » (`cycle.resilienceScore`) + champ type ; (5) `DataCompleteness` « Score brut vs plafonné: X → Y » (`scoreCapped`/`rawScore`/`cappedScore`) + champs type.
+
+### Description
+Sous-scores /100 retirés (classe `sectorScore`/`sectorFitScore` du scrubber). L'orientation sectorielle reste portée par `ExtendedVerdict` (`getTier2SectorFitLabel`, verbal). Conservés (allowlist — métriques OBSERVABLES + benchmarks/percentiles de métrique observable) : KeyMetrics + benchmarks P25/médiane/P75/topDécile, ValuationAnalysis (multiples x, percentile P, justifiedRange), UnitEconomics (CAC/LTV/ratio), EdTech retention/completion %, Biotech probabilityOfSuccess %, salesCycleMonths, similarDealsFound, nodeCount, monthlyComputeCost, availableDataPoints/expectedDataPoints (comptes), `ExtendedVerdict.confidence` (verbal). Producteurs intacts = P4. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (PDF) étape 3/N — tier3-synthesis scoreless (retrait scores agrégés/dimension)
 
 ### Fichiers

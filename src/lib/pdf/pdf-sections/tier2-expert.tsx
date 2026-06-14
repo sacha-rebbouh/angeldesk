@@ -51,10 +51,7 @@ export function Tier2ExpertSection({
               </Text>
             )}
 
-            {/* Score + maturity */}
-            {data.sectorScore !== undefined && (
-              <LabelValue label="Score sectoriel" value={`${data.sectorScore}/100`} />
-            )}
+            {/* Maturité du secteur */}
             {!!data.sectorMaturity && (
               <LabelValue label="Maturité du secteur" value={s(data.sectorMaturity)} />
             )}
@@ -338,7 +335,6 @@ function SectorDynamics({ dynamics }: { dynamics: unknown }) {
 
 function SectorFit({ fit }: { fit: unknown }) {
   const f = fit as {
-    score?: number;
     strengths?: string[];
     weaknesses?: string[];
     sectorTiming?: string;
@@ -347,7 +343,6 @@ function SectorFit({ fit }: { fit: unknown }) {
   return (
     <>
       <H3>Adéquation sectorielle</H3>
-      {f.score !== undefined && <LabelValue label="Score fit" value={`${f.score}/100`} />}
       {f.sectorTiming && <LabelValue label="Timing" value={sup(f.sectorTiming)} />}
       {f.strengths && f.strengths.length > 0 && <BulletList items={f.strengths.map((st) => `+ ${st}`)} />}
       {f.weaknesses && f.weaknesses.length > 0 && <BulletList items={f.weaknesses.map((w) => `- ${w}`)} />}
@@ -361,9 +356,6 @@ function DataCompleteness({ completeness }: { completeness: unknown }) {
     availableDataPoints?: number;
     expectedDataPoints?: number;
     missingCritical?: string[];
-    scoreCapped?: boolean;
-    rawScore?: number;
-    cappedScore?: number;
   } | undefined;
   if (!c) return null;
   return (
@@ -372,9 +364,6 @@ function DataCompleteness({ completeness }: { completeness: unknown }) {
       <LabelValue label="Niveau" value={sup(c.level)} />
       {c.availableDataPoints && c.expectedDataPoints && (
         <LabelValue label="Points de données" value={`${c.availableDataPoints}/${c.expectedDataPoints}`} />
-      )}
-      {c.scoreCapped && c.rawScore !== undefined && (
-        <LabelValue label="Score brut vs plafonne" value={`${c.rawScore} → ${c.cappedScore ?? "N/A"} (plafonné)`} />
       )}
       {c.missingCritical && c.missingCritical.length > 0 && <BulletList items={c.missingCritical.slice(0, 5)} />}
     </>
@@ -506,7 +495,7 @@ function SectorSpecificExtended({ agentName, ext }: { agentName: string; ext?: R
 
 function AiExtended({ ext }: { ext: Record<string, unknown> }) {
   const verdict = ext.aiVerdict as { isRealAI?: boolean; technicalCredibility?: string; moatStrength?: string; recommendation?: string; keyInsight?: string } | undefined;
-  const moat = ext.aiMoat as { overallMoatScore?: number; dataFlywheel?: boolean; networkEffects?: boolean; apiDependency?: string; moatAssessment?: string } | undefined;
+  const moat = ext.aiMoat as { dataFlywheel?: boolean; networkEffects?: boolean; apiDependency?: string; moatAssessment?: string } | undefined;
   const model = ext.aiModelApproach as { type?: string; baseModel?: string; moatLevel?: string; proprietaryComponents?: string[] } | undefined;
   const infra = ext.aiInfraCosts as { gpuProvider?: string; monthlyComputeCost?: number; scalingModel?: string; costAssessment?: string } | undefined;
   const redFlags = ext.aiRedFlags as { noMLTeam?: boolean; justAPIWrapper?: boolean; noProprietaryData?: boolean; unrealisticAccuracyClaims?: boolean; redFlagSummary?: string } | undefined;
@@ -525,7 +514,6 @@ function AiExtended({ ext }: { ext: Record<string, unknown> }) {
       {moat && (
         <>
           <H3>Moat IA</H3>
-          {moat.overallMoatScore !== undefined && <LabelValue label="Score moat" value={`${moat.overallMoatScore}/100`} />}
           {moat.dataFlywheel !== undefined && <LabelValue label="Data flywheel" value={moat.dataFlywheel ? "OUI" : "NON"} />}
           {moat.networkEffects !== undefined && <LabelValue label="Effets de réseau" value={moat.networkEffects ? "OUI" : "NON"} />}
           {moat.apiDependency && <LabelValue label="Dépendance API" value={sup(moat.apiDependency)} />}
@@ -647,14 +635,13 @@ function FintechExtended({ ext }: { ext: Record<string, unknown> }) {
 }
 
 function PropTechExtended({ ext }: { ext: Record<string, unknown> }) {
-  const cycle = ext.proptechCycleAnalysis as { currentCyclePhase?: string; interestRateSensitivity?: string; resilienceScore?: number; cycleRiskAssessment?: string } | undefined;
+  const cycle = ext.proptechCycleAnalysis as { currentCyclePhase?: string; interestRateSensitivity?: string; cycleRiskAssessment?: string } | undefined;
   if (!cycle) return null;
   return (
     <>
       <H3>Analyse du cycle immobilier</H3>
       {cycle.currentCyclePhase && <LabelValue label="Phase du cycle" value={sup(cycle.currentCyclePhase)} />}
       {cycle.interestRateSensitivity && <LabelValue label="Sensibilité taux" value={sup(cycle.interestRateSensitivity)} />}
-      {cycle.resilienceScore !== undefined && <LabelValue label="Score résilience" value={`${cycle.resilienceScore}/100`} />}
       {cycle.cycleRiskAssessment && <BodyText>{cycle.cycleRiskAssessment}</BodyText>}
     </>
   );
