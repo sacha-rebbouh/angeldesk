@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 7/N — suppression du reader mort score-utils.ts
+
+### Fichiers
+- `src/lib/score-utils.ts` : **supprimé**. Exportait `extractDealScore` (lisait `overallScore`/`score.value` de synthesis-deal-scorer = note de deal) et `extractDealRecommendation`. Après les étapes 4 et 6, ses derniers consumers (`analysis-panel.tsx` + page dev-only avekapeti) ne l'importent plus.
+
+### Description
+Reader de note de deal entièrement orphelin (grep `score-utils` / `extractDealScore` / `extractDealRecommendation` = 0 hors fichier) → retiré, conforme au plan PLAN-DESCORING (« retirer le reader quand tous les consumers sont basculés »). **Gate Codex APPROVE** : suppression sans danger, aucun chemin durable/LLM ne dépend du reader, surfaces runtime migrées lisent orientation/verdict via chemins scoreless. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; suite unit complète 4509 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 6/N — analysis-panel.tsx + timeline-versions.tsx scoreless (clôt le cluster analysis-panel)
 
 ### Fichiers
