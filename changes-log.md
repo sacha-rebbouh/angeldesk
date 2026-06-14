@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3-e — Scrub des notes de deal du contexte LLM de négociation (route + strategist)
+
+### Fichiers
+- `src/services/negotiation/strategist.ts` : `buildAnalysisContext` n'injecte plus la ligne `Score: …/100` du bloc FINANCIAL AUDITOR (seule note de deal réellement présente dans le prompt LLM de négociation). Type `AnalysisResults` nettoyé des champs devenus inutilisés : `financialAuditor.score`, `synthesisDealScorer.score`, `synthesisDealScorer.overallScore` (ces deux derniers étaient extraits par la route mais jamais lus par `buildAnalysisContext`).
+- `src/app/api/negotiation/generate/route.ts` : retrait de l'extraction de ces champs (financial-auditor `score`, synthesis `score` + `overallScore`). Les agents produisent encore le score (P4) ; on ne le propage plus vers le contexte de négociation.
+- `src/app/api/negotiation/generate/__tests__/route.test.ts` : l'expectation qui vérifiait `score:{value:72}` / `overallScore:81` dans l'objet passé à `generateNegotiationStrategy` devient des assertions d'ABSENCE (`not.toHaveProperty` score/overallScore) ; `verdict:"invest"` conservé. Le mock d'entrée garde les scores (donnée agent normale).
+
+### Description
+Même classe que P3-a (scrub des notes de deal injectées dans un contexte LLM), surface trouvée par grep large pendant P3-d. Allowlist conservée (PAS des notes de deal) : benchmarks P25/median/P75 de multiples ARR, valorisation/LTV/CAC/ownership %, verdict catégoriel (orientation, pas un nombre), `thesis.confidence`. `calculateImprovedScore` LAISSÉ : tally de points de négociation obtenus (must_have×5 + nice×2 + optional×1), métrique de progrès observable, pas une note de deal, sans caller hors barrel. La sortie `NegotiationStrategy` est déjà scoreless (`overallLeverage` verbal). Hors scope, notés : board `context-compressor.ts` (autre surface, scrubber board P2-c), memo-full UI `signalProfile.score`, overview tab, legacy panel, listes pipeline, PDF, read-model/delta/compare. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; suite unit 4509 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3-d — Live Coaching context-compiler scoreless (anti-score-caché + retrait notes de deal)
 
 ### Fichiers

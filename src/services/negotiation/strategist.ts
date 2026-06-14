@@ -89,7 +89,6 @@ export interface NegotiationStrategy {
 
 export interface AnalysisResults {
   financialAuditor?: {
-    score?: { value?: number };
     findings?: {
       valuationAnalysis?: {
         currentValuation?: number;
@@ -135,8 +134,6 @@ export interface AnalysisResults {
     }>;
   };
   synthesisDealScorer?: {
-    score?: { value?: number };
-    overallScore?: number;
     verdict?: string;
     keyStrengths?: string[];
     keyWeaknesses?: string[];
@@ -362,7 +359,6 @@ function buildAnalysisContext(results: AnalysisResults): string {
   if (results.financialAuditor) {
     const fa = results.financialAuditor;
     context += `### FINANCIAL AUDITOR\n`;
-    context += `Score: ${fa.score?.value ?? "N/A"}/100\n`;
 
     if (fa.findings?.valuationAnalysis) {
       const va = fa.findings.valuationAnalysis;
