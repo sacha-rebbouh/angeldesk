@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P4-b3 — retrait de l'agent deal-scorer Tier 0 (pur producteur de note)
+
+### Fichiers
+- **`src/agents/deal-scorer.ts` SUPPRIMÉ** : agent Tier 0 = PUR producteur de note de deal (scores global/team/market/product/financials/timing + breakdown + `percentileRanking` percentile-de-score + comparableDeals.score). Aucun findings/redFlags/narrative verbal à préserver. **Décision Codex : RETRAIT** (vs neutralisation, qui laisserait un agent vide).
+- `src/agents/index.ts` + `src/agents/orchestrator/agent-registry.ts` : export `dealScorer` + import + entrée `BASE_AGENTS["deal-scorer"]` retirés.
+- `src/agents/orchestrator/types.ts` : `"deal-scorer"` retiré de `BaseAgentName` ; `ANALYSIS_CONFIGS.full_dd.agents` → `[]` (**clé `full_dd` CONSERVÉE** car `AnalysisType = keyof typeof ANALYSIS_CONFIGS` — retirer la clé casserait le type partout).
+- `src/agents/orchestrator/index.ts` : **garde dispatcher** `case "full_dd"` → fall-through `runFullAnalysis` (sans ce garde, un event interne legacy `type=full_dd` tomberait dans `runBaseAnalysis` avec 0 agent = succès vide trompeur — bug latent trouvé par Codex). Cohérent avec le remap route `full_dd→full_analysis`.
+- `src/agents/board/{types,board-orchestrator}.ts` : champ + construction `dealScorer` du tier0 board retirés.
+- Types orphelins retirés (3 copies) : `ScoringResult` / `DealScores` / `ScoreBreakdown` (agents/types.ts, type-modules/common.ts, src/types/index.ts) + membre `ScoringResult` des 2 unions `AnalysisAgentResult` + import pipeline.ts. (synthesis-deal-scorer a son `ScoreBreakdown` local, intact.)
+- `src/agents/__tests__/a9-reste-confidence-threshold.guard.test.ts` : entrée `deal-scorer.ts` retirée de la liste (fichier supprimé).
+
+### Description
+**Chantier dé-scorisation, P4-b3 (gaté Codex APPROVE après 1 REQUEST_CHANGES — garde dispatcher).** 3e producteur P4. deal-scorer ne tournait que via `ANALYSIS_CONFIGS.full_dd`, lui-même remappé vers `full_analysis` à la route (`LEGACY_TYPE_REPLACEMENTS`) → agent de facto mort. Pas dans le graphe stepwise, pas persisté, seul consumer = board (déjà scrubbé P2-c). **Conservé (anti-over-clean, consigne Codex)** : label `AGENT_LABELS_FR["deal-scorer"]` (affichage historique), entrée denylist `presentation.ts` (empêche de resurfacer le nom technique d'anciens snapshots scorés), mappings API/coût/crédits legacy `full_dd`. **Pas de bump `STEPWISE_GRAPH_VERSION`** (hors graphe stepwise). **Dette doc notée** : `CLAUDE.md` § ARCHITECTURE liste encore deal-scorer sous « Couche 0 = 3 agents » / « 43 agents » — drift de doctrine laissé à Sacha (hors-scope code). tsc 0 ; suite complète verte dans le payload gate.
+
+---
 ## 2026-06-15 — Dé-scorisation — P4-b2 — conditions-analyst : retrait de la note conditions (Option B)
 
 ### Fichiers
@@ -301,12 +316,3 @@ Notes de deal / sous-scores agrégés retirés (classe `consistencyScore`/`overa
 
 ### Description
 Même pattern que l'étape 1 (headline orientation × solidité, bi-reader scoreless). Après ce diff, le helper `recLabel` (5 valeurs) n'a plus aucun consommateur — son retrait + `ScoreCircle`/`ScoreBar`/`scoreColor` est groupé dans l'étape finale de nettoyage des helpers/composants PDF (relisible en un diff). Producteurs intacts = P4. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (PDF) étape 1/N — score-breakdown scoreless (orientation × solidité)
-
-### Fichiers
-- `src/lib/pdf/pdf-sections/score-breakdown.tsx` : section « Score & Verdict » → « Profil du signal ». Retrait du `ScoreCircle`, de la ligne `Score global: X/100 — Confiance: Y%` et du verdict brut uppercase. Remplacement par le modèle 2 axes VERBAL : Axe 1 orientation du signal (taxonomie doctrine 4 valeurs) lue via le bi-reader scoreless `readDoctrineOrientation(results)` (forme nouvelle `data.signalProfile.orientation`, sinon verdict legacy mappé 5→4), libellé via `DOCTRINE_ORIENTATION_CONFIG` en majuscules ; Axe 2 solidité des preuves (`data.signalProfile.evidenceSolidity`, fallback `data.signalContribution.evidenceSolidity`) via `proofLabel` + son rationale. Risques critiques conservés. Imports `ScoreCircle`/`sup` retirés ; ajout `readDoctrineOrientation`/`DOCTRINE_ORIENTATION_CONFIG`/`proofLabel`.
-
-### Description
-Pattern-setter du sous-chantier PDF (8 fichiers, ~136 occurrences score/100/grade/ScoreCircle). La « Confiance » globale est SUPPRIMÉE : l'axe 2 doctrine est la Solidité des preuves (déterministe), pas une auto-confiance LLM (anti-pattern fui). Aucune dérivation d'orientation depuis un score (garde-fou anti score-caché). Helpers PDF `recLabel`/`proofLabel` déjà créés (P2) — `proofLabel` wiré ici pour la 1ʳᵉ fois. Divergence temporaire assumée avec la decision-strip écran (encore en `aggregateOrientation` 5 valeurs) : le PDF consomme déjà la taxonomie doctrine 4 valeurs via le bi-reader (la garde-fou P3 l'exige). Producteurs (scores agents) intacts = P4. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
