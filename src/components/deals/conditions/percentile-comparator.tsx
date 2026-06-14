@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, BarChart3, Info } from "lucide-react";
+import { Loader2, BarChart3, Info, Check, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -25,8 +25,8 @@ interface BenchmarkResponse {
   };
   dilution: { median: number; dealValue: number | null };
   instrument: { standard: string; dealValue: string | null; assessment: string | null };
-  protections: { standard: string; score: number | null };
-  governance: { standard: string; score: number | null };
+  protections: { standard: string; items: { label: string; present: boolean }[] };
+  governance: { standard: string; items: { label: string; present: boolean }[] };
 }
 
 function formatEUR(n: number): string {
@@ -56,10 +56,23 @@ function getPercentileLabel(pct: number): string {
   return "Très élevé";
 }
 
-function getScoreColor(score: number): string {
-  if (score >= 80) return "text-green-600";
-  if (score >= 60) return "text-yellow-600";
-  return "text-red-600";
+// Observable present/absent checklist for protections / governance terms
+function TermsChecklist({ items }: { items: { label: string; present: boolean }[] }) {
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">Non evalue</p>;
+  }
+  return (
+    <ul className="space-y-1">
+      {items.map((it) => (
+        <li key={it.label} className="flex items-center gap-2 text-sm">
+          {it.present
+            ? <Check className="h-3.5 w-3.5 text-green-600 shrink-0" />
+            : <X className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />}
+          <span className={cn(it.present ? "text-foreground" : "text-muted-foreground")}>{it.label}</span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 // Percentile bar with markers at P25, P50, P75
@@ -219,32 +232,15 @@ export const PercentileComparator = React.memo(function PercentileComparator({
         </CardContent>
       </Card>
 
-      {/* Protections & Governance scores */}
+      {/* Protections & Governance — observable present/absent vs standard */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Protections investisseur</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {data.protections.score != null ? (
-              <>
-                <div className="flex items-center gap-3">
-                  <span className={cn("text-2xl font-bold", getScoreColor(data.protections.score))}>
-                    {data.protections.score}
-                  </span>
-                  <span className="text-sm text-muted-foreground">/100</span>
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={cn("h-full rounded-full transition-all", getPercentileColor(100 - data.protections.score))}
-                    style={{ width: `${data.protections.score}%` }}
-                  />
-                </div>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">Non evalue</p>
-            )}
-            <p className="text-xs text-muted-foreground">Standard : {data.protections.standard}</p>
+            <TermsChecklist items={data.protections.items} />
+            <p className="text-xs text-muted-foreground pt-1">Standard : {data.protections.standard}</p>
           </CardContent>
         </Card>
 
@@ -253,25 +249,8 @@ export const PercentileComparator = React.memo(function PercentileComparator({
             <CardTitle className="text-sm">Gouvernance</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
-            {data.governance.score != null ? (
-              <>
-                <div className="flex items-center gap-3">
-                  <span className={cn("text-2xl font-bold", getScoreColor(data.governance.score))}>
-                    {data.governance.score}
-                  </span>
-                  <span className="text-sm text-muted-foreground">/100</span>
-                </div>
-                <div className="h-2 rounded-full bg-muted overflow-hidden">
-                  <div
-                    className={cn("h-full rounded-full transition-all", getPercentileColor(100 - data.governance.score))}
-                    style={{ width: `${data.governance.score}%` }}
-                  />
-                </div>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">Non evalue</p>
-            )}
-            <p className="text-xs text-muted-foreground">Standard : {data.governance.standard}</p>
+            <TermsChecklist items={data.governance.items} />
+            <p className="text-xs text-muted-foreground pt-1">Standard : {data.governance.standard}</p>
           </CardContent>
         </Card>
       </div>

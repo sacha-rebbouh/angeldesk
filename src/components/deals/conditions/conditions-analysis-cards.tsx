@@ -10,8 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import { getScoreColor, getScoreBarColor, getScoreLabel, getSeverityStyle } from "@/lib/ui-configs";
-import { ScoreRing } from "@/components/ui/score-ring";
+import { getSeverityStyle } from "@/lib/ui-configs";
 import { conditionsAlertKey } from "@/services/alert-resolution/alert-keys";
 import { ResolutionBadge } from "@/components/deals/resolution-badge";
 import { ResolutionDialog } from "@/components/deals/resolution-dialog";
@@ -28,13 +27,6 @@ import type {
 
 // ── Conditions-specific helpers (not duplicating ui-configs) ──
 
-function getVerdictConfig(score: number) {
-  if (score >= 80) return { label: "Conditions favorables", color: "text-green-700", accentColor: "bg-emerald-500" };
-  if (score >= 60) return { label: "Conditions acceptables", color: "text-blue-700", accentColor: "bg-blue-500" };
-  if (score >= 40) return { label: "Conditions à négocier", color: "text-amber-700", accentColor: "bg-amber-500" };
-  return { label: "Conditions défavorables", color: "text-red-700", accentColor: "bg-red-500" };
-}
-
 function getValuationLabel(verdict: string): { label: string; color: string } {
   switch (verdict) {
     case "UNDERVALUED": return { label: "Sous-évalué", color: "text-green-600" };
@@ -45,22 +37,9 @@ function getValuationLabel(verdict: string): { label: string; color: string } {
   }
 }
 
-/** Compact horizontal bar for dimension scores (pattern from verdict-panel MiniBar) */
-function MiniBar({ score }: { score: number }) {
-  return (
-    <div className="w-16 h-1.5 rounded-full bg-muted/60 overflow-hidden">
-      <div
-        className={cn("h-full rounded-full", getScoreBarColor(score))}
-        style={{ width: `${Math.min(score, 100)}%` }}
-      />
-    </div>
-  );
-}
-
-// ── Hero Card (replaces VerdictSummary + ScoreCard) ──
+// ── Hero Card (verdict at a glance — scoreless) ──
 
 export const ConditionsHeroCard = React.memo(function ConditionsHeroCard({
-  score,
   breakdown,
   narrative,
   valuation,
@@ -68,7 +47,6 @@ export const ConditionsHeroCard = React.memo(function ConditionsHeroCard({
   onOpenSimulator,
   onOpenComparator,
 }: {
-  score: number;
   breakdown: ScoreBreakdownItem[] | null;
   narrative: NarrativeData | null;
   valuation: ValuationFindings | null;
@@ -77,85 +55,59 @@ export const ConditionsHeroCard = React.memo(function ConditionsHeroCard({
   onOpenComparator: () => void;
 }) {
   const [showMore, setShowMore] = useState(false);
-  const verdict = getVerdictConfig(score);
   const hasMoreInfo = !!(narrative?.summary || (narrative?.keyInsights && narrative.keyInsights.length > 0));
 
   return (
     <div className="relative overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
-      {/* Top accent line */}
-      <div className={cn("absolute top-0 left-0 right-0 h-[2px]", verdict.accentColor)} />
+      {/* Top accent line (neutral — no deal note) */}
+      <div className="absolute top-0 left-0 right-0 h-[2px] bg-border" />
 
       <div className="p-6">
-        {/* Main row: ScoreRing left, details right */}
-        <div className="flex items-start gap-6 sm:gap-8">
-          {/* Score Ring */}
-          <div className="shrink-0">
-            <ScoreRing score={score} />
-            <p className="text-center mt-2">
-              <Badge variant="outline" className="text-[10px] font-medium tracking-wide uppercase">
-                {getScoreLabel(score)}
-              </Badge>
-            </p>
-          </div>
-
-          {/* Right column */}
-          <div className="flex-1 min-w-0 space-y-4">
-            {/* Verdict + one-liner */}
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className={cn("text-lg font-semibold", verdict.color)}>{verdict.label}</p>
-                {narrative?.oneLiner && (
-                  <p className="text-sm text-muted-foreground mt-0.5">{narrative.oneLiner}</p>
-                )}
-              </div>
-              {redFlagCount > 0 && (
-                <Badge variant="destructive" className="text-xs shrink-0">
-                  {redFlagCount} red flag{redFlagCount > 1 ? "s" : ""}
-                </Badge>
-              )}
-            </div>
-
-            {/* Dimension breakdown (compact MiniBar rows) */}
-            {breakdown && breakdown.length > 0 && (
-              <div className="space-y-2">
-                {breakdown.map((item) => (
-                  <div key={item.criterion} className="flex items-center gap-3 text-[13px]">
-                    <span className="w-28 shrink-0 text-foreground/65 font-medium truncate">
-                      {item.criterion}
-                      <span className="text-[10px] ml-1 text-muted-foreground/50">
-                        ({Math.round(item.weight * 100)}%)
-                      </span>
-                    </span>
-                    <MiniBar score={item.score} />
-                    <span className={cn("font-bold tabular-nums text-xs", getScoreColor(item.score))}>
-                      {item.score}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Valuation quick view */}
-            {valuation && valuation.verdict && (
-              <div className="rounded-lg bg-muted/30 border border-border/40 p-3 space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground font-medium">Valorisation</span>
-                  <span className={cn("font-semibold", getValuationLabel(valuation.verdict).color)}>
-                    {getValuationLabel(valuation.verdict).label}
-                    {valuation.percentileVsDB != null && (
-                      <span className="text-muted-foreground font-normal ml-1.5">
-                        (P{valuation.percentileVsDB})
-                      </span>
-                    )}
-                  </span>
-                </div>
-                {valuation.rationale && (
-                  <p className="text-xs text-muted-foreground">{valuation.rationale}</p>
-                )}
-              </div>
-            )}
-          </div>
+        {/* Headline: narrative one-liner + red flag count */}
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-lg font-semibold text-foreground">
+            {narrative?.oneLiner || "Analyse des conditions"}
+          </p>
+          {redFlagCount > 0 && (
+            <Badge variant="destructive" className="text-xs shrink-0">
+              {redFlagCount} red flag{redFlagCount > 1 ? "s" : ""}
+            </Badge>
+          )}
         </div>
+
+        {/* Dimension breakdown — qualitative justification per criterion (no score) */}
+        {breakdown && breakdown.length > 0 && (
+          <div className="mt-4 space-y-2">
+            {breakdown.map((item) => (
+              <div key={item.criterion} className="text-[13px]">
+                <span className="font-medium text-foreground/80">{item.criterion}</span>
+                {item.justification && (
+                  <span className="text-muted-foreground"> — {item.justification}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Valuation quick view (observable benchmark) */}
+        {valuation && valuation.verdict && (
+          <div className="mt-4 rounded-lg bg-muted/30 border border-border/40 p-3 space-y-1">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground font-medium">Valorisation</span>
+              <span className={cn("font-semibold", getValuationLabel(valuation.verdict).color)}>
+                {getValuationLabel(valuation.verdict).label}
+                {valuation.percentileVsDB != null && (
+                  <span className="text-muted-foreground font-normal ml-1.5">
+                    (P{valuation.percentileVsDB})
+                  </span>
+                )}
+              </span>
+            </div>
+            {valuation.rationale && (
+              <p className="text-xs text-muted-foreground">{valuation.rationale}</p>
+            )}
+          </div>
+        )}
 
         {/* Action buttons */}
         <div className="flex gap-2 mt-5 pt-4 border-t border-border/40">
@@ -489,18 +441,7 @@ export const StructuredAssessmentCard = React.memo(function StructuredAssessment
 
         {assessment.trancheAssessments.map((ta) => (
           <div key={ta.trancheLabel} className="rounded-lg border p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">{ta.trancheLabel}</span>
-              <span className={cn("text-sm font-semibold", getScoreColor(ta.score))}>
-                {ta.score}/100
-              </span>
-            </div>
-            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-              <div
-                className={cn("h-full rounded-full transition-all", getScoreBarColor(ta.score))}
-                style={{ width: `${Math.min(ta.score, 100)}%` }}
-              />
-            </div>
+            <span className="text-sm font-medium">{ta.trancheLabel}</span>
             <p className="text-sm text-muted-foreground">{ta.assessment}</p>
             {ta.risks.length > 0 && (
               <ul className="space-y-1">

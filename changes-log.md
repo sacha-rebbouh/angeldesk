@@ -1,6 +1,20 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation — étape G4 — onglet Conditions entièrement scoreless (4 sous-onglets + 2 routes)
+
+### Fichiers
+- `src/components/deals/conditions/conditions-analysis-cards.tsx` : `ConditionsHeroCard` dé-scoré — retrait `ScoreRing` (note /100), `getVerdictConfig(score)` (verdict verbal « Conditions favorables/défavorables » **dérivé du score** = anti-pattern orientation-depuis-score-caché), badge `getScoreLabel`, `MiniBar` + nombres de breakdown par dimension. Layout 2 colonnes → 1 colonne. **Conservé verbal natif** : `narrative.oneLiner` (titre), compteur red flags (observable), justification qualitative par critère (criterion + justification, sans nombre ni poids), valuation quick view (verdict + percentile observable + rationale). `StructuredAssessmentCard` : `ta.score/100` + barre par tranche retirés (label + assessment + risks conservés). Imports `getScoreColor/getScoreBarColor/getScoreLabel/ScoreRing` retirés.
+- `src/components/deals/conditions/conditions-tab.tsx` : prop `score` retiré du hero ; sentinel de présence d'analyse `conditionsScore` → `conditionsAnalysis` (montre la dernière analyse valide même après re-run échoué) ; `isEmpty` idem ; 2 textes empty-state dé-scorés.
+- `src/components/deals/conditions/version-timeline.tsx` (Historique) : badges `Score: X/100` + delta `pts` retirés ; type `VersionWithDelta` (deltaScore) supprimé → lit `TermsVersionData`.
+- `src/components/deals/conditions/percentile-comparator.tsx` (Comparateur) : notes `protections.score`/`governance.score` /100 + barres + `getScoreColor` local retirés → **checklist OBSERVABLE present/absent** (`TermsChecklist`) des protections/gouvernance saisies au formulaire. Conservé : valuation percentile P25/P50/P75, dilution médiane, instrument standard (observables).
+- `src/app/api/deals/[dealId]/terms/versions/route.ts` : dérivation `deltaScore` (delta de note) retirée ; `conditionsScore` conservé en payload (carry interne, → P5).
+- `src/app/api/deals/[dealId]/terms/benchmarks/route.ts` : tally `protectionScore`/`governanceScore` (0-100) → listes `items` present/absent dérivées des mêmes booléens observables du formulaire (terms null → items vides → « Non évalué »).
+
+### Description
+Directive Sacha « dégager tous les scores » + leçon défaut = SUPPRIMER. Toute la surface **Conditions** (4 sous-onglets) ne restitue plus de note de deal. Garde-fou respecté : aucune orientation dérivée d'un vieux score (suppression pure, contenu verbal natif conservé). Agent producteur `conditions-analyst` (score interne) + colonne DB `conditionsScore` **inchangés** = P4/P5 (ordre additif) ; les `conditionsScore` restants côté route = écritures DB + lecture producteur, jamais restitués écran. **Gate Codex APPROVE après 1 REQUEST_CHANGES** (Codex a flaggé version-timeline = même surface non dé-scorée ; corrigé + percentile-comparator dé-scoré proactivement par le même principe). Non-bloquant noté par Codex : select `globalScore` mort dans `/terms` GET → cleanup sweep P5/carry. tsc 0 ; 117 tests verts (doctrine-guard, doctrine-runtime-guard, signal-profile, orientation-solidity-display, conditions-analyst ×3).
+
+---
 ## 2026-06-14 — Dé-scorisation cluster — étape G3 — export RGPD + contexte LLM chat scoreless (+ scrubber texte libre)
 
 ### Fichiers

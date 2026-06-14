@@ -116,32 +116,26 @@ export async function GET(request: NextRequest, context: RouteContext) {
       else instrumentAssessment = "A evaluer selon le contexte";
     }
 
-    // Protection score rough estimate
-    let protectionScore: number | null = null;
-    if (terms) {
-      let pts = 0;
-      if (terms.proRataRights === true) pts += 25;
-      if (terms.informationRights === true) pts += 15;
-      if (terms.tagAlong === true) pts += 15;
-      if (terms.liquidationPref && terms.liquidationPref !== "none") pts += 20;
-      if (terms.antiDilution && terms.antiDilution !== "none") pts += 15;
-      if (terms.boardSeat && terms.boardSeat !== "none") pts += 10;
-      protectionScore = Math.min(100, pts);
-    }
+    // Protections présentes (observable — issu du formulaire conditions, pas une note)
+    const protectionsItems = terms ? [
+      { label: "Pro-rata", present: terms.proRataRights === true },
+      { label: "Information rights", present: terms.informationRights === true },
+      { label: "Tag-along", present: terms.tagAlong === true },
+      { label: "Liquidation pref", present: !!(terms.liquidationPref && terms.liquidationPref !== "none") },
+      { label: "Anti-dilution", present: !!(terms.antiDilution && terms.antiDilution !== "none") },
+      { label: "Board seat", present: !!(terms.boardSeat && terms.boardSeat !== "none") },
+    ] : [];
 
-    // Governance score rough estimate
-    let governanceScore: number | null = null;
-    if (terms) {
-      let pts = 0;
-      if (terms.founderVesting === true) pts += 30;
-      const vestingMonths = terms.vestingDurationMonths as number | null;
-      if (vestingMonths && vestingMonths >= 36) pts += 20;
-      const esop = terms.esopPct != null ? Number(terms.esopPct) : null;
-      if (esop && esop >= 10) pts += 25;
-      if (terms.dragAlong === true) pts += 10;
-      if (terms.ratchet !== true && terms.payToPlay !== true) pts += 15;
-      governanceScore = Math.min(100, pts);
-    }
+    // Gouvernance présente (observable — issu du formulaire conditions, pas une note)
+    const vestingMonths = terms?.vestingDurationMonths as number | null;
+    const esop = terms?.esopPct != null ? Number(terms.esopPct) : null;
+    const governanceItems = terms ? [
+      { label: "Vesting fondateurs", present: terms.founderVesting === true },
+      { label: "Vesting >= 36 mois", present: !!(vestingMonths && vestingMonths >= 36) },
+      { label: "ESOP >= 10%", present: !!(esop && esop >= 10) },
+      { label: "Drag-along", present: terms.dragAlong === true },
+      { label: "Pas de clause toxique (ratchet / pay-to-play)", present: terms.ratchet !== true && terms.payToPlay !== true },
+    ] : [];
 
     return NextResponse.json({
       stage: stageKey,
@@ -165,11 +159,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
       },
       protections: {
         standard: benchmarks.protectionsStandard,
-        score: protectionScore,
+        items: protectionsItems,
       },
       governance: {
         standard: benchmarks.governanceStandard,
-        score: governanceScore,
+        items: governanceItems,
       },
     });
   } catch (error) {

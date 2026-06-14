@@ -43,25 +43,16 @@ export async function GET(request: NextRequest, context: RouteContext) {
       },
     });
 
-    // Compute delta scores between consecutive versions
-    const result = versions.map((v, idx) => {
-      const prev = versions[idx + 1]; // next in array = previous version (desc order)
-      const deltaScore = (v.conditionsScore != null && prev?.conditionsScore != null)
-        ? v.conditionsScore - prev.conditionsScore
-        : null;
-
-      return {
-        id: v.id,
-        version: v.version,
-        label: v.label,
-        termsSnapshot: v.termsSnapshot as Record<string, unknown>,
-        conditionsScore: v.conditionsScore,
-        deltaScore,
-        source: v.source,
-        changeNote: v.changeNote,
-        createdAt: v.createdAt.toISOString(),
-      };
-    });
+    const result = versions.map((v) => ({
+      id: v.id,
+      version: v.version,
+      label: v.label,
+      termsSnapshot: v.termsSnapshot as Record<string, unknown>,
+      conditionsScore: v.conditionsScore,
+      source: v.source,
+      changeNote: v.changeNote,
+      createdAt: v.createdAt.toISOString(),
+    }));
 
     return NextResponse.json({ versions: result });
   } catch (error) {
