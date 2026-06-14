@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 10/N (C3) — tier1-results.tsx : résumé agrégé scoreless (BadgePair + dimensions verbales)
+
+### Fichiers
+- `src/components/deals/tier1-results.tsx` : le résumé agrégé (carte « Analyse détaillée » + onglet Résumé `Tier1SummaryView`) ne restitue plus aucune note de deal. **Retirés** : memos `scores` (note /100 par agent) + `avgScore` (moyenne /100), le `ScoreBadge avgScore` en tête, la grille par agent affichant la note, le hero `avgScore/100` et le tri « points faibles » par note la plus basse. **Ajoutés** : memo `dimensions` (intensité verbale par agent via nouveau helper `dimensionIntensityOf`, lecture read-only `signalIntensity`/`alertSignal.recommendation`, aucune lecture de `score.value`) ; `overallOrientation`/`overallSolidity` via `aggregateOrientation`/`aggregateSolidity` rendus en `BadgePair` (modèle 2 axes verbal 5 valeurs, cohérent écran-à-écran avec tier3-results / investor-view) ; tête de résumé = `BadgePair` + liste 2 colonnes des dimensions (nom + chip `Tier1IntensityBadge`) ; `Tier1SummaryView` = hero `BadgePair` + bloc « Dimensions à investiguer en priorité » (intensité high/critical). Import `ScoreBadge` retiré (dernière utilisation supprimée). Nouveaux helpers : `dimensionIntensityOf` + `Tier1IntensityBadge`.
+
+### Description
+Étape 3/4 de tier1-results.tsx : le résumé bascule du score moyen /100 vers le modèle 2 axes verbal (orientation × solidité). Les chips par dimension sont **score-indépendants** (intensité de signal uniquement). **Gate Codex APPROVE après push-back argumenté** : 1er tour REQUEST_CHANGES (le BadgePair de solidité expose `aggregateSolidity`, qui en dernier fallback dérive une solidité verbale depuis `deck-coherence-checker.coherenceScore`). Push-back vérifié contre le codebase et accepté : `coherenceScore` est une métrique de cohérence/fiabilité **documentaire** (signal evidence-first listé par la doctrine pour la solidité), pas la note de deal ; la sortie est verbale, le nombre jamais rendu ; c'est le pattern déjà verrouillé par P3-b (`buildDecisionStripModel` dérive `coherenceBand` de `coherenceScore`, lock `doctrine-runtime-guard.test.ts:310-319`) ; le retirer ferait diverger la solidité du BadgePair de la bande de cohérence du decision-strip (incohérence cross-surface). Nuance de vocabulaire actée : `aggregateSolidity` n'est pas « score-indépendant » au sens strict (peut utiliser ce score documentaire interne), mais reste conforme (pas de note de deal restituée, pas de dérivation d'orientation depuis une note cachée). Reste C4 : cleanup des 4 vars mortes `scoreValue` (induites par C1). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 77 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 9/N (C2) — tier1-results.tsx : sous-scores numériques par dimension retirés
 
 ### Fichiers
