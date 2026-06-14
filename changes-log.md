@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P2-b — Retrait des scores des dérivations d'orientation CD + CA (Tier 3)
+
+### Fichiers
+- `src/services/signal-profile/derive.ts` : NOUVELLE fonction pure `orientationFromAgentIntensity(intensity)` (mapping per-agent SANS score : critical→alert_dominant, high→vigilance, elevated→contrasted, low→favorable ; aligné sur la convention UI `intensityToOrientation` + agents Tier 1). Réexportée via `index.ts`.
+- `src/agents/tier3/contradiction-detector.ts` : `deriveSignalContributionFromIntensity` ne prend plus `consistencyScore` (tiebreak `score>=80→favorable` retiré) → orientation via `orientationFromAgentIntensity`. Import `Tier3Orientation` devenu mort retiré.
+- `src/agents/tier3/conditions-analyst.ts` : DEUX retraits de score — (a) `deriveSignalContributionFromIntensity` ne prend plus `scoreValue` (tiebreaks `score>=85/70/55` retirés) ; (b) `deriveSignalIntensityFromConditions` ne prend plus `scoreValue` (seuils `score<40/<60` qui escaladaient l'intensité retirés — sinon l'orientation restait score-dérivée VIA l'intensité, même motif d'incomplétude que le canal action bloqué en P2-a). Intensité désormais red-flag-counts-only. Import `Tier3Orientation` mort retiré. `scoreValue` conservé (champ `score.value` + justification — retrait = P4).
+- `src/agents/tier3/__tests__/conditions-analyst-transform.test.ts` + `contradiction-detector-transform.test.ts` + `src/services/signal-profile/__tests__/derive.test.ts` : tests mis à jour pour les invariants score-free (score ignoré → intensité/orientation pilotées par red flags ; `orientationFromAgentIntensity` couvert).
+
+### Description
+P2-b du chantier dé-scorisation. L'orientation per-agent CD/CA (affichée dans les cartes analysis-v2) ne dérive plus d'aucun score — ni via tiebreak direct, ni via l'intensité (CA). Modèle per-agent (axe étroit, low→favorable) distinct du modèle DEAL de la synthèse (P2-a, positif strict). Conséquences validées par Codex : (B) `alertSignal.recommendation` CA n'escalade plus sur un score bas sans red flag (score<40 sans flag → PROCEED au lieu d'INVESTIGATE_FURTHER) — l'alerte vient des red flags, plus d'une note ; (C) CA ne peut plus émettre `very_favorable` (réservé à la synthèse). devils-advocate déjà score-free (dérive de `riskPosture`). Tier1/Tier2 inchangés (P4). Gate Codex : APPROVE (A-D validées ; nit comment stale corrigé). tsc 0 ; suite unit 4485 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P2-a — Synthèse SCORELESS : orientation dérivée sans aucun score + AnalysisSignalProfile
 
 ### Fichiers

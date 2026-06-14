@@ -22,6 +22,7 @@ import { BaseAgent } from "../base-agent";
 import { severityRank } from "@/services/red-flag-dedup";
 import { CONDITIONS_ANALYST_SYSTEM_PROMPT } from "./prompts/conditions-analyst-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
+import { orientationFromAgentIntensity } from "@/services/signal-profile";
 import type {
   EnrichedAgentContext,
   ConditionsAnalystData,
@@ -35,7 +36,6 @@ import type {
   AgentNarrative,
   Tier3SignalIntensity,
   Tier3SignalContribution,
-  Tier3Orientation,
 } from "../types";
 
 // ============================================================================
@@ -745,8 +745,8 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
         suggestedArgument: a.suggestedArgument ?? "",
         leverageSource: a.leverageSource ?? "",
       })),
-      // Phase A slice A4-bis — Placeholders ; recalculés ci-dessous après
-      // computation des red flags critiques + score (dérivation déterministe).
+      // Placeholders ; recalculés ci-dessous depuis les red flags consolidés
+      // (dérivation déterministe, P2 — sans score).
       signalIntensity: "low",
       signalContribution: { orientation: "contrasted", evidenceSolidity: null },
     };
@@ -790,14 +790,14 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       whatToLookFor: q.whatToLookFor ?? "",
     }));
 
-    // Phase A slice A4-bis — Dérivation déterministe signalIntensity +
-    // signalContribution depuis severity red flags + score conditions.
+    // Dérivation déterministe signalIntensity + signalContribution depuis la
+    // severity des red flags conditions UNIQUEMENT (P2 — sans score).
     // Anti-régression round 2 A3 : le LLM ne pilote pas (toute valeur LLM
     // est ignorée).
     const criticalRedFlags = redFlags.filter(rf => rf.severity === "CRITICAL").length;
     const highRedFlags = redFlags.filter(rf => rf.severity === "HIGH").length;
-    findings.signalIntensity = this.deriveSignalIntensityFromConditions(criticalRedFlags, highRedFlags, scoreValue);
-    findings.signalContribution = this.deriveSignalContributionFromIntensity(findings.signalIntensity, scoreValue);
+    findings.signalIntensity = this.deriveSignalIntensityFromConditions(criticalRedFlags, highRedFlags);
+    findings.signalContribution = this.deriveSignalContributionFromIntensity(findings.signalIntensity);
 
     // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
     // déterministe (D2 verrouillé : contradictory / insufficient / null,
@@ -853,67 +853,44 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
   }
 
   /**
-   * Phase A slice A4-bis — Dérivation déterministe de `signalIntensity`
-   * depuis severity red flags conditions + score conditions.
+   * Dérivation déterministe de `signalIntensity` depuis la severity des red
+   * flags conditions UNIQUEMENT (chantier P2 — retrait du score `scoreValue`
+   * qui escaladait l'intensité, donc l'orientation = score caché).
    *
    * Anti-régression round 2 A3 : le LLM ne pilote pas.
    *
-   *   1+ red flag CRITICAL                 → critical
-   *   2+ red flags HIGH || score < 40      → high
-   *   1 red flag HIGH || score < 60        → elevated
-   *   sinon                                → low
+   *   1+ red flag CRITICAL    → critical
+   *   2+ red flags HIGH       → high
+   *   1 red flag HIGH         → elevated
+   *   sinon                   → low
    */
   private deriveSignalIntensityFromConditions(
     criticalRedFlags: number,
     highRedFlags: number,
-    scoreValue: number,
   ): Tier3SignalIntensity {
     if (criticalRedFlags >= 1) return "critical";
-    if (highRedFlags >= 2 || scoreValue < 40) return "high";
-    if (highRedFlags >= 1 || scoreValue < 60) return "elevated";
+    if (highRedFlags >= 2) return "high";
+    if (highRedFlags >= 1) return "elevated";
     return "low";
   }
 
   /**
-   * Phase A slice A4-bis — Dérivation déterministe de `signalContribution`
-   * depuis `signalIntensity` + score conditions.
+   * Dérivation déterministe de `signalContribution` depuis `signalIntensity`,
+   * SANS aucun score (chantier P2 — retrait des tiebreaks `score >= 85/70/55`).
    *
-   * Conditions Analyst peut émettre `favorable` (et même `very_favorable`)
-   * quand les conditions sont objectivement bonnes (score haut, pas de red
-   * flag) — contrairement à CD/DA qui sont structurellement défensifs.
+   * L'orientation découle de l'intensité via le mapping per-agent partagé
+   * `orientationFromAgentIntensity` (critical→alert_dominant, high→vigilance,
+   * elevated→contrasted, low→favorable). `signalIntensity` étant désormais
+   * piloté par les seuls red flags, `favorable` reflète l'absence de red flag
+   * de conditions sur l'AXE conditions (pas une note de deal).
    *
-   *   critical                           → alert_dominant
-   *   high                               → vigilance
-   *   elevated                           → contrasted
-   *   low + score >= 85                  → very_favorable
-   *   low + score >= 70                  → favorable
-   *   low + score >= 55                  → contrasted
-   *   low + score < 55                   → vigilance (rare en branche low)
-   *
-   * D2 verrouillé : evidenceSolidity reste null en A4-bis (A6 qualifiera).
+   * D2 verrouillé : evidenceSolidity reste null ici (le service Solidité qualifie).
    */
   private deriveSignalContributionFromIntensity(
     intensity: Tier3SignalIntensity,
-    scoreValue: number,
   ): Tier3SignalContribution {
-    let orientation: Tier3Orientation;
-    if (intensity === "critical") {
-      orientation = "alert_dominant";
-    } else if (intensity === "high") {
-      orientation = "vigilance";
-    } else if (intensity === "elevated") {
-      orientation = "contrasted";
-    } else if (scoreValue >= 85) {
-      orientation = "very_favorable";
-    } else if (scoreValue >= 70) {
-      orientation = "favorable";
-    } else if (scoreValue >= 55) {
-      orientation = "contrasted";
-    } else {
-      orientation = "vigilance";
-    }
     return {
-      orientation,
+      orientation: orientationFromAgentIntensity(intensity),
       evidenceSolidity: null,
     };
   }

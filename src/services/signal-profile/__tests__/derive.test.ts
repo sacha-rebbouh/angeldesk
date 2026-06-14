@@ -10,9 +10,25 @@ import { describe, expect, it } from "vitest";
 import {
   deriveSynthesisSignalIntensity,
   deriveScoreIndependentOrientation,
+  orientationFromAgentIntensity,
   decideNotExploitable,
   type OrientationDerivationInputs,
 } from "../derive";
+
+describe("orientationFromAgentIntensity (mapping per-agent, sans score)", () => {
+  it("critical → alert_dominant", () => {
+    expect(orientationFromAgentIntensity("critical")).toBe("alert_dominant");
+  });
+  it("high → vigilance", () => {
+    expect(orientationFromAgentIntensity("high")).toBe("vigilance");
+  });
+  it("elevated → contrasted", () => {
+    expect(orientationFromAgentIntensity("elevated")).toBe("contrasted");
+  });
+  it("low → favorable (signal axe-agent ; distinct de l'orientation DEAL)", () => {
+    expect(orientationFromAgentIntensity("low")).toBe("favorable");
+  });
+});
 
 describe("deriveSynthesisSignalIntensity (counts-only, sans score)", () => {
   it("criticalCount >= 1 → critical", () => {

@@ -49,6 +49,29 @@ export const FAVORABLE_DOMINANT_MIN = 2;
 /** Seuil de signaux favorables pour `very_favorable` (en plus de couverture large). */
 export const VERY_FAVORABLE_MIN = 4;
 
+/**
+ * Mapping per-agent intensité → orientation (5 valeurs), SANS score.
+ *
+ * Usage : signal AXE-AGENT étroit (contradiction-detector, conditions-analyst).
+ * `low → favorable` est un signal sur l'AXE de l'agent (ex. « pas de problème
+ * de conditions »), aligné sur la convention UI existante `intensityToOrientation`
+ * et sur tous les agents Tier 1 (signalIntensity). À DISTINGUER de l'orientation
+ * DEAL (synthèse) qui exige un modèle positif explicite via
+ * `deriveScoreIndependentOrientation` (l'absence d'alerte n'y suffit pas).
+ */
+export function orientationFromAgentIntensity(intensity: Tier3SignalIntensity): Orientation {
+  switch (intensity) {
+    case "critical":
+      return "alert_dominant";
+    case "high":
+      return "vigilance";
+    case "elevated":
+      return "contrasted";
+    case "low":
+      return "favorable";
+  }
+}
+
 export interface OrientationDerivationInputs {
   /** Intensité dérivée des red flags consolidés (jamais d'un score). */
   intensity: Tier3SignalIntensity;

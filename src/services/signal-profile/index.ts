@@ -32,6 +32,7 @@ import type { AgentResult } from "@/agents/types";
 export {
   deriveSynthesisSignalIntensity,
   deriveScoreIndependentOrientation,
+  orientationFromAgentIntensity,
   decideNotExploitable,
   COVERAGE_BROAD_RATIO,
   FAVORABLE_DOMINANT_MIN,

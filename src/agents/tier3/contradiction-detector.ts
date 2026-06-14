@@ -51,8 +51,8 @@ import type {
   DbCrossReference,
   Tier3SignalIntensity,
   Tier3SignalContribution,
-  Tier3Orientation,
 } from "../types";
+import { orientationFromAgentIntensity } from "@/services/signal-profile";
 
 // ============================================================================
 // LLM RESPONSE INTERFACE
@@ -643,8 +643,8 @@ Produis un JSON avec cette structure:
     const criticalContradictions = contradictions.filter(c => c.severity === "CRITICAL").length;
     const highContradictions = contradictions.filter(c => c.severity === "HIGH").length;
     const signalIntensity = this.deriveSignalIntensityFromContradictions(criticalContradictions, highContradictions);
-    // Orientation déterministe depuis signalIntensity + score consistance.
-    const signalContribution = this.deriveSignalContributionFromIntensity(signalIntensity, consistencyAnalysis.overallScore);
+    // Orientation déterministe depuis signalIntensity (P2 — sans score).
+    const signalContribution = this.deriveSignalContributionFromIntensity(signalIntensity);
 
     // Phase A slice A6 — Qualifier evidenceSolidity depuis le service
     // déterministe. CD est l'auteur des contradictions consommées par le
@@ -849,40 +849,21 @@ Produis un JSON avec cette structure:
   }
 
   /**
-   * Phase A slice A4-bis — Dérivation déterministe de `signalContribution`
-   * depuis `signalIntensity` + score consistance.
+   * Dérivation déterministe de `signalContribution` depuis `signalIntensity`,
+   * SANS aucun score (chantier P2 — retrait du tiebreak `score >= 80` résiduel).
    *
-   * Le contradiction-detector est par nature un agent de vérification ; il
-   * n'émet pas `very_favorable` (biais structurel — il ne peut pas
-   * "déclarer" un deal très favorable, il constate l'absence de
-   * contradictions). Mapping :
+   * Le contradiction-detector est un agent de vérification : son `signalIntensity`
+   * dérive uniquement des comptes de contradictions par sévérité. L'orientation
+   * découle de l'intensité via le mapping per-agent partagé `orientationFromAgentIntensity`
+   * (critical→alert_dominant, high→vigilance, elevated→contrasted, low→favorable).
    *
-   *   critical                → alert_dominant
-   *   high                    → vigilance
-   *   elevated                → contrasted
-   *   low + score >= 80       → favorable
-   *   low + score < 80        → contrasted
-   *
-   * D2 verrouillé : evidenceSolidity reste null en A4-bis (A6 qualifiera).
+   * D2 verrouillé : evidenceSolidity reste null ici (le service Solidité qualifie).
    */
   private deriveSignalContributionFromIntensity(
     intensity: Tier3SignalIntensity,
-    consistencyScore: number,
   ): Tier3SignalContribution {
-    let orientation: Tier3Orientation;
-    if (intensity === "critical") {
-      orientation = "alert_dominant";
-    } else if (intensity === "high") {
-      orientation = "vigilance";
-    } else if (intensity === "elevated") {
-      orientation = "contrasted";
-    } else if (consistencyScore >= 80) {
-      orientation = "favorable";
-    } else {
-      orientation = "contrasted";
-    }
     return {
-      orientation,
+      orientation: orientationFromAgentIntensity(intensity),
       evidenceSolidity: null,
     };
   }
