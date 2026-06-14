@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (PDF) étape 2/N — cover headline scoreless (orientation × solidité)
+
+### Fichiers
+- `src/lib/pdf/pdf-sections/cover.tsx` : headline (coin haut-droit de la couverture) — retrait du `ScoreCircle(overallScore)` + `recLabel(verdict)`. Remplacement par le bloc 2 axes verbal aligné à droite : ORIENTATION DU SIGNAL (`readDoctrineOrientation(analysis.results)` → `DOCTRINE_ORIENTATION_CONFIG` uppercase) + SOLIDITÉ DES PREUVES (`signalProfile.evidenceSolidity`, fallback `signalContribution.evidenceSolidity` → `proofLabel`). Affiché seulement si `orientationLabel` existe et thèse non fragile. Branche `thesisGated` : texte « Score global masqué… » → « Orientation du signal masquée… ». Variables `overallScore`/`verdict` + imports `ScoreCircle`/`recLabel` retirés ; commentaire `Company name + score` → `Company name + profil du signal`.
+
+### Description
+Même pattern que l'étape 1 (headline orientation × solidité, bi-reader scoreless). Après ce diff, le helper `recLabel` (5 valeurs) n'a plus aucun consommateur — son retrait + `ScoreCircle`/`ScoreBar`/`scoreColor` est groupé dans l'étape finale de nettoyage des helpers/composants PDF (relisible en un diff). Producteurs intacts = P4. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (PDF) étape 1/N — score-breakdown scoreless (orientation × solidité)
 
 ### Fichiers

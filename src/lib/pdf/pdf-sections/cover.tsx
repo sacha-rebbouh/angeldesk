@@ -5,23 +5,35 @@
 import React from "react";
 import { Page, View, Text } from "@react-pdf/renderer";
 import { colors, styles as gs } from "../pdf-theme";
-import { ScoreCircle, KpiBox } from "../pdf-components";
-import { fmtEur, recLabel } from "../pdf-helpers";
+import { KpiBox } from "../pdf-components";
+import { fmtEur, proofLabel } from "../pdf-helpers";
 import { isThesisAxisUnavailable } from "@/agents/thesis/types";
 import type { PdfExportData } from "../generate-analysis-pdf";
 import { hasFragileThesis } from "../thesis-gating";
+import { readDoctrineOrientation, DOCTRINE_ORIENTATION_CONFIG } from "@/services/signal-profile";
 
 export function CoverPage({ data }: { data: PdfExportData }) {
   const deal = data.deal;
   const analysis = data.analysis;
 
-  // Extract overall score from synthesis-deal-scorer
+  // Profil du signal scoreless (orientation × solidité) — aucune note de deal.
   const scorerResult = analysis.results["synthesis-deal-scorer"];
   const scorerData = scorerResult?.success
     ? (scorerResult.data as Record<string, unknown>)
     : null;
-  const overallScore = (scorerData?.overallScore as number) ?? 0;
-  const verdict = (scorerData?.verdict as string) ?? "";
+  const { orientation } = readDoctrineOrientation(analysis.results);
+  const orientationLabel = orientation
+    ? DOCTRINE_ORIENTATION_CONFIG[orientation].label.toUpperCase()
+    : null;
+  const signalProfile = scorerData?.signalProfile as
+    | { evidenceSolidity?: string | null }
+    | undefined;
+  const signalContribution = scorerData?.signalContribution as
+    | { evidenceSolidity?: string | null }
+    | undefined;
+  const solidityLabel = proofLabel(
+    signalProfile?.evidenceSolidity ?? signalContribution?.evidenceSolidity ?? null,
+  );
   const thesis = data.thesis;
   const thesisGated = hasFragileThesis(thesis);
   const thesisQuality = thesis?.evaluationAxes.thesisQuality;
@@ -73,7 +85,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
           }}
         />
 
-        {/* Company name + score */}
+        {/* Company name + profil du signal */}
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
           <View style={{ flex: 1, paddingRight: 20 }}>
             <Text
@@ -91,21 +103,31 @@ export function CoverPage({ data }: { data: PdfExportData }) {
             </Text>
           </View>
 
-          {overallScore > 0 && !thesisGated && (
-            <View style={{ alignItems: "center" }}>
-              <ScoreCircle score={overallScore} size={80} />
-              {verdict && (
-                <Text
-                  style={{
-                    fontSize: 9,
-                    fontWeight: 600,
-                    color: colors.dark,
-                    marginTop: -8,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {recLabel(verdict)}
-                </Text>
+          {orientationLabel && !thesisGated && (
+            <View style={{ width: 150, alignItems: "flex-end" }}>
+              <Text style={{ fontSize: 8, fontWeight: 600, color: colors.muted, letterSpacing: 1 }}>
+                ORIENTATION DU SIGNAL
+              </Text>
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: colors.dark,
+                  marginTop: 2,
+                  textAlign: "right",
+                }}
+              >
+                {orientationLabel}
+              </Text>
+              {solidityLabel && (
+                <>
+                  <Text style={{ fontSize: 8, fontWeight: 600, color: colors.muted, letterSpacing: 1, marginTop: 8 }}>
+                    SOLIDITÉ DES PREUVES
+                  </Text>
+                  <Text style={{ fontSize: 11, fontWeight: 600, color: colors.text, marginTop: 2, textAlign: "right" }}>
+                    {solidityLabel}
+                  </Text>
+                </>
               )}
             </View>
           )}
@@ -118,7 +140,7 @@ export function CoverPage({ data }: { data: PdfExportData }) {
                 Thesis Quality: {thesisQualityLabel}
               </Text>
               <Text style={{ fontSize: 8, color: colors.muted, marginTop: 4 }}>
-                Score global masqué tant que la thèse reste fragile.
+                Orientation du signal masquée tant que la thèse reste fragile.
               </Text>
             </View>
           )}
