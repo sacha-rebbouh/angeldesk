@@ -1,6 +1,19 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P2-a — Synthèse SCORELESS : orientation dérivée sans aucun score + AnalysisSignalProfile
+
+### Fichiers
+- NOUVEAU `src/services/signal-profile/derive.ts` : dérivation PURE et SANS score — `deriveSynthesisSignalIntensity(criticalCount, highCount)` (counts-only) ; `deriveScoreIndependentOrientation({intensity, favorableSignalCount, coverage, evidenceSolidity})` → enum interne 5 valeurs (modèle POSITIF explicite : favorable exige ≥2 signaux favorables + couverture ≥2/3, very_favorable ≥4 + solidité non contradictoire ; l'absence de red flags ne suffit jamais) ; `decideNotExploitable` (couverture explicite : solidité insufficient OU 0 dimension couverte). Réexporté via `index.ts`.
+- `src/agents/tier3/synthesis-deal-scorer.ts` : RETIRÉ `scoreBasedVerdict` (dérivation orientation←score `if score>=85…`) + alias `SignalVerdict` mort + tout le parser d'orientation piloté LLM (`validActions`/`actionMapping` STRONG_PASS→…/`rawAction`/`mappedAction` + coherence-enforcement partielle). `finalVerdict` vient maintenant de `deriveScoreIndependentOrientation` (red flags CONSOLIDÉS cross-agent + couverture par dimension + evidence-solidity). `investmentRecommendation.action` = `finalVerdict` DÉTERMINISTE (plus de canal d'orientation concurrent piloté LLM — recadrage gate Codex). Nouveau champ produit `signalProfile: AnalysisSignalProfile` (orientation 4-val doctrine via `toDoctrineOrientation`, evidenceSolidity, dominantSignals favorables+défavorables sourcés, dimensionCoverage 12 dims, criticalRisks). Helpers ajoutés : `buildRedFlagDedup` (refactor partagé extrait de `extractTier1RedFlags`), `buildDimensionCoverage`, `buildFavorableSignals`, `buildUnfavorableSignals`, `buildCriticalRiskRefs`. Champs de score legacy (overallScore/dimensionScores/scoreBreakdown/comparativeRanking) CONSERVÉS (ordre additif — retrait en P4), ne pilotent plus l'orientation.
+- NOUVEAU `src/services/signal-profile/__tests__/derive.test.ts` : 16 tests purs (intensité counts-only, branches défavorable/positive, anti « compteur d'alertes inversé », not_exploitable conservateur).
+- `src/agents/tier3/__tests__/synthesis-deal-scorer-transform.test.ts` : +invariants P2 — POISONED SCORE (score 99 + red flag CRITICAL → orientation `alert` ; score 1 + forces + couverture → `favorable` ; le score est ignoré), modèle positif, signalProfile (coverage 12 dims, criticalRisks, dominantSignals, taxonomie 4-val, not_exploitable). Blocs legacy-parser réécrits : orientation LLM tolérée en entrée, JAMAIS préservée en sortie.
+- `src/agents/tier3/__tests__/synthesis-deal-scorer-prompt.guard.test.ts` : guard RETOURNÉ — exige l'ABSENCE de `actionMapping` + présence de `action: finalVerdict` (avant : exigeait la présence du parser legacy).
+
+### Description
+P2-a du chantier dé-scorisation (`PLAN-DESCORING.md`, le cœur). Fix racine doctrinal : `synthesis-deal-scorer.ts` dérivait l'orientation DU score (`if score>=85 return very_favorable`) — l'orientation était un score caché. Désormais l'orientation (`verdict` + `investmentRecommendation.action` + `signalProfile.orientation`) dérive d'un `finalVerdict` UNIQUE, score-indépendant par construction (la fonction pure ne prend aucun score). Ordre ADDITIF : producteurs Tier1/Tier2 inchangés, champs score legacy conservés. Durabilité : clé durable `synthesis-deal-scorer` inchangée, topologie/step-ids inchangés → pas de bump `STEPWISE_GRAPH_VERSION` (=4) ; bi-reader P1 lit les vieux snapshots. Gate Codex : 1 REQUEST_CHANGES (action restait un canal d'orientation LLM user-facing via RecommendationBadge/summary/memo) → corrigé (action=finalVerdict, parser LLM retiré) → APPROVE. tsc 0 ; suite unit 4480 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P1 — Fondation de compatibilité scoreless (additif strict, 0 fichier existant modifié)
 
 ### Fichiers

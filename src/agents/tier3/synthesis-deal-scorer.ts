@@ -49,10 +49,22 @@ import type {
 } from "../types";
 import type { BAPreferences } from "@/services/benchmarks";
 import { RedFlagDedup, inferRedFlagTopic, severityRank } from "@/services/red-flag-dedup";
-import type { RedFlagSeverity } from "@/services/red-flag-dedup";
+import type { RedFlagSeverity, ConsolidatedRedFlag } from "@/services/red-flag-dedup";
 import { getWeightsForDeal, formatWeightsForPrompt } from "@/scoring/stage-weights";
 import { SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT } from "./prompts/synthesis-deal-scorer-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
+import {
+  toDoctrineOrientation,
+  deriveSynthesisSignalIntensity,
+  deriveScoreIndependentOrientation,
+  decideNotExploitable,
+} from "@/services/signal-profile";
+import type {
+  AnalysisSignalProfile,
+  DominantSignal,
+  DimensionCoverage,
+} from "@/services/signal-profile";
+import type { CriticalRiskRef } from "./schemas/common";
 
 // =============================================================================
 // OUTPUT TYPES - Synthesis Deal Scorer v2.0
@@ -271,6 +283,17 @@ export interface SynthesisDealScorerData {
    * natif est seul produit.
    */
   signalContribution: Tier3SignalContribution;
+  /**
+   * Chantier P2 — Profil de signal SCORELESS (contrat de restitution dé-scorisé).
+   *
+   * `orientation` (4 valeurs doctrine) + solidité + signaux dominants +
+   * couverture par dimension + risques critiques, DÉRIVÉS sans aucun score
+   * numérique. Détecté par le bi-reader `readDoctrineOrientation` (présence de
+   * `dominantSignals` + `dimensionCoverage`). Les champs `overallScore` /
+   * `dimensionScores` / `scoreBreakdown` restent émis (ordre additif, retirés
+   * en P4) mais ne pilotent PLUS l'orientation.
+   */
+  signalProfile: AnalysisSignalProfile;
 }
 
 export interface SynthesisDealScorerResult extends AgentResult {
@@ -739,7 +762,13 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
     return factors.length > 0 ? factors.join(" | ") : "";
   }
 
-  private extractTier1RedFlags(context: EnrichedAgentContext): string {
+  /**
+   * Construit le `RedFlagDedup` consolidé depuis TOUS les agents précédents
+   * (cross-agent, déterministe). Source unique des red flags consolidés —
+   * partagée entre le prompt (`extractTier1RedFlags`) et la dérivation
+   * scoreless P2 (intensité, signaux dominants défavorables, risques critiques).
+   */
+  private buildRedFlagDedup(context: EnrichedAgentContext): RedFlagDedup {
     const results = context.previousResults ?? {};
     const dedup = new RedFlagDedup();
 
@@ -779,12 +808,109 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
       }
     }
 
+    return dedup;
+  }
+
+  private extractTier1RedFlags(context: EnrichedAgentContext): string {
+    const dedup = this.buildRedFlagDedup(context);
+
     const summary = dedup.getSummary();
     if (summary.totalConsolidated === 0) {
       return "Aucun red flag détecté par les agents Tier 1.";
     }
 
     return dedup.formatForPrompt();
+  }
+
+  // ===========================================================================
+  // P2 — Construction du profil de signal SCORELESS (helpers déterministes)
+  // ===========================================================================
+
+  /**
+   * Agents contributeurs Tier 1 → dimension de couverture. Liste alignée sur
+   * `extractTier1Scores` (12 dimensions horizontales).
+   */
+  private static readonly COVERAGE_DIMENSIONS: ReadonlyArray<{ agent: string; dimension: string }> = [
+    { agent: "financial-auditor", dimension: "Financials" },
+    { agent: "team-investigator", dimension: "Team" },
+    { agent: "competitive-intel", dimension: "Competitive" },
+    { agent: "market-intelligence", dimension: "Market" },
+    { agent: "tech-stack-dd", dimension: "Tech Stack" },
+    { agent: "tech-ops-dd", dimension: "Tech Ops" },
+    { agent: "legal-regulatory", dimension: "Legal" },
+    { agent: "cap-table-auditor", dimension: "Cap Table" },
+    { agent: "gtm-analyst", dimension: "GTM" },
+    { agent: "customer-intel", dimension: "Traction" },
+    { agent: "deck-forensics", dimension: "Deck Quality" },
+    { agent: "question-master", dimension: "DD Readiness" },
+  ];
+
+  /**
+   * Couverture par dimension (remplace les sous-scores). Déterministe, SANS
+   * score : `covered` = agent exécuté avec données ; `partial` = exécuté mais
+   * contrat partiel (`PARTIAL_UNVERIFIED`) ; `not_covered` = absent ou échec.
+   */
+  private buildDimensionCoverage(context: EnrichedAgentContext): DimensionCoverage[] {
+    const results = context.previousResults ?? {};
+    return SynthesisDealScorerAgent.COVERAGE_DIMENSIONS.map(({ agent, dimension }) => {
+      const r = results[agent];
+      if (!r || !r.success || !("data" in r) || !r.data) {
+        return { dimension, level: "not_covered" as const };
+      }
+      const status = (r as { contractStatus?: string }).contractStatus;
+      if (status === "PARTIAL_UNVERIFIED") {
+        return { dimension, level: "partial" as const };
+      }
+      return { dimension, level: "covered" as const };
+    });
+  }
+
+  /**
+   * Signaux FAVORABLES dominants (modèle positif explicite) depuis les forces
+   * sourcées de la synthèse. Bornés pour rester lisibles ; jamais un score.
+   */
+  private buildFavorableSignals(keyStrengths: string[]): DominantSignal[] {
+    return keyStrengths
+      .filter((s) => typeof s === "string" && s.trim() !== "")
+      .slice(0, 6)
+      .map((statement) => ({ polarity: "favorable" as const, statement }));
+  }
+
+  /**
+   * Signaux DÉFAVORABLES dominants depuis les red flags consolidés CRITICAL +
+   * HIGH (déjà dédupliqués cross-agent). Bornés, sourcés par l'agent détecteur.
+   */
+  private buildUnfavorableSignals(consolidated: ConsolidatedRedFlag[]): DominantSignal[] {
+    return consolidated
+      .filter((f) => f.severity === "CRITICAL" || f.severity === "HIGH")
+      .slice(0, 8)
+      .map((f) => ({
+        polarity: "unfavorable" as const,
+        statement: f.title,
+        severity: f.severity as "CRITICAL" | "HIGH" | "MEDIUM",
+        source: f.detectedBy[0],
+      }));
+  }
+
+  /**
+   * Refs de risques critiques (`CriticalRiskRef[]`) depuis les red flags
+   * consolidés CRITICAL. Bornés ; preuve/source renseignées si disponibles.
+   */
+  private buildCriticalRiskRefs(consolidated: ConsolidatedRedFlag[]): CriticalRiskRef[] {
+    return consolidated
+      .filter((f) => f.severity === "CRITICAL")
+      .slice(0, 8)
+      .map((f) => {
+        const ref: CriticalRiskRef = {
+          riskId: f.topic,
+          severity: "CRITICAL",
+          description: f.description || f.title,
+        };
+        const quote = f.evidence.find((e) => e.quote)?.quote;
+        if (quote) ref.evidence = quote;
+        if (f.detectedBy[0]) ref.source = f.detectedBy[0];
+        return ref;
+      });
   }
 
   private buildTier1Synthesis(context: EnrichedAgentContext): string {
@@ -1108,41 +1234,13 @@ Aucune incohérence majeure détectée entre les agents.`;
   // ===========================================================================
 
   private transformResponse(data: LLMSynthesisResponse, context: EnrichedAgentContext): SynthesisDealScorerData {
-    // Validate and normalize the response
-    const validActions = ["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"] as const;
-    type SignalVerdict = typeof validActions[number];
-
-    // Map legacy action/verdict formats to new signal profiles
-    const actionMapping: Record<string, typeof validActions[number]> = {
-      "STRONG_INVEST": "very_favorable",
-      "INVEST": "favorable",
-      "CONSIDER": "contrasted",
-      "PASS": "vigilance",
-      "STRONG_PASS": "alert_dominant",
-      // Identity mappings for new format
-      "very_favorable": "very_favorable",
-      "favorable": "favorable",
-      "contrasted": "contrasted",
-      "vigilance": "vigilance",
-      "alert_dominant": "alert_dominant",
-    };
-
-    // Phase A slice A2 — Priorité de lecture orientation :
-    //   1. `data.orientation` (chemin Phase A natif, top-level — aligné schema A2)
-    //   2. `data.verdict` racine (forme alternative LLM pré-Phase-A — raw cast
-    //      pour couvrir AUSSI les valeurs legacy `STRONG_PASS`/`PASS` qui ne
-    //      satisfont pas le type strict `Tier3Orientation`)
-    //   3. fallback chemins LLM dégradés (findings.recommendation, investmentRecommendation, recommendation)
-    // Le `actionMapping` normalise une éventuelle valeur legacy (STRONG_PASS, etc.)
-    // vers orientation native (parser tolérant de lecture seule, D1).
-    const rawRootVerdict = (data as { verdict?: string }).verdict;
-    const rawAction = data.orientation
-      ?? rawRootVerdict
-      ?? data.findings?.recommendation?.action
-      ?? data.investmentRecommendation?.action
-      ?? data.recommendation?.action;
-    let mappedAction = actionMapping[rawAction as string] ??
-                        (validActions.includes(rawAction as typeof validActions[number]) ? rawAction : "vigilance");
+    // P2 — L'orientation restituée (`verdict` ET `investmentRecommendation.action`)
+    // est dérivée DÉTERMINISTIQUEMENT et SANS score plus bas (`finalVerdict`).
+    // Toute `action`/`orientation`/`verdict` produite par le LLM est TOLÉRÉE en
+    // entrée mais JAMAIS préservée en sortie : pas de canal d'orientation
+    // concurrent piloté par le LLM (recadrage gate Codex P2-a). Seuls les
+    // contenus qualitatifs du LLM (rationale, conditions, forces/faiblesses,
+    // breakdown dimensionnel) sont repris.
 
     // Extract dimension scores with backward compatibility
     const rawDimensionData = data.score?.breakdown ?? data.dimensionScores ?? [];
@@ -1223,15 +1321,11 @@ Aucune incohérence majeure détectée entre les agents.`;
       })
       .filter((text): text is string => !!text && text !== "");
 
-    // Verdict is ALWAYS derived from the score — never trust the LLM verdict alone
-    // The LLM verdict can contradict low scores; derive the signal profile from score.
-    const scoreBasedVerdict = (score: number): SignalVerdict => {
-      if (score >= 85) return "very_favorable";
-      if (score >= 70) return "favorable";
-      if (score >= 55) return "contrasted";
-      if (score >= 40) return "vigilance";
-      return "alert_dominant";
-    };
+    // P2 — L'orientation N'EST PLUS dérivée du score (cf. doctrine § 4 +
+    // PLAN-DESCORING.md). La dérivation score-indépendante est calculée plus
+    // bas (`finalVerdict`) à partir de l'intensité des red flags consolidés,
+    // de la couverture par dimension et de la solidité des preuves. Le score
+    // reste calculé (ordre additif, retiré en P4) mais ne pilote plus rien.
     let finalOverallScore = Math.round(Math.min(100, Math.max(0, overallScore)));
 
     // =========================================================================
@@ -1315,8 +1409,52 @@ Aucune incohérence majeure détectée entre les agents.`;
     }
 
     // =========================================================================
+    // P2 — DÉRIVATION SCORELESS DE L'ORIENTATION (jamais dérivée du score)
+    // =========================================================================
+    // Inputs DÉTERMINISTES et SANS score : red flags consolidés cross-agent
+    // (intensité + signaux dominants défavorables + risques critiques),
+    // couverture par dimension (présence/contrat des agents) et solidité des
+    // preuves. Aucun nombre de note n'entre dans la dérivation — garantie
+    // structurelle prouvée par le test « poisoned score ».
+    const consolidatedFlags = this.buildRedFlagDedup(context).getConsolidated();
+    const criticalFlagCount = consolidatedFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highFlagCount = consolidatedFlags.filter((f) => f.severity === "HIGH").length;
+    const intensity = deriveSynthesisSignalIntensity(criticalFlagCount, highFlagCount);
 
-    const finalVerdict = scoreBasedVerdict(finalOverallScore);
+    const dimensionCoverage = this.buildDimensionCoverage(context);
+    const coveredDimensionCount = dimensionCoverage.filter((d) => d.level === "covered").length;
+
+    const solidity = buildEvidenceSolidityForContext(context);
+
+    // Modèle POSITIF explicite : signaux favorables dominants sourcés (forces),
+    // jamais un score. L'absence de red flags ne suffit pas à qualifier favorable.
+    const favorableSignals = this.buildFavorableSignals(keyStrengths);
+
+    const finalVerdict = deriveScoreIndependentOrientation({
+      intensity,
+      favorableSignalCount: favorableSignals.length,
+      coveredDimensionCount,
+      totalDimensionCount: dimensionCoverage.length,
+      evidenceSolidity: solidity.value,
+    });
+
+    const notExploitable = decideNotExploitable({
+      coveredDimensionCount,
+      totalDimensionCount: dimensionCoverage.length,
+      evidenceSolidity: solidity.value,
+    });
+
+    const signalProfile: AnalysisSignalProfile = {
+      orientation: toDoctrineOrientation(finalVerdict, { notExploitable }),
+      evidenceSolidity: solidity.value,
+      evidenceSolidityRationale: solidity.rationale,
+      dominantSignals: [
+        ...favorableSignals,
+        ...this.buildUnfavorableSignals(consolidatedFlags),
+      ],
+      dimensionCoverage,
+      criticalRisks: this.buildCriticalRiskRefs(consolidatedFlags),
+    };
 
     // If the score was overridden by the guard-fou, patch any mention of the old
     // LLM score in the narrative/rationale text fields to avoid contradictions
@@ -1332,15 +1470,6 @@ Aucune incohérence majeure détectée entre les agents.`;
           match.replace(llmStr, String(finalOverallScore))
         );
     };
-
-    // Enforce action/verdict coherence — action should align with verdict signal profile
-    if (finalVerdict === "alert_dominant" && mappedAction !== "alert_dominant") {
-      console.warn(`[SynthesisDealScorer] Action "${mappedAction}" incoherent with verdict "${finalVerdict}" — forcing "alert_dominant"`);
-      mappedAction = "alert_dominant";
-    }
-    if (finalVerdict === "very_favorable" && mappedAction === "alert_dominant") {
-      mappedAction = "very_favorable";
-    }
 
     // Extract rationale and patch score references if needed
     const rawRationale = data.findings?.recommendation?.rationale ??
@@ -1393,7 +1522,9 @@ Aucune incohérence majeure détectée entre les agents.`;
         calculationDetail: data.comparativeRanking?.calculationDetail,
       },
       investmentRecommendation: {
-        action: mappedAction as "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant",
+        // P2 — `action` reflète DÉTERMINISTIQUEMENT `finalVerdict` (orientation
+        // scoreless), jamais une valeur d'orientation pilotée par le LLM.
+        action: finalVerdict,
         rationale: patchScoreInText(rawRationale),
         conditions: data.findings?.recommendation?.conditions ??
                    data.investmentRecommendation?.conditions ??
@@ -1415,6 +1546,8 @@ Aucune incohérence majeure détectée entre les agents.`;
       // Phase A slice A6 — evidenceSolidity dérivé déterministe depuis le
       // service Evidence Solidity (jamais fabriqué depuis score/confidence).
       signalContribution: this.buildSignalContribution(finalVerdict, finalOverallScore, context),
+      // P2 — Profil SCORELESS dérivé sans aucun score (cf. bloc dérivation).
+      signalProfile,
     };
   }
 
@@ -1456,11 +1589,12 @@ Aucune incohérence majeure détectée entre les agents.`;
  * `verdict?: string` libre, pas de `action: string` libre).
  *
  * Le `transformResponse` consomme cette interface après JSON.parse de la
- * sortie LLM. Si le LLM produit encore un format dégradé (`STRONG_PASS` etc.),
- * le code lit la donnée brute via casts explicites (`as string`) et la mappe
- * via `actionMapping` (parser tolérant de lecture LLM dégradée). Le typage
- * strict de l'interface documente l'intent contractuel et empêche toute
- * consommation directe d'une valeur non-orientation.
+ * sortie LLM. P2 : l'orientation produite par le LLM (`verdict`/`action`/
+ * `orientation`, y compris un format dégradé `STRONG_PASS`) est IGNORÉE — elle
+ * n'est plus parsée en orientation de sortie. `verdict` et
+ * `investmentRecommendation.action` sont dérivés déterministiquement de
+ * `finalVerdict` (orientation scoreless). Seuls les contenus qualitatifs du LLM
+ * (rationale, conditions, forces/faiblesses, breakdown dimensionnel) sont repris.
  *
  * Note `alertSignal.recommendation` : ce champ reste typé string libre en
  * A2 car il fait partie du contrat partagé `AgentAlertSignal` (cf.
@@ -1585,9 +1719,9 @@ interface LLMSynthesisResponse {
   // Forme alternative LLM (chemin pré-Phase-A : certains modèles
   // produisaient directement la forme runtime `SynthesisDealScorerData`).
   // Champs typés natif Tier3Orientation — D1 verrouillé, pas de string
-  // libre. Si le LLM produit une valeur dégradée (STRONG_PASS etc.), le
-  // `transformResponse` la lit via cast explicite (`as string`) et la
-  // mappe via `actionMapping` (parser tolérant lecture seule).
+  // libre. P2 : toute orientation produite ici par le LLM (`verdict` dégradé
+  // STRONG_PASS inclus) est ignorée en sortie ; l'orientation restituée vient
+  // de `finalVerdict` (dérivation scoreless déterministe).
   overallScore?: number;
   verdict?: Tier3Orientation;
   confidence?: number;

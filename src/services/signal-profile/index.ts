@@ -27,6 +27,21 @@ import type { Orientation, EvidenceSolidity } from "@/lib/ui-configs";
 import type { CriticalRiskRef } from "@/agents/tier3/schemas/common";
 import type { AgentResult } from "@/agents/types";
 
+// Dérivation SCORELESS de l'orientation (chantier P2) — réexport pour usage au
+// boundary de synthèse. Les fonctions sont pures et SANS score en entrée.
+export {
+  deriveSynthesisSignalIntensity,
+  deriveScoreIndependentOrientation,
+  decideNotExploitable,
+  COVERAGE_BROAD_RATIO,
+  FAVORABLE_DOMINANT_MIN,
+  VERY_FAVORABLE_MIN,
+} from "./derive";
+export type {
+  OrientationDerivationInputs,
+  NotExploitableInputs,
+} from "./derive";
+
 // ============================================================================
 // 1. Orientation doctrine 4 valeurs + mapper canonique 5→4
 // ============================================================================

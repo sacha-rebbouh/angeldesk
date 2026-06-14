@@ -12,11 +12,11 @@
  * reformulation des commentaires en termes non matchables, étendue ici à
  * tout fichier de prompt extrait Phase A).
  *
- * Périmètre du guard : fichier compagnon uniquement. Le fichier agent SDS
- * (`synthesis-deal-scorer.ts`) reste libre de contenir `STRONG_PASS` etc.
- * dans son `actionMapping` 1557-1568 — c'est un parser tolérant de sortie
- * LLM dégradée dans le même run (lecture seule, mapping vers orientation
- * native). Aucun ancien champ émis (D1 verrouillé).
+ * Périmètre du guard : fichier compagnon uniquement. Mise à jour P2 : le parser
+ * legacy `actionMapping` du fichier agent SDS (`synthesis-deal-scorer.ts`) a été
+ * RETIRÉ — `investmentRecommendation.action` est dérivé déterministiquement de
+ * `finalVerdict` (orientation scoreless), plus aucun canal d'orientation piloté
+ * par le LLM (cf. gate Codex P2-a). Le guard agent ci-dessous le verrouille.
  */
 
 import { readFileSync } from "node:fs";
@@ -108,15 +108,11 @@ describe("SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT — runtime invariant (Phase A v12
 });
 
 describe("synthesis-deal-scorer.ts agent file — guard A10 cross-agent partiel", () => {
-  // Note Phase A : le source du fichier agent (synthesis-deal-scorer.ts)
-  // contient encore `STRONG_PASS` etc. dans `actionMapping` lignes 1557-1568.
-  // C'est la zone de lecture LLM dégradée (parser tolérant), pas une consigne
-  // ré-émise. D1 verrouillé : aucun alias legacy en sortie.
-  //
-  // Le guard A10 cross-agent (à créer dans un slice ultérieur) scannera le
-  // fichier agent ET le fichier compagnon. Ici on vérifie uniquement que
-  // l'agent ne contient plus la DIRECTIVE BANNIE de prompt (vs le mapping
-  // legacy qui reste légitime).
+  // Note Phase A : on vérifie que l'agent ne contient plus la DIRECTIVE BANNIE
+  // de prompt. Mise à jour P2 : le parser legacy `actionMapping` a été RETIRÉ —
+  // `investmentRecommendation.action` est désormais dérivé déterministiquement
+  // de `finalVerdict` (orientation scoreless), plus aucun canal d'orientation
+  // piloté par le LLM (cf. gate Codex P2-a).
   const AGENT_PATH = resolve(__dirname, "../synthesis-deal-scorer.ts");
   const AGENT_SOURCE = readFileSync(AGENT_PATH, "utf-8");
 
@@ -138,11 +134,13 @@ describe("synthesis-deal-scorer.ts agent file — guard A10 cross-agent partiel"
     );
   });
 
-  it("le fichier agent conserve le mapping legacy `actionMapping` (parser tolérant LLM dégradé)", () => {
-    // Ces tokens DOIVENT rester dans `actionMapping` — c'est le parser de
-    // lecture LLM dégradée (D1 conserve la lecture, pas l'émission).
-    expect(AGENT_SOURCE).toMatch(/actionMapping/);
-    expect(AGENT_SOURCE).toMatch(/"STRONG_PASS"\s*:\s*"alert_dominant"/);
-    expect(AGENT_SOURCE).toMatch(/"PASS"\s*:\s*"vigilance"/);
+  it("P2 — plus AUCUN canal d'orientation piloté par le LLM : `actionMapping` retiré, action = finalVerdict", () => {
+    // P2 (gate Codex) — `investmentRecommendation.action` ne peut plus diverger
+    // de l'orientation scoreless. Le parser legacy `actionMapping`
+    // (STRONG_PASS→alert_dominant, PASS→vigilance…) est SUPPRIMÉ ; `action` est
+    // dérivé déterministiquement de `finalVerdict`.
+    expect(AGENT_SOURCE).not.toMatch(/actionMapping/);
+    expect(AGENT_SOURCE).not.toMatch(/"STRONG_PASS"\s*:\s*"alert_dominant"/);
+    expect(AGENT_SOURCE).toMatch(/action:\s*finalVerdict/);
   });
 });

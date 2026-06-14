@@ -29,7 +29,7 @@ vi.hoisted(() => {
 
 import { synthesisDealScorer, type SynthesisDealScorerData } from "../synthesis-deal-scorer";
 
-import type { EnrichedAgentContext } from "../../types";
+import type { EnrichedAgentContext, AgentResult } from "../../types";
 
 // Cast Helper : transformResponse est private — on l'invoque via Record<string, unknown>
 // pour les tests d'invariant. Pas un usage runtime, juste validation contractuelle.
@@ -76,49 +76,37 @@ function makeMinimalLLMResponse(overrides: Record<string, unknown> = {}): unknow
 }
 
 describe("transformResponse — invariants A2 (D1 + D2)", () => {
-  describe("Cas natif top-level : LLM produit `orientation` top-level (chemin Phase A natif)", () => {
-    // Round 3-4 — Le `transformResponse` doit lire `data.orientation` en
-    // priorité absolue, avant tout chemin dégradé. Plan A2 §2 + finding
-    // Codex round 2 + finding round 3 (test strict).
+  describe("P2 — `orientation`/`action` LLM TOLÉRÉE en entrée, JAMAIS préservée en sortie", () => {
+    // P2 (recadrage gate Codex) — `investmentRecommendation.action` n'est plus
+    // un canal d'orientation piloté par le LLM. Quelle que soit l'orientation
+    // produite par le LLM, l'output `action` reflète DÉTERMINISTIQUEMENT
+    // `finalVerdict` (score-indépendant). Contexte vide → finalVerdict =
+    // "contrasted" (intensité low, pas de dominance favorable).
 
-    it("data.orientation: 'contrasted' sans recommendation.action → mappedAction === 'contrasted' STRICT (round 4 fix)", () => {
-      // Test strict round 4 : vérifie que `data.orientation` est RÉELLEMENT
-      // lu et utilisé pour `mappedAction`, pas seulement que le résultat est
-      // dans la liste d'orientations valides.
-      //
-      // Score 65 → finalVerdict = "contrasted" (cohérent avec data.orientation).
-      // Le coherence enforcement ne ré-aligne pas (les 2 règles ne couvrent
-      // que alert_dominant ↔ very_favorable mismatch).
+    it("data.orientation: 'favorable' (LLM) → output action = finalVerdict 'contrasted' (LLM ignoré)", () => {
+      const llmResponse = makeMinimalLLMResponse({ orientation: "favorable" });
+      const result = transformResponse(llmResponse, makeMockContext());
+      expect(result.investmentRecommendation.action).toBe("contrasted");
+      expect(result.investmentRecommendation.action).toBe(result.verdict);
+    });
+
+    it("data.orientation: 'very_favorable' + recommendation.action: 'alert_dominant' → output action = finalVerdict (les deux ignorés)", () => {
       const llmResponse = makeMinimalLLMResponse({
-        orientation: "contrasted",
-        // PAS de `findings.recommendation`, PAS de `recommendation`
+        orientation: "very_favorable",
+        recommendation: { action: "alert_dominant" },
       });
       const result = transformResponse(llmResponse, makeMockContext());
       expect(result.investmentRecommendation.action).toBe("contrasted");
+      expect(result.investmentRecommendation.action).toBe(result.verdict);
     });
 
-    it("data.orientation: 'favorable' avec score 65 → mappedAction === 'favorable' (priorité absolue)", () => {
-      // Cas natif favorable : orientation racine = "favorable", score 65.
-      // finalVerdict (score-based) = "contrasted". Coherence enforcement
-      // ne couvre pas favorable↔contrasted, donc mappedAction reste "favorable".
-      const llmResponse = makeMinimalLLMResponse({
-        orientation: "favorable",
-      });
+    it("action LLM divergente n'apparaît jamais dans l'output sérialisé", () => {
+      const llmResponse = makeMinimalLLMResponse({ orientation: "very_favorable" });
       const result = transformResponse(llmResponse, makeMockContext());
-      expect(result.investmentRecommendation.action).toBe("favorable");
-    });
-
-    it("data.orientation prime sur recommendation.action (priorité absolue round 3)", () => {
-      // Si les deux sont présents, `data.orientation` (priorité 1) prime sur
-      // `recommendation.action` (priorité 3).
-      const llmResponse = makeMinimalLLMResponse({
-        orientation: "favorable",
-        recommendation: {
-          action: "vigilance", // doit être ignoré
-        },
-      });
-      const result = transformResponse(llmResponse, makeMockContext());
-      expect(result.investmentRecommendation.action).toBe("favorable");
+      // verdict + action déterministes = contrasted ; la valeur LLM very_favorable
+      // ne doit pas être préservée comme orientation de sortie.
+      expect(result.verdict).toBe("contrasted");
+      expect(result.investmentRecommendation.action).toBe("contrasted");
     });
 
     let result: SynthesisDealScorerData;
@@ -130,7 +118,10 @@ describe("transformResponse — invariants A2 (D1 + D2)", () => {
       result = transformResponse(llmResponse, makeMockContext());
     });
 
-    it("output verdict est dérivé du score (cohérence dimensionnelle)", () => {
+    it("output verdict score-indépendant (P2) : intensité low + pas de dominance favorable → contrasted", () => {
+      // P2 — `verdict` n'est plus dérivé du score. Contexte vide → intensité
+      // low, 0 dimension couverte, 0 signal favorable → branche positive sans
+      // dominance → contrasted.
       expect(result.verdict).toBe("contrasted");
     });
 
@@ -159,9 +150,10 @@ describe("transformResponse — invariants A2 (D1 + D2)", () => {
       result = transformResponse(llmResponse, makeMockContext());
     });
 
-    it("verdict de l'output est orientation native (cohérent avec score-based dérivation)", () => {
-      // Le `transformResponse` dérive `finalVerdict` de `scoreBasedVerdict(score)`.
-      // Score 65 → "contrasted" (range 55-69 selon la grille SDS).
+    it("verdict de l'output score-indépendant (P2) → contrasted", () => {
+      // P2 — `finalVerdict` est dérivé via `deriveScoreIndependentOrientation`
+      // (intensité red flags + couverture + solidité), JAMAIS du score. Contexte
+      // vide → intensité low, pas de dominance favorable → contrasted.
       expect(result.verdict).toBe("contrasted");
     });
 
@@ -182,10 +174,13 @@ describe("transformResponse — invariants A2 (D1 + D2)", () => {
     });
   });
 
-  describe("Cas LLM dégradé : LLM produit ancien format legacy (STRONG_PASS/PASS/...)", () => {
-    it("LLM produit `recommendation.action: STRONG_PASS` → mappé vers `alert_dominant` (parser tolérant lecture seule)", () => {
+  describe("P2 — LLM dégradé/legacy (STRONG_PASS/PASS/...) toléré en entrée, non préservé", () => {
+    // P2 — Les valeurs legacy LLM ne crashent pas le transform (tolérance
+    // d'entrée) et n'apparaissent JAMAIS comme orientation de sortie : l'output
+    // `action` est toujours `finalVerdict` (contrasted, contexte vide).
+
+    it("`recommendation.action: STRONG_PASS` → toléré, output action = finalVerdict 'contrasted' (PAS alert_dominant)", () => {
       const llmResponse = makeMinimalLLMResponse({
-        // LLM dégradé : action contient une valeur legacy (cast vers unknown)
         findings: {
           recommendation: {
             action: "STRONG_PASS" as unknown,
@@ -195,77 +190,39 @@ describe("transformResponse — invariants A2 (D1 + D2)", () => {
         },
       });
       const result = transformResponse(llmResponse, makeMockContext());
-      // Le `actionMapping` mappe STRONG_PASS → alert_dominant (parser lecture seule).
-      // L'output `verdict` est ensuite dérivé de score (non legacy).
-      expect(result.investmentRecommendation.action).toBe("alert_dominant");
+      expect(result.investmentRecommendation.action).toBe("contrasted");
+      expect(result.investmentRecommendation.action).not.toBe("alert_dominant");
     });
 
-    it("LLM produit `recommendation.action: PASS` (legacy) → mappé vers orientation native", () => {
+    it("`recommendation.action: PASS` (legacy) → toléré, output action = finalVerdict (jamais 'PASS')", () => {
       const llmResponse = makeMinimalLLMResponse({
-        recommendation: {
-          action: "PASS" as unknown,
-        },
+        recommendation: { action: "PASS" as unknown },
       });
       const result = transformResponse(llmResponse, makeMockContext());
-      expect(["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]).toContain(
-        result.investmentRecommendation.action
-      );
+      expect(result.investmentRecommendation.action).toBe("contrasted");
       expect(result.investmentRecommendation.action).not.toBe("PASS");
     });
 
-    it("LLM produit `verdict: PASS` racine (legacy) → strict `vigilance` via raw cast (round 5 strict)", () => {
-      // Régression round 3 : `verdict?: Tier3Orientation` était déclaré dans
-      // l'interface mais jamais lu par `transformResponse`. Round 4 corrige
-      // via raw cast `(data as { verdict?: string }).verdict`. Round 5 rend
-      // l'assertion strict : si le raw cast est retiré, ce test échoue.
-      //
-      // Chaîne : `verdict: "PASS"` racine → rawAction lu via raw cast →
-      // `actionMapping["PASS"] = "vigilance"`. Score 65 → finalVerdict =
-      // "contrasted". Coherence enforcement ne touche pas (ne couvre que
-      // alert_dominant ↔ very_favorable). Donc mappedAction = "vigilance".
-      const llmResponse = makeMinimalLLMResponse({
-        verdict: "PASS" as unknown,
-        // PAS de `data.orientation`, PAS de `recommendation.action`
-      });
+    it("`verdict: STRONG_PASS` racine (legacy) → toléré, output action = finalVerdict 'contrasted' (PAS alert_dominant)", () => {
+      const llmResponse = makeMinimalLLMResponse({ verdict: "STRONG_PASS" as unknown });
       const result = transformResponse(llmResponse, makeMockContext());
-      expect(result.investmentRecommendation.action).toBe("vigilance");
+      expect(result.investmentRecommendation.action).toBe("contrasted");
+      expect(result.verdict).toBe("contrasted");
     });
 
-    it("LLM produit `verdict: STRONG_PASS` racine → strict `alert_dominant` via raw cast (round 5 strict)", () => {
-      // Round 5 strict : si `rawRootVerdict` est retiré de `transformResponse`,
-      // ce test échoue (mappedAction tomberait sur fallback "vigilance" sans
-      // la lecture du verdict racine).
-      //
-      // Chaîne : `verdict: "STRONG_PASS"` racine → rawAction lu via raw cast →
-      // `actionMapping["STRONG_PASS"] = "alert_dominant"`. Score 65 →
-      // finalVerdict = "contrasted". Coherence enforcement : finalVerdict
-      // "contrasted" ≠ "alert_dominant" et ≠ "very_favorable", donc aucune
-      // règle ne réaligne. Donc mappedAction reste "alert_dominant".
-      const llmResponse = makeMinimalLLMResponse({
-        verdict: "STRONG_PASS" as unknown,
-      });
+    it("`verdict: favorable` racine natif → toléré, output action = finalVerdict 'contrasted' (PAS favorable)", () => {
+      // Même une valeur native favorable du LLM est ignorée : l'orientation est
+      // déterministe (contexte vide → contrasted).
+      const llmResponse = makeMinimalLLMResponse({ verdict: "favorable" as unknown });
       const result = transformResponse(llmResponse, makeMockContext());
-      expect(result.investmentRecommendation.action).toBe("alert_dominant");
+      expect(result.investmentRecommendation.action).toBe("contrasted");
     });
 
-    it("LLM produit `verdict: favorable` racine natif → lu via raw cast", () => {
-      // Cas natif : verdict racine déjà orientation. Le raw cast le lit en
-      // priorité 2 (après data.orientation absent). mappedAction = "favorable".
-      // Score 65 → finalVerdict = "contrasted". Coherence enforcement laisse
-      // passer (les 2 règles ne couvrent que alert_dominant ↔ very_favorable).
-      const llmResponse = makeMinimalLLMResponse({
-        verdict: "favorable" as unknown,
-      });
-      const result = transformResponse(llmResponse, makeMockContext());
-      expect(result.investmentRecommendation.action).toBe("favorable");
-    });
-
-    it("LLM ne produit AUCUNE recommendation → default = vigilance (fallback safe)", () => {
+    it("LLM ne produit AUCUNE recommendation → output verdict déterministe (contrasted)", () => {
       const llmResponse = makeMinimalLLMResponse();
       const result = transformResponse(llmResponse, makeMockContext());
-      expect(["very_favorable", "favorable", "contrasted", "vigilance", "alert_dominant"]).toContain(
-        result.verdict
-      );
+      expect(result.verdict).toBe("contrasted");
+      expect(result.investmentRecommendation.action).toBe("contrasted");
     });
 
     it("Cas dégradé : `signalContribution.orientation === verdict` (invariant maintenu)", () => {
@@ -336,5 +293,128 @@ describe("transformResponse — invariants A2 (D1 + D2)", () => {
       // evidenceSolidity DOIT être null en A2 — sera renseigné par A6 service Solidité
       expect(result.signalContribution.evidenceSolidity).toBeNull();
     });
+  });
+});
+
+// ===========================================================================
+// P2 — Orientation SCORELESS : invariant « poisoned score » + modèle positif
+// ===========================================================================
+
+/** Construit un AgentResult Tier 1 "couvert" avec d'éventuels red flags. */
+function makeCoveredResult(
+  agentName: string,
+  redFlags: Array<{ severity: string; title: string; description?: string; evidence?: string }> = [],
+): AgentResult {
+  return {
+    success: true,
+    agentName,
+    data: { redFlags },
+  } as unknown as AgentResult;
+}
+
+/** Les 12 agents de couverture (alignés sur COVERAGE_DIMENSIONS). */
+const COVERAGE_AGENTS = [
+  "financial-auditor", "team-investigator", "competitive-intel", "market-intelligence",
+  "tech-stack-dd", "tech-ops-dd", "legal-regulatory", "cap-table-auditor",
+  "gtm-analyst", "customer-intel", "deck-forensics", "question-master",
+];
+
+/** Contexte avec `count` agents couverts (sans red flags) + flags optionnels. */
+function makeCoverageContext(
+  count: number,
+  redFlagsByAgent: Record<string, Array<{ severity: string; title: string; description?: string }>> = {},
+): EnrichedAgentContext {
+  const previousResults: Record<string, unknown> = {};
+  for (const agent of COVERAGE_AGENTS.slice(0, count)) {
+    previousResults[agent] = makeCoveredResult(agent, redFlagsByAgent[agent] ?? []);
+  }
+  // Agents avec red flags hors des `count` premiers (ex. injection ciblée).
+  for (const [agent, flags] of Object.entries(redFlagsByAgent)) {
+    if (!previousResults[agent]) previousResults[agent] = makeCoveredResult(agent, flags);
+  }
+  return { previousResults } as EnrichedAgentContext;
+}
+
+describe("P2 — orientation SCORELESS (poisoned score + modèle positif)", () => {
+  it("POISONED SCORE haut (99) + red flag CRITICAL → orientation 'alert' (le score est ignoré)", () => {
+    const ctx = makeCoverageContext(10, {
+      "financial-auditor": [{ severity: "CRITICAL", title: "Fraude comptable suspectée", description: "écarts majeurs" }],
+    });
+    // Score volontairement ABSURDE (99) — ne doit PAS influencer l'orientation.
+    const llmResponse = makeMinimalLLMResponse({ score: { value: 99, grade: "A", breakdown: [] } });
+    const result = transformResponse(llmResponse, ctx);
+
+    expect(result.verdict).toBe("alert_dominant");
+    expect(result.signalProfile.orientation).toBe("alert");
+  });
+
+  it("POISONED SCORE bas (1) + signaux favorables + couverture large → orientation 'favorable' (le score est ignoré)", () => {
+    const ctx = makeCoverageContext(10); // 10/12 couverts, aucun red flag
+    // Score ABSURDE (1) mais 2 forces sourcées → branche positive.
+    const llmResponse = makeMinimalLLMResponse({
+      score: { value: 1, grade: "F", breakdown: [] },
+      keyStrengths: ["Équipe technique exceptionnelle", "Marché en forte croissance"],
+    });
+    const result = transformResponse(llmResponse, ctx);
+
+    expect(result.verdict).toBe("favorable");
+    expect(result.signalProfile.orientation).toBe("favorable");
+  });
+
+  it("modèle POSITIF : absence de red flags SANS signaux favorables → contrasted (pas favorable)", () => {
+    // Couverture large mais aucune force déclarée → l'absence d'alerte ne suffit
+    // pas à qualifier favorable (anti « compteur d'alertes inversé »).
+    const ctx = makeCoverageContext(10);
+    const llmResponse = makeMinimalLLMResponse(); // pas de keyStrengths
+    const result = transformResponse(llmResponse, ctx);
+
+    expect(result.verdict).toBe("contrasted");
+    expect(result.signalProfile.orientation).toBe("contrasted");
+  });
+
+  it("signalProfile.criticalRisks reflète les red flags CRITICAL consolidés", () => {
+    const ctx = makeCoverageContext(8, {
+      "team-investigator": [{ severity: "CRITICAL", title: "Départ du CTO non annoncé" }],
+    });
+    const result = transformResponse(makeMinimalLLMResponse(), ctx);
+
+    expect(result.signalProfile.criticalRisks.length).toBeGreaterThanOrEqual(1);
+    expect(result.signalProfile.criticalRisks[0].severity).toBe("CRITICAL");
+  });
+
+  it("signalProfile.dimensionCoverage couvre les 12 dimensions (covered/partial/not_covered)", () => {
+    const ctx = makeCoverageContext(5); // 5 couverts, 7 absents
+    const result = transformResponse(makeMinimalLLMResponse(), ctx);
+
+    expect(result.signalProfile.dimensionCoverage).toHaveLength(12);
+    expect(result.signalProfile.dimensionCoverage.filter((d) => d.level === "covered")).toHaveLength(5);
+    expect(result.signalProfile.dimensionCoverage.filter((d) => d.level === "not_covered")).toHaveLength(7);
+  });
+
+  it("non exploitable : aucune dimension couverte → orientation 'not_exploitable' (décision de couverture)", () => {
+    const result = transformResponse(makeMinimalLLMResponse(), makeMockContext());
+    expect(result.signalProfile.orientation).toBe("not_exploitable");
+  });
+
+  it("signalProfile.orientation ∈ taxonomie doctrine 4 valeurs (jamais l'enum interne 5)", () => {
+    const ctx = makeCoverageContext(10);
+    const result = transformResponse(makeMinimalLLMResponse(), ctx);
+    expect(["favorable", "contrasted", "alert", "not_exploitable"]).toContain(
+      result.signalProfile.orientation
+    );
+  });
+
+  it("dominantSignals : favorables (forces) + défavorables (red flags HIGH/CRITICAL) sourcés", () => {
+    const ctx = makeCoverageContext(10, {
+      "market-intelligence": [{ severity: "HIGH", title: "TAM surestimé" }],
+    });
+    const llmResponse = makeMinimalLLMResponse({ keyStrengths: ["Rétention nette > 120%"] });
+    const result = transformResponse(llmResponse, ctx);
+
+    const favorable = result.signalProfile.dominantSignals.filter((s) => s.polarity === "favorable");
+    const unfavorable = result.signalProfile.dominantSignals.filter((s) => s.polarity === "unfavorable");
+    expect(favorable.length).toBeGreaterThanOrEqual(1);
+    expect(unfavorable.length).toBeGreaterThanOrEqual(1);
+    expect(unfavorable[0].severity).toBe("HIGH");
   });
 });
