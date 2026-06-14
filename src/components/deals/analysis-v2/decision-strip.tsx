@@ -51,12 +51,12 @@ function MetricCard({
 export function DecisionStrip({ model }: { model: Model }) {
   const { orientation, solidity, alertDistribution, coherenceBand, contradictionsCritical, totalContradictions, thesisVerdict, completion } = model;
 
-  const orientationLabel = orientation ? RECOMMENDATION_CONFIG[orientation]?.label ?? "Non qualifiée" : "Score final indisponible";
+  const orientationLabel = orientation ? RECOMMENDATION_CONFIG[orientation]?.label ?? "Non qualifiée" : "Orientation indisponible";
   const orientationDetail = orientation
     ? null
     : completion.hasSynthesisScorer
       ? "Aucune orientation agrégée disponible."
-      : "L'agent de synthèse n'a pas pu produire de score final sur cette analyse.";
+      : "L'agent de synthèse n'a pas pu produire d'orientation agrégée sur cette analyse.";
 
   const alertConvergence = (() => {
     const { STOP, INVESTIGATE_FURTHER, PROCEED_WITH_CAUTION, PROCEED, total } = alertDistribution;

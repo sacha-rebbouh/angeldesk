@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3-c — Nettoyage des résidus de score dans analysis-v2
+
+### Fichiers
+- `src/components/deals/analysis-v2/lib/selectors.ts` : `buildSignalsSectionModel` ne collecte plus `score.value` → `scoreValue` (note de deal latente non rendue). Libellé coverage `TIER3_EXPECTED` « Score de synthèse » → « Synthèse du signal ».
+- `src/components/deals/analysis-v2/atoms/agent-card.tsx` : retrait du champ `scoreValue` du type `AgentCardSignal` (jamais rendu dans le JSX).
+- `src/components/deals/analysis-v2/decision-strip.tsx` : libellés restitués dé-scorés — « Score final indisponible » → « Orientation indisponible » ; détail « produire de score final » → « produire d'orientation agrégée ».
+- `src/components/deals/analysis-v2/__tests__/doctrine-runtime-guard.test.ts` : guard — les cartes signaux n'ont plus de propriété `scoreValue`.
+
+### Description
+Nettoyage des résidus de score/terminologie sur la surface canonique analysis-v2, incluant l'item backlog flaggé par le gate P3-b (libellé « Score de synthèse »). Le champ `scoreValue` était collecté mais jamais restitué (agent-card ne le rendait pas) — note de deal latente retirée du view-model. Noté mais NON retiré (doctrine Karpathy : dead code préexistant signalé, pas supprimé) : `dimensionsSummary` dans `solidity-aggregator.ts` (jamais consommé hors tests, porte un champ `score` — fonction morte non restituée). Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; suite unit 4508 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3-b — Cohérence du deck verbale dans analysis-v2 (retrait du coherenceScore /100)
 
 ### Fichiers

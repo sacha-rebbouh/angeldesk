@@ -98,6 +98,8 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
         expectNoAgentName(s);
         expect(s, `"${s}" expose un score /100`).not.toMatch(/\/\s*100/); // #16 : pas de score chiffré dans le texte
       }
+      // P3-c : plus aucun champ de note de deal latent dans le modèle de carte.
+      expect(c).not.toHaveProperty("scoreValue");
     }
   });
 

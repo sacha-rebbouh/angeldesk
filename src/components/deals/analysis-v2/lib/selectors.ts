@@ -314,7 +314,7 @@ export function buildDecisionStripModel(deal: { id: string; name?: string | null
     .filter((s) => s.status !== "ok")
     .map((s) => ({ label: s.label, status: s.status as "failed" | "missing" }));
   const TIER3_EXPECTED: Array<{ key: string; label: string }> = [
-    { key: "synthesis-deal-scorer", label: "Score de synthèse" },
+    { key: "synthesis-deal-scorer", label: "Synthèse du signal" },
     { key: "contradiction-detector", label: "Détection de contradictions" },
     { key: "conditions-analyst", label: "Conditions critiques" },
     { key: "devils-advocate", label: "Avocat du diable" },
@@ -530,14 +530,12 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
       const oneLiner = rawOneLiner ? cleanRenderedText(rawOneLiner) || null : null;
       const redFlags = arrayAt(snap.data, ["redFlags"]).length;
       const questions = arrayAt(snap.data, ["questions"]).length;
-      const score = numberAt(snap.data, ["score", "value"]);
       cards.push({
         agentLabel: snap.label,
         agentRole: snap.role,
         oneLiner,
         orientation,
         solidity,
-        scoreValue: score != null ? Math.round(score) : null,
         supports,
         concerns,
         redFlagCount: redFlags,
