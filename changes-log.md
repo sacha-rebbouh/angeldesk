@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 3/N — tier2-results.tsx (expert sectoriel) scoreless
+
+### Fichiers
+- `src/components/deals/tier2-results.tsx` : carte expert sectoriel (rend `SectorExpertData`, pas la synthèse deal → sous-scores SECTORIELS, pas la note de deal ; mirror PDF-4 tier2-expert). (1) header carte : bloc « Score Secteur » + `data.sectorScore` (4xl) supprimé. (2) `VerdictHero` : bloc « Score Secteur » + prop `sectorScore` supprimés ; verdict reste verbal via `SECTOR_FIT_CONFIG[verdict.recommendation].label` + keyInsight/topStrength/topConcern + Fiabilité (`verdict.confidence` qualitatif high/medium/low). (3) `ScoreBreakdownSection` (/25 sous-scores) + son wrapper ExpandableSection « Score Breakdown » supprimés (composant retiré). (4) `SectorFitSection` : ligne « Sector Fit Score » + `ScoreBadge(fit.score)` supprimée (Timing/Strengths/Weaknesses verbaux conservés). (5) dead-code induit : imports `ScoreBadge` + icône `Building2` retirés.
+
+### Description
+tier2-results.tsx ne restitue plus aucun sous-score sectoriel (grep `sectorScore`/`ScoreBadge`/`/25`/`scoreBreakdown` = 0). **Gate Codex APPROVE** (aucun nit). Conservé (allowlist, métriques OBSERVABLES) : `valuation.percentilePosition` (percentile de la valorisation dans la distribution secteur = benchmark de marché, confirmé Codex), multiples de valo, `VALUATION_VERDICT_CONFIG` (verbal), unit economics observables, `verdict.confidence` par item (qualitatif). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests deals 434 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 2/N — tier3-results.tsx entièrement scoreless
 
 ### Fichiers
