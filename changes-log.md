@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (PDF) étape 1/N — score-breakdown scoreless (orientation × solidité)
+
+### Fichiers
+- `src/lib/pdf/pdf-sections/score-breakdown.tsx` : section « Score & Verdict » → « Profil du signal ». Retrait du `ScoreCircle`, de la ligne `Score global: X/100 — Confiance: Y%` et du verdict brut uppercase. Remplacement par le modèle 2 axes VERBAL : Axe 1 orientation du signal (taxonomie doctrine 4 valeurs) lue via le bi-reader scoreless `readDoctrineOrientation(results)` (forme nouvelle `data.signalProfile.orientation`, sinon verdict legacy mappé 5→4), libellé via `DOCTRINE_ORIENTATION_CONFIG` en majuscules ; Axe 2 solidité des preuves (`data.signalProfile.evidenceSolidity`, fallback `data.signalContribution.evidenceSolidity`) via `proofLabel` + son rationale. Risques critiques conservés. Imports `ScoreCircle`/`sup` retirés ; ajout `readDoctrineOrientation`/`DOCTRINE_ORIENTATION_CONFIG`/`proofLabel`.
+
+### Description
+Pattern-setter du sous-chantier PDF (8 fichiers, ~136 occurrences score/100/grade/ScoreCircle). La « Confiance » globale est SUPPRIMÉE : l'axe 2 doctrine est la Solidité des preuves (déterministe), pas une auto-confiance LLM (anti-pattern fui). Aucune dérivation d'orientation depuis un score (garde-fou anti score-caché). Helpers PDF `recLabel`/`proofLabel` déjà créés (P2) — `proofLabel` wiré ici pour la 1ʳᵉ fois. Divergence temporaire assumée avec la decision-strip écran (encore en `aggregateOrientation` 5 valeurs) : le PDF consomme déjà la taxonomie doctrine 4 valeurs via le bi-reader (la garde-fou P3 l'exige). Producteurs (scores agents) intacts = P4. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3-f — Retrait de la carte « Score mémo : X/100 » du mémo UI (analysis-memo-full)
 
 ### Fichiers
