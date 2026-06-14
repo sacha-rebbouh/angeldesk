@@ -1213,15 +1213,6 @@ export interface TeamInvestigatorFindings {
       successfulExits: number;
     };
 
-    // Scores individuels (0-100)
-    scores: {
-      domainExpertise: number;
-      entrepreneurialExperience: number;
-      executionCapability: number;
-      networkStrength: number;
-      overallFounderScore: number;
-    };
-
     // Red flags spécifiques au fondateur
     redFlags: {
       type: string;

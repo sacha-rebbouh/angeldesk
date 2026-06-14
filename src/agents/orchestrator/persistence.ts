@@ -858,7 +858,6 @@ export async function processAgentResult(
               linkedinUrl?: string;
               linkedinVerified?: boolean;
               background?: Record<string, unknown>;
-              scores?: Record<string, number>;
               strengths?: string[];
               concerns?: string[];
               redFlags?: Array<{ type: string; severity: string; description: string }>;
@@ -888,7 +887,6 @@ export async function processAgentResult(
         for (const profile of profiles) {
           // Team-investigator analysis data
           const analysisData = {
-            scores: profile.scores,
             strengths: profile.strengths,
             concerns: profile.concerns,
             redFlags: profile.redFlags,

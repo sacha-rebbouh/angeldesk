@@ -55,14 +55,6 @@ import { cn } from "@/lib/utils";
 // TYPES
 // ============================================================================
 
-interface AnalysisScores {
-  domainExpertise?: number;
-  entrepreneurialExperience?: number;
-  executionCapability?: number;
-  networkStrength?: number;
-  overallFounderScore?: number;
-}
-
 interface AnalysisBackground {
   yearsExperience?: number;
   headline?: string;
@@ -103,7 +95,6 @@ interface VerifiedInfo {
   // From team-investigator analysis (new format)
   source?: "team-investigator";
   analyzedAt?: string;
-  scores?: AnalysisScores;
   background?: AnalysisBackground;
   strengths?: string[];
   concerns?: string[];
