@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 6/N — analysis-panel.tsx + timeline-versions.tsx scoreless (clôt le cluster analysis-panel)
+
+### Fichiers
+- `src/components/deals/analysis-panel.tsx` : (1) reader `extractDealScore` retiré (import + memos `currentScore`/`previousScore`). (2) `DeltaIndicator unit="/100"` montrait le DELTA de la note de deal entre versions (banni) → usage + import retirés, aucun remplacement (un delta verbal orientation/red-flags relève du cluster read-model/`analysis-delta`, pas inventé ici — YAGNI). (3) `timelineVersions` ne calcule plus le champ `score`. (4) `thesisGated` (orphelin, ne gardait que le DeltaIndicator) retiré. (5) variable `resolutions` (tableau de `useResolutions`) orpheline retirée de la destructuration ET du pass `Tier3Results` (`resolutionMap`, distinct, conservé). (6) menu export PDF résumé : « Score » → « Orientation », « red flags » → « signaux d'alerte » (le PDF résumé est déjà scoreless).
+- `src/components/deals/timeline-versions.tsx` : champ `score` retiré de l'interface `AnalysisVersion`, de l'affichage (pastille colorée par seuils 80/60) et du tooltip « Score: X/100 » ; la navigation entre versions (V1/V2…, date/heure) reste.
+- `src/components/deals/tier3-results.tsx` : prop `Tier3ResultsProps.resolutions` (déclarée mais inutilisée depuis la dé-scorisation tier3, nit Codex différé) retirée.
+
+### Description
+Le cluster analysis-panel ne restitue plus aucune note de deal (delta de note + timeline de note supprimés). **Gate Codex APPROVE** (aucun nit) : ne pas inventer de delta verbal local est le bon choix (réservé au modèle dédié `analysis-delta`), cascade `thesisGated`/`resolutions` saine, `resolutionMap` préservé. Composants devenus orphelins laissés sur disque (Karpathy, préexistants, signalés) : `delta-indicator.tsx` (plus aucun consumer) et `adjusted-score-badge.tsx` (orphelin depuis l'étape SuiviDD). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; suite unit complète 4509 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 5/N — SuiviDD (onglet Suivi DD) scoreless
 
 ### Fichiers

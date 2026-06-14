@@ -52,7 +52,6 @@ interface Tier3ResultsProps {
   }>;
   totalAgentsRun?: number;
   resolutionMap?: Record<string, import("@/hooks/use-resolutions").AlertResolution>;
-  resolutions?: import("@/hooks/use-resolutions").AlertResolution[];
   onResolve?: (input: import("@/hooks/use-resolutions").CreateResolutionInput) => Promise<unknown>;
   onUnresolve?: (alertKey: string) => Promise<unknown>;
   isResolving?: boolean;
