@@ -12,7 +12,6 @@ import { upsertAnalysisSignalSummary } from "@/services/deals/analysis-signal-su
 import type {
   AgentResult,
   RedFlagResult,
-  SynthesisDealScorerResult,
 } from "../types";
 import type { ScoredFinding } from "@/scoring/types";
 import type { AnalysisType } from "./types";
@@ -794,36 +793,10 @@ export async function processAgentResult(
       break;
     }
 
-    case "synthesis-deal-scorer": {
-      const synthResult = result as SynthesisDealScorerResult;
-      if (synthResult.data?.overallScore != null) {
-        // Extract dimension sub-scores from dimensionScores array
-        const dimensionScores = synthResult.data.dimensionScores ?? [];
-        const findDimensionScore = (keywords: string[]): number | null => {
-          const match = dimensionScores.find((d) =>
-            keywords.some((kw) => d.dimension.toLowerCase().includes(kw))
-          );
-          return match ? Math.round(match.score) : null;
-        };
-
-        const fundamentals = Math.round(synthResult.data.overallScore);
-
-        // globalScore = fundamentalsScore = synthesis output (conditions is now a dimension inside synthesis)
-        await prisma.deal.update({
-          where: { id: dealId },
-          data: {
-            fundamentalsScore: fundamentals,
-            globalScore: fundamentals,
-            teamScore: findDimensionScore(["team", "equipe", "équipe"]),
-            marketScore: findDimensionScore(["market", "marché", "marche"]),
-            productScore: findDimensionScore(["product", "produit", "tech"]),
-            financialsScore: findDimensionScore(["financial", "financ"]),
-            // conditionsScore is NOT set here — conditions-analyst is the source of truth (case below)
-          },
-        });
-      }
-      break;
-    }
+    // Chantier P4 — synthesis-deal-scorer ne produit plus de note (overallScore /
+    // dimensionScores absents) : le case persistait Deal.{fundamentals,global,team,
+    // market,product,financials}Score depuis overallScore (devenu inerte). Retiré.
+    // Le drop des colonnes Deal.*Score + le nettoyage des readers (CLUSTER) = P5.
 
     case "conditions-analyst": {
       // Persist full analysis cache. Chantier P4 — conditions-analyst ne
