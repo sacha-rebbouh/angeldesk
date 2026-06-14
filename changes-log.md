@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3-f — Retrait de la carte « Score mémo : X/100 » du mémo UI (analysis-memo-full)
+
+### Fichiers
+- `src/components/deals/analysis-memo-full.tsx` : suppression du bloc JSX conditionnel (`memoData.signalProfile?.score != null`) qui rendait une carte « Score mémo » avec `signalProfile.score`/100. Composant rendu par `analysis-panel` (legacy) ET `analysis-preview-tabs`.
+
+### Description
+Note de deal restituée en UI = bannie (doctrine § 4). L'orientation reste affichée verbalement juste à côté via le Badge `recommendation` (`recommendationLabels[…].label`) — aucune perte d'information d'orientation. `signalProfile.openQuestions` reste consommé ailleurs (l.302) → aucun code mort introduit. Le champ producteur `signalProfile.score` existe encore dans le type (nettoyage producteur = P4) ; seule la RESTITUTION part (P3). Exécution directe de la décision verrouillée, pas un choix d'UX discrétionnaire. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; suite unit 4509 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3-e — Scrub des notes de deal du contexte LLM de négociation (route + strategist)
 
 ### Fichiers
