@@ -558,14 +558,9 @@ Si un chiffre est marque [ESTIME], tu DOIS mentionner qu'il s'agit d'une estimat
   private formatAgentInsight(agentName: string, data: Record<string, unknown>): string {
     const lines: string[] = [`### ${agentName.toUpperCase()}`];
 
-    // Score principal
-    const scoreFields = ["overallScore", "score", "teamScore", "competitiveScore", "marketScore", "technicalScore", "legalScore", "capTableScore", "gtmScore", "customerScore", "exitScore"];
-    for (const field of scoreFields) {
-      if (typeof data[field] === "number") {
-        lines.push(`Score: ${data[field]}/100`);
-        break;
-      }
-    }
+    // P2 — Aucune note de deal injectée dans le contexte mémo (plus de
+    // "Score: X/100" par dimension Tier 1). L'orientation est portée par
+    // verdict/assessment/recommendation + red flags + key findings.
 
     // Verdict/Assessment
     if (data.verdict) lines.push(`Verdict: ${data.verdict}`);
@@ -621,9 +616,8 @@ Si un chiffre est marque [ESTIME], tu DOIS mentionner qu'il s'agit d'une estimat
   private formatSectorExpertInsight(agentName: string, data: Record<string, unknown>): string {
     const lines: string[] = [`### ${agentName.toUpperCase()} (Expert Sectoriel)`];
 
-    if (typeof data.sectorFitScore === "number") {
-      lines.push(`Sector Fit Score: ${data.sectorFitScore}/100`);
-    }
+    // P2 — Plus de "Sector Fit Score: X/100" (note de deal). Les benchmarks
+    // (métriques OBSERVABLES + percentiles de métrique) restent autorisés.
 
     if (data.benchmarks && Array.isArray(data.benchmarks)) {
       lines.push("\n**Benchmarks Sectoriels:**");
@@ -652,12 +646,13 @@ Si un chiffre est marque [ESTIME], tu DOIS mentionner qu'il s'agit d'une estimat
     const insights: string[] = [];
 
     // Synthesis Deal Scorer
+    // P2 — SCORELESS : aucune note de deal injectée dans le contexte mémo
+    // (plus de "Score final/100" ni de "Grade"). Seuls l'orientation et la
+    // recommandation qualitative (action = orientation) sont repris.
     const scorer = results["synthesis-deal-scorer"];
     if (scorer?.success && "data" in scorer) {
       const d = scorer.data as Record<string, unknown>;
       insights.push(`### SYNTHESIS DEAL SCORER
-Score final: ${d.overallScore ?? "N/A"}/100
-Grade: ${d.grade ?? "N/A"}
 Verdict: ${d.verdict ?? "N/A"}
 Recommendation: ${(d.investmentRecommendation as { action?: string })?.action ?? "N/A"}`);
     }
@@ -673,7 +668,6 @@ Recommendation: ${(d.investmentRecommendation as { action?: string })?.action ??
       const findingsD = (d.findings as Record<string, unknown> | undefined) ?? undefined;
       const structuralRisksDA = (findingsD?.structuralRisks as unknown[]) ?? [];
       insights.push(`### DEVIL'S ADVOCATE
-Scepticisme: ${d.overallSkepticism ?? "N/A"}/100
 Top Concerns: ${concerns.slice(0, 3).join("; ") || "N/A"}
 Risques structurels critiques: ${structuralRisksDA.length} identifies`);
     }
@@ -683,7 +677,6 @@ Risques structurels critiques: ${structuralRisksDA.length} identifies`);
     if (contradictions?.success && "data" in contradictions) {
       const d = contradictions.data as Record<string, unknown>;
       insights.push(`### CONTRADICTION DETECTOR
-Consistance: ${d.consistencyScore ?? "N/A"}/100
 Contradictions: ${(d.contradictions as unknown[])?.length ?? 0} détectées
 Assessment: ${d.summaryAssessment ?? "N/A"}`);
     }
@@ -1137,10 +1130,10 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
           `Valorisation: ${data.financialSummary?.valuationAssessment?.percentile ?? "N/A"}`,
       },
 
-      // Team Assessment
+      // Team Assessment — P2 : fallback sans note de deal (plus de "Score équipe /100").
       teamAssessment:
         data.teamAssessment?.verdict ??
-        `Score équipe: ${data.teamAssessment?.overallScore ?? "N/A"}/100`,
+        "Évaluation de l'équipe : voir l'analyse détaillée.",
 
       // Market Opportunity
       marketOpportunity:

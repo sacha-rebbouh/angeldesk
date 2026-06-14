@@ -66,13 +66,16 @@ function makeBoardInput(): BoardInput {
 }
 
 describe("context-compressor", () => {
-  it("puts memo and risk syntheses before score cues in compressed board context", () => {
+  it("puts memo and risk syntheses before the synthesis orientation block (no score)", () => {
     const context = compressBoardContext(makeBoardInput());
 
+    // P2 — plus de bloc "Signal quantitatif secondaire" ; le bloc synthèse est
+    // scoreless (orientation & signaux) et reste placé après memo.
+    expect(context).not.toContain("Signal quantitatif secondaire");
     expect(context.indexOf("### Memo d'Investissement")).toBeGreaterThan(-1);
-    expect(context.indexOf("### Signal quantitatif secondaire")).toBeGreaterThan(-1);
+    expect(context.indexOf("### Synthèse — orientation & signaux")).toBeGreaterThan(-1);
     expect(context.indexOf("### Memo d'Investissement")).toBeLessThan(
-      context.indexOf("### Signal quantitatif secondaire")
+      context.indexOf("### Synthèse — orientation & signaux")
     );
   });
 
@@ -98,7 +101,7 @@ describe("context-compressor", () => {
     expect(context).toContain("**Investor Profile Fit** : indisponible");
   });
 
-  it("keeps score as a secondary signal in tier-1 agent summaries", () => {
+  it("P2 — n'injecte AUCUNE note de deal dans les résumés agents (score retiré, orientation conservée)", () => {
     const summary = extractAgentSummary({
       verdict: "contrasted",
       score: 48,
@@ -108,9 +111,9 @@ describe("context-compressor", () => {
 
     expect(summary).toContain("Le marche reste encombre");
     expect(summary).toContain("Red flags: Pression concurrentielle");
-    expect(summary).toContain("Signal quantitatif secondaire: 48");
-    expect(summary.indexOf("Le marche reste encombre")).toBeLessThan(
-      summary.indexOf("Signal quantitatif secondaire: 48")
-    );
+    expect(summary).toContain("Verdict: contrasted");
+    // Plus de "Signal quantitatif secondaire" ni de note 48 surfacée.
+    expect(summary).not.toContain("Signal quantitatif secondaire");
+    expect(summary).not.toContain("48");
   });
 });

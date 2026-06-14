@@ -160,10 +160,11 @@ function buildTier3Section(input: BoardInput): string | null {
     parts.push(`### Contradictions Detectees\n${extractStructuredSummary(t3.contradictionDetector, 1500)}`);
   }
 
-  // Quant score kept last to avoid anchoring the board on a single number.
+  // P2 — Synthèse SCORELESS : orientation + signaux dominants + couverture +
+  // risques critiques (la note de deal a été retirée en amont par le scrub).
   if (t3.synthesisDealScorer) {
     parts.push(
-      `### Signal quantitatif secondaire (synthesis-deal-scorer)\n${extractStructuredSummary(t3.synthesisDealScorer, 2000)}`
+      `### Synthèse — orientation & signaux (synthesis-deal-scorer)\n${extractStructuredSummary(t3.synthesisDealScorer, 2000)}`
     );
   }
 
@@ -313,11 +314,13 @@ export function extractAgentSummary(data: unknown): string {
   const obj = data as Record<string, unknown>;
   const parts: string[] = [];
 
+  // P2 — Aucune note de deal injectée dans le contexte board : on ne surface
+  // plus de signal quantitatif (score/confidence), seulement l'orientation
+  // qualitative. Le scrub amont retire déjà les champs de note ; on retire ici
+  // le cadrage "Signal quantitatif secondaire".
   const signalParts: string[] = [];
   const verdict = obj.verdict ?? obj.recommendation ?? obj.assessment;
-  const score = obj.score ?? obj.globalScore ?? obj.overallScore ?? obj.confidence;
   if (verdict) signalParts.push(`Verdict: ${verdict}`);
-  if (score !== undefined) signalParts.push(`Signal quantitatif secondaire: ${score}`);
 
   // Top findings
   const findings =

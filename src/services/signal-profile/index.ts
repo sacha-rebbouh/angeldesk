@@ -215,6 +215,66 @@ export function scrubScoresFromResults<R extends Record<string, AgentResult>>(re
   return cloned as R;
 }
 
+/**
+ * Champs de NOTE DE DEAL de premier niveau retirés du `data` de TOUT agent
+ * (au-delà de synthesis-deal-scorer) avant réinjection dans un contexte LLM.
+ *
+ * Couvre les leaks nommés par le gate P1 (condition dure #1) : score agrégé +
+ * grade (tous agents), scores par dimension Tier 1 (`*Score`), scepticisme
+ * (devils-advocate), consistance (contradiction-detector), score sectoriel
+ * (Tier 2). Les scores imbriqués profonds (ex. `findings.*Score`) sont une
+ * traîne résiduelle retirée par P4 (suppression des champs producteurs).
+ */
+const AGENT_DEAL_NOTE_KEYS = [
+  "overallScore",
+  "globalScore",
+  "score",
+  "grade",
+  "scoreBreakdown",
+  "marketScore",
+  "competitiveScore",
+  "overallTeamScore",
+  "teamScore",
+  "techStackScore",
+  "techOpsScore",
+  "legalScore",
+  "capTableScore",
+  "gtmScore",
+  "customerScore",
+  "deckScore",
+  "technicalScore",
+  "sectorScore",
+  "sectorFitScore",
+  "overallSkepticism",
+  "consistencyScore",
+] as const;
+
+/**
+ * Clone de la map de résultats agents où CHAQUE agent a ses champs de NOTE DE
+ * DEAL retirés du `data`, avant réinjection dans un contexte LLM (board / memo /
+ * summary). synthesis-deal-scorer reçoit le scrub profond dédié
+ * (`scrubSynthesisScoreData`) ; les autres agents perdent leurs clés de note de
+ * premier niveau (`AGENT_DEAL_NOTE_KEYS`). Pur et IMMUTABLE (jamais de mutation
+ * des entrées). Préserve orientation, verdict, forces/faiblesses, red flags,
+ * findings qualitatifs, et la `confidence` d'agent (autorisée).
+ */
+export function scrubAllScoresForLLMContext<R extends Record<string, unknown>>(results: R): R {
+  const cloned: Record<string, unknown> = {};
+  for (const [name, result] of Object.entries(results)) {
+    const data = (result as { data?: unknown } | undefined)?.data;
+    if (!result || !isRecord(data)) {
+      cloned[name] = result;
+      continue;
+    }
+    const scrubbedData =
+      name === "synthesis-deal-scorer"
+        ? scrubSynthesisScoreData(data)
+        : stripKeys(data, AGENT_DEAL_NOTE_KEYS);
+    cloned[name] = { ...(result as Record<string, unknown>), data: scrubbedData };
+  }
+  return cloned as R;
+}
+
 // ============================================================================
 // 4. Bi-reader durable old/new
 // ============================================================================

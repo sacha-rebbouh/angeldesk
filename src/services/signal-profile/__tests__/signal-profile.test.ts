@@ -17,6 +17,7 @@ import {
   toDoctrineOrientation,
   scrubSynthesisScoreData,
   scrubScoresFromResults,
+  scrubAllScoresForLLMContext,
   readDoctrineOrientation,
   type AnalysisSignalProfile,
 } from "../index";
@@ -323,5 +324,62 @@ describe("readDoctrineOrientation — bi-reader durable", () => {
       orientation: null,
       source: "none",
     });
+  });
+});
+
+// ----------------------------------------------------------------------------
+// scrubAllScoresForLLMContext — scrub COMPLET (tous agents) pour contexte LLM
+// ----------------------------------------------------------------------------
+
+describe("scrubAllScoresForLLMContext (P2 — condition dure #1)", () => {
+  function makeResult(agentName: string, data: unknown): AgentResult {
+    return { agentName, success: true, executionTimeMs: 1, cost: 0, data } as unknown as AgentResult;
+  }
+
+  it("synthesis-deal-scorer reçoit le scrub PROFOND (overallScore + dimensionScores[].score retirés, orientation gardée)", () => {
+    const results = {
+      "synthesis-deal-scorer": makeResult("synthesis-deal-scorer", {
+        overallScore: 72,
+        grade: "B",
+        verdict: "contrasted",
+        dimensionScores: [{ dimension: "Team", score: 80, weightedScore: 20 }],
+      }),
+    };
+    const out = scrubAllScoresForLLMContext(results);
+    const data = (out["synthesis-deal-scorer"] as unknown as { data: Record<string, unknown> }).data;
+    expect(data).not.toHaveProperty("overallScore");
+    expect(data).not.toHaveProperty("grade");
+    expect(data.verdict).toBe("contrasted");
+    expect((data.dimensionScores as Array<Record<string, unknown>>)[0]).not.toHaveProperty("score");
+  });
+
+  it("retire les notes de premier niveau des autres agents (devils overallSkepticism, Tier1 *Score, contradiction consistencyScore)", () => {
+    const results = {
+      "devils-advocate": makeResult("devils-advocate", { overallSkepticism: 85, topConcerns: ["x"] }),
+      "market-intelligence": makeResult("market-intelligence", { marketScore: 60, score: { value: 60 }, narrative: { summary: "ok" } }),
+      "contradiction-detector": makeResult("contradiction-detector", { consistencyScore: 70, findings: {} }),
+    };
+    const out = scrubAllScoresForLLMContext(results);
+    expect((out["devils-advocate"] as unknown as { data: Record<string, unknown> }).data).not.toHaveProperty("overallSkepticism");
+    expect((out["devils-advocate"] as unknown as { data: Record<string, unknown> }).data.topConcerns).toEqual(["x"]);
+    const mi = (out["market-intelligence"] as unknown as { data: Record<string, unknown> }).data;
+    expect(mi).not.toHaveProperty("marketScore");
+    expect(mi).not.toHaveProperty("score");
+    expect(mi.narrative).toEqual({ summary: "ok" });
+    expect((out["contradiction-detector"] as unknown as { data: Record<string, unknown> }).data).not.toHaveProperty("consistencyScore");
+  });
+
+  it("IMMUTABLE : l'entrée n'est jamais mutée", () => {
+    const original = makeResult("financial-auditor", { overallScore: 50, score: { value: 50 } });
+    const results = { "financial-auditor": original };
+    scrubAllScoresForLLMContext(results);
+    expect((original as unknown as { data: Record<string, unknown> }).data).toHaveProperty("overallScore", 50);
+  });
+
+  it("agents sans `data` exploitable → laissés tels quels (par référence)", () => {
+    const failed = { agentName: "gtm-analyst", success: false, executionTimeMs: 1, cost: 0 } as unknown as AgentResult;
+    const results = { "gtm-analyst": failed };
+    const out = scrubAllScoresForLLMContext(results);
+    expect(out["gtm-analyst"]).toBe(failed);
   });
 });

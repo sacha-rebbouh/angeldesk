@@ -1,6 +1,20 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P2-c — Scrub des notes de deal dans les contextes LLM (board / mémo / summary)
+
+### Fichiers
+- `src/services/signal-profile/index.ts` : NOUVELLE fonction `scrubAllScoresForLLMContext(results)` — scrub COMPLET de tous les agents (synthesis = scrub profond `scrubSynthesisScoreData` ; autres = retrait des clés de note de premier niveau `AGENT_DEAL_NOTE_KEYS` : overallScore/globalScore/score/grade/scoreBreakdown/*Score Tier1/technicalScore/sectorScore/sectorFitScore/overallSkepticism/consistencyScore). Pure+immutable. `scrubScoresFromResults` (P1, synthesis-only) inchangée. confidence d'agent conservée.
+- `src/agents/board/board-orchestrator.ts` : `scrubAllScoresForLLMContext(analysisResults)` avant construction de `agentOutputs` (point unique) — le board délibère sur l'orientation, jamais sur une note.
+- `src/agents/board/context-compressor.ts` : `extractAgentSummary` retire la ligne « Signal quantitatif secondaire » (le fallback `obj.confidence` survivait au scrub) ; `buildTier3Summaries` header synthesis renommé « Synthèse — orientation & signaux ».
+- `src/agents/tier3/memo-generator.ts` : `extractTier3Insights` (retrait Score final/Grade/Scepticisme/Consistance), `formatAgentInsight` (retrait Score: X/100 Tier1), `formatSectorExpertInsight` (retrait Sector Fit Score ; benchmarks observables conservés), `normalizeResponse` fallback teamAssessment (retrait « Score équipe /100 » restitué). Orientation/verdict/concerns/benchmarks conservés.
+- `src/agents/orchestrator/summary.ts` : 4 fonctions — retrait de toutes les lignes /100 (scores par dimension Tier1, Score Final, Scepticisme, Score Sectoriel, Score Global). `analysis.summary` alimente le chat LLM (chat-context:603, context-retriever:1148) → contamination réelle. Orientation (Profil/Signal/verdict labels) + rationale + top concerns + fit qualitatif + insights observables conservés.
+- Tests : `signal-profile.test.ts` (+4 scrubber), `context-compressor.test.ts` (maj : plus de « Signal quantitatif secondaire »), NOUVEAU `memo-generator-llm-context-descoring.test.ts` (3 extracteurs mémo prouvés sans /100 même avec producteurs scorés).
+
+### Description
+P2-c du chantier dé-scorisation — condition dure #1 du gate P1 : après la synthèse scoreless (P2-a), memo/summary/board réinjectaient encore des notes de deal dans les contextes LLM (overallScore, grade, devils overallSkepticism/100, Tier1 dimension /100, consistencyScore/100, sectorFitScore/100). Mécanisme adapté : scrubber central pour le board (sérialisation générique d'objets), édition directe des templates pour summary/mémo (le /100 y est du scaffolding hardcodé). Ordre additif : producteurs inchangés (champs retirés en P4). Gate Codex : APPROVE après 1 REQUEST_CHANGES (fuites Tier1/Tier2 dans le contexte mémo via extractTier1/2Insights — corrigées + test dédié). Déféré : chat deal.globalScore=P3, score-extraction=P5, findings.*Score profonds=P4. tsc 0 ; suite unit 4492 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P2-b — Retrait des scores des dérivations d'orientation CD + CA (Tier 3)
 
 ### Fichiers

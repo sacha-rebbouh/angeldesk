@@ -25,6 +25,7 @@ import { completeJSON, runWithLLMContext } from "@/services/openrouter/router";
 import { assertCompletionNotTruncated } from "@/services/openrouter/truncation-guard";
 import { loadResults } from "@/services/analysis-results/load-results";
 import { normalizeThesisEvaluation } from "@/services/thesis/normalization";
+import { scrubAllScoresForLLMContext } from "@/services/signal-profile";
 
 const DEFAULT_MAX_ROUNDS = 3;
 const DEFAULT_TIMEOUT_MS = 600000; // 10 minutes
@@ -495,27 +496,32 @@ export class BoardOrchestrator {
     const agentOutputs: BoardInput["agentOutputs"] = {};
 
     if (analysisResults) {
+      // P2 — Scrub des NOTES DE DEAL avant injection dans le contexte LLM du
+      // board (condition dure #1) : le board délibère sur l'orientation et les
+      // signaux qualitatifs, jamais sur une note numérique. Immutable.
+      const scrubbed = scrubAllScoresForLLMContext(analysisResults);
+
       // Tier 0: Base agents
       agentOutputs.tier0 = {
-        documentExtractor: analysisResults["document-extractor"],
-        dealScorer: analysisResults["deal-scorer"],
-        redFlagDetector: analysisResults["red-flag-detector"],
+        documentExtractor: scrubbed["document-extractor"],
+        dealScorer: scrubbed["deal-scorer"],
+        redFlagDetector: scrubbed["red-flag-detector"],
       };
 
       // Tier 1: 13 Investigation agents
       agentOutputs.tier1 = {
-        deckForensics: analysisResults["deck-forensics"],
-        financialAuditor: analysisResults["financial-auditor"],
-        marketIntelligence: analysisResults["market-intelligence"],
-        competitiveIntel: analysisResults["competitive-intel"],
-        teamInvestigator: analysisResults["team-investigator"],
-        techStackDD: analysisResults["tech-stack-dd"],
-        techOpsDD: analysisResults["tech-ops-dd"],
-        legalRegulatory: analysisResults["legal-regulatory"],
-        capTableAuditor: analysisResults["cap-table-auditor"],
-        gtmAnalyst: analysisResults["gtm-analyst"],
-        customerIntel: analysisResults["customer-intel"],
-        questionMaster: analysisResults["question-master"],
+        deckForensics: scrubbed["deck-forensics"],
+        financialAuditor: scrubbed["financial-auditor"],
+        marketIntelligence: scrubbed["market-intelligence"],
+        competitiveIntel: scrubbed["competitive-intel"],
+        teamInvestigator: scrubbed["team-investigator"],
+        techStackDD: scrubbed["tech-stack-dd"],
+        techOpsDD: scrubbed["tech-ops-dd"],
+        legalRegulatory: scrubbed["legal-regulatory"],
+        capTableAuditor: scrubbed["cap-table-auditor"],
+        gtmAnalyst: scrubbed["gtm-analyst"],
+        customerIntel: scrubbed["customer-intel"],
+        questionMaster: scrubbed["question-master"],
       };
 
       // Tier 2: Sector expert (find the expert that ran)
@@ -525,10 +531,10 @@ export class BoardOrchestrator {
         "hardware-expert", "gaming-expert", "blockchain-expert", "general-expert",
       ];
       for (const expertName of tier2Experts) {
-        if (analysisResults[expertName]) {
+        if (scrubbed[expertName]) {
           agentOutputs.tier2 = {
             sectorExpertName: expertName,
-            sectorExpert: analysisResults[expertName],
+            sectorExpert: scrubbed[expertName],
           };
           break;
         }
@@ -536,10 +542,10 @@ export class BoardOrchestrator {
 
       // Tier 3: 4 Synthesis agents
       agentOutputs.tier3 = {
-        contradictionDetector: analysisResults["contradiction-detector"],
-        synthesisDealScorer: analysisResults["synthesis-deal-scorer"],
-        devilsAdvocate: analysisResults["devils-advocate"],
-        memoGenerator: analysisResults["memo-generator"],
+        contradictionDetector: scrubbed["contradiction-detector"],
+        synthesisDealScorer: scrubbed["synthesis-deal-scorer"],
+        devilsAdvocate: scrubbed["devils-advocate"],
+        memoGenerator: scrubbed["memo-generator"],
       };
 
     }
