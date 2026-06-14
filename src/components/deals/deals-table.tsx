@@ -22,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ScoreBadge } from "@/components/shared/score-badge";
 import { ThesisStaleBadge } from "./thesis/thesis-stale-badge";
 import { THESIS_VERDICT_CONFIG } from "@/lib/ui-configs";
 import {
@@ -292,11 +291,13 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
                   {getDealDisplayName(deal)}
                 </span>
                 <div className="flex items-center gap-2 shrink-0">
-                  {!thesisGated && deal.globalScore != null ? (
-                    <ScoreBadge score={deal.globalScore} size="sm" />
+                  {!thesisGated ? (
+                    <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground">
+                      {deal.redFlags.length} signal{deal.redFlags.length > 1 ? "aux" : ""}
+                    </Badge>
                   ) : (
                     <span className="text-[11px] font-medium text-muted-foreground">
-                      {thesisGated ? "Thèse d'abord" : ""}
+                      Thèse d&apos;abord
                     </span>
                   )}
                   <Badge variant="secondary" className={cn("text-xs", getStatusColor(deal.status))}>
@@ -351,7 +352,7 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
               <TableHead className="hidden md:table-cell cursor-pointer" onClick={() => handleSort("valuationPre")}>
                 <span className="flex items-center">Valorisation {renderSortIcon("valuationPre")}</span>
               </TableHead>
-              <TableHead className="hidden sm:table-cell">Score</TableHead>
+              <TableHead className="hidden sm:table-cell">Signaux</TableHead>
               <TableHead className="hidden lg:table-cell cursor-pointer" onClick={() => handleSort("thesisVerdict")}>
                 <span className="flex items-center">Thèse {renderSortIcon("thesisVerdict")}</span>
               </TableHead>
@@ -406,11 +407,13 @@ export const DealsTable = memo(function DealsTable({ deals }: DealsTableProps) {
                   <TableCell className="hidden lg:table-cell">{getStageLabel(deal.stage)}</TableCell>
                   <TableCell className="hidden md:table-cell">{formatCurrencyEUR(deal.valuationPre)}</TableCell>
                   <TableCell className="hidden sm:table-cell">
-                    {!thesisGated && deal.globalScore != null ? (
-                      <ScoreBadge score={deal.globalScore} size="sm" />
+                    {!thesisGated ? (
+                      <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
+                        {deal.redFlags.length} signal{deal.redFlags.length > 1 ? "aux" : ""}
+                      </Badge>
                     ) : (
                       <span className="text-muted-foreground text-xs">
-                        {thesisGated ? "Thèse d'abord" : "-"}
+                        Thèse d&apos;abord
                       </span>
                     )}
                   </TableCell>

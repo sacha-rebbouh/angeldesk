@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 12/N (E) — listes de deals : note /100 → compteur de signaux (décision Sacha)
+
+### Fichiers
+- `src/components/deals/deals-table.tsx` : les 2 `ScoreBadge score={deal.globalScore}` (note /100, bannie — vue mobile carte + cellule desktop) remplacés par un badge compteur « N signal/signaux » = `deal.redFlags.length` (total des red flags, observable). Branche `thesisGated` → « Thèse d'abord » conservée. En-tête colonne desktop « Score » → « Signaux ». Import `ScoreBadge` retiré.
+- `src/components/deals/deals-kanban.tsx` : même remplacement `ScoreBadge` → compteur « N signaux ». Import `ScoreBadge` retiré. Commentaire `Name + score` → `Name + signals count` (stale, nit Codex).
+
+### Description
+Décision produit Sacha (AskUserQuestion, Q2 listes) : remplacer la note de deal des listes par un **compteur de signaux d'alerte**. Le nouveau badge montre le **total** (toutes sévérités) pour coller à la formulation « N signaux dont M critiques » ; les 3 surfaces affichent **déjà** ailleurs un compteur CRITICAL+HIGH (colonne « Alertes » desktop + tooltip, footers mobile/kanban) → total vs critique = deux lectures distinctes. **Gate Codex APPROVE** (« maintien séparé Signaux total / Alertes critique acceptable, colле à la décision produit » ; nit comment stale corrigé). Plus aucune note de deal (`deal.globalScore`) restituée dans les listes. `score-badge.tsx` devient probablement orphelin (à confirmer/retirer en étape D composants partagés). tsc 0 ; eslint clean ; doctrine guards 40 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 11/N (C4) — tier1-results.tsx : cleanup vars mortes (clôt le fichier)
 
 ### Fichiers

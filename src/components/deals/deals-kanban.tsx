@@ -7,7 +7,6 @@ import { fr } from "date-fns/locale";
 import { AlertTriangle, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { ScoreBadge } from "@/components/shared/score-badge";
 import { ThesisStaleBadge } from "./thesis/thesis-stale-badge";
 import { THESIS_VERDICT_CONFIG } from "@/lib/ui-configs";
 import { getStatusLabel, getStageLabel, formatCurrencyEUR } from "@/lib/format-utils";
@@ -117,16 +116,18 @@ const KanbanCard = memo(function KanbanCard({
       onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(deal.id); } }}
       className="rounded-lg border bg-card p-3 cursor-pointer hover:shadow-md transition-shadow"
     >
-      {/* Name + score */}
+      {/* Name + signals count */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="text-sm font-medium leading-tight line-clamp-2">
           {getDealDisplayName(deal)}
         </span>
-        {!thesisGated && deal.globalScore != null ? (
-          <ScoreBadge score={deal.globalScore} size="sm" />
+        {!thesisGated ? (
+          <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground whitespace-nowrap">
+            {deal.redFlags.length} signal{deal.redFlags.length > 1 ? "aux" : ""}
+          </Badge>
         ) : (
           <span className="text-[11px] font-medium text-muted-foreground whitespace-nowrap">
-            {thesisGated ? "Thèse d'abord" : ""}
+            Thèse d&apos;abord
           </span>
         )}
       </div>
