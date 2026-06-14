@@ -76,15 +76,6 @@ export interface DealContext {
     website: string | null;
   };
 
-  // All dimension scores
-  scores: {
-    global: number | null;
-    team: number | null;
-    market: number | null;
-    product: number | null;
-    financials: number | null;
-  };
-
   financialSummary: {
     keyMetrics: Record<string, number | string>;
     benchmarkPosition: string;
@@ -138,7 +129,7 @@ export interface DealContext {
     comparableDeals: string[];
   };
 
-  overallScore: number | null;
+  // Orientation du signal VERBALE (doctrine § 4) — aucune note de deal.
   signalProfile: string;
   keyContradictions: string[];
 
@@ -146,7 +137,6 @@ export interface DealContext {
   allAgentFindings: Record<string, {
     summary: string;
     keyFindings: string[];
-    score?: number;
   }>;
 
   // Negotiation strategy from synthesis

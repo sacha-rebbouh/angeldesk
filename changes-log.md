@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3-d — Live Coaching context-compiler scoreless (anti-score-caché + retrait notes de deal)
+
+### Fichiers
+- `src/lib/live/context-compiler.ts` : (a) suppression de l'anti-pattern SCORE CACHÉ — la fonction `getSignalProfile(score)` dérivait une orientation verbale d'un score (`if score>=85 → Signaux très favorables`), REMPLACÉE par `signalProfileLabel(orientation)` qui lit l'orientation doctrine 4 valeurs via le bi-reader `readDoctrineOrientation` (profil scoreless P2+ OU verdict legacy 5 valeurs mappé), jamais d'un score (garde-fou #1). Premier consumer runtime du bi-reader. (b) Retrait des notes de deal : bloc sérialisé `## Scores d'analyse` (global/team/market/product/financials /100) → bloc verbal `## Orientation du signal` ; per-agent `score`/100 retiré de `allAgentFindings` (collecte + rendu) ; `compileContextForColdMode` nettoyé.
+- `src/lib/live/types.ts` : type `DealContext` — retrait des champs `scores` (5 dimensions) et `overallScore`, et du `score?` de `allAgentFindings`. `signalProfile` (verbal) conservé.
+- `src/lib/live/__tests__/context-compiler.test.ts` : assertions `scores`/`overallScore` remplacées par `signalProfile = Aucune analyse disponible` (le mock a `overallScore: 91` SANS verdict ni profil → le bi-reader ne dérive RIEN d'un score) + NOUVEAU test invariant « poisoned score » (overallScore 91 ex-très-favorable + verdict `alert_dominant` → `Signaux d'alerte`, suit le verdict jamais le score).
+- `src/lib/live/__tests__/live-coaching.test.ts` : fixture `makeDealContext` — `scores`/`overallScore` retirés ; test « overallScore defaults » reconverti en « signalProfile verbal sans chiffre ».
+
+### Description
+Micro-étape P3 que le gate Codex avait EXIGÉ de traiter avant de clore P3 (subsystème Live Coaching, feature-flagged OFF mais rework réel, pas une suppression). L'orientation Live n'est plus jamais dérivée d'un score numérique ; le profil verbal reste restitué (orientation verbale = autorisée doctrine). Hors scope, notés pour micro-étapes P3 ultérieures (PAS oubliés) : `analysis-memo-full.tsx` (`memoData.signalProfile.score`/100 en UI), `api/negotiation/generate/route.ts` (injection score/overallScore/verdict synthesis dans le LLM de négociation), overview tab, legacy panel, listes pipeline, PDF, read-model/delta/compare. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; suite unit 4509 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3-c — Nettoyage des résidus de score dans analysis-v2
 
 ### Fichiers

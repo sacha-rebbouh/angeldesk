@@ -227,14 +227,11 @@ describe("compileDealContext", () => {
     expect(context.dealBasics.arr).toBe(1200000);
     expect(context.dealBasics.amountRequested).toBe(1500000);
     expect(context.dealBasics.valuationPre).toBe(9000000);
-    expect(context.scores).toEqual({
-      global: 91,
-      team: 83,
-      market: 79,
-      product: 77,
-      financials: 75,
-    });
-    expect(context.overallScore).toBe(91);
+    // Dé-scorisation (doctrine § 4) : aucune note de deal restituée. Le mock
+    // synthesis-deal-scorer ne porte qu'un `overallScore` legacy (sans verdict
+    // ni profil scoreless) → le bi-reader ne dérive AUCUNE orientation d'un
+    // score (= score caché interdit) → profil indisponible.
+    expect(context.signalProfile).toBe("Aucune analyse disponible");
     expect(context.negotiationStrategy).toBe("Push on terms.");
     expect(context.documentSummaries).toEqual([
       {
@@ -243,5 +240,22 @@ describe("compileDealContext", () => {
         keyClaims: ["€1.2M"],
       },
     ]);
+  });
+
+  it("derives the verbal signal profile from the verdict, never from a high score", async () => {
+    // Invariant « poisoned score » pour la surface Live : overallScore=91 (que
+    // l'ancien code score-based mappait vers « Signaux très favorables ») mais un
+    // verdict `alert_dominant` → l'orientation suit le verdict via le bi-reader,
+    // jamais le score. Preuve structurelle d'indépendance au score.
+    vi.mocked(loadResults).mockResolvedValue({
+      "synthesis-deal-scorer": {
+        success: true,
+        data: { overallScore: 91, verdict: "alert_dominant" },
+      },
+    });
+
+    const context = await compileDealContext("deal_1");
+
+    expect(context.signalProfile).toBe("Signaux d'alerte");
   });
 });
