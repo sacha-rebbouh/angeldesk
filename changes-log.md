@@ -1,6 +1,24 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P4-b2 — conditions-analyst : retrait de la note conditions (Option B)
+
+### Fichiers
+- `src/agents/tier3/conditions-analyst.ts` (−72) : top-level `score` (value/grade/breakdown) retiré — type `LLMConditionsResponse`, bloc `score` du prompt schema, construction dans `buildOutput` + fallback, `getGrade`, mention `score X/100` dans `alertSignal.justification`, `score` du return + import `AgentScore`. **Option B (gaté Codex)** : nouveau `findings.dimensionAssessment` `{criterion, justification}` (verbal UNIQUEMENT, aucune note) — demandé dans le prompt (4 critères Valorisation/Instrument/Protections/Gouvernance), mappé dans `buildOutput` (filtre + cap 4, fallback `[]`), `[]` en fallback no-conditions. Retrait de la **fuite LLM** du context-builder (poussait `Score X/100` des autres agents).
+- `src/agents/base-agent.ts` : `conditions-analyst` retiré de `standardStructuredAgents` + branche contrat SCORELESS dédiée (`meta/findings/redFlags/questions/alertSignal/narrative`, sans `score`).
+- `src/agents/types.ts` + `src/agents/type-modules/tier3.ts` : `ConditionsAnalystData.score` rendu OPTIONNEL (compat durable) ; `dimensionAssessment` ajouté à `ConditionsAnalystFindings` (2 défs).
+- `src/agents/tier3/schemas/conditions-analyst-schema.ts` (hors-runtime) : `score` optionnel + `dimensionAssessment` ajouté (`.optional().default([])`, cohérence schéma/type/prompt — flag Codex).
+- `src/agents/tier3/synthesis-deal-scorer.ts` (−11) : fuite LLM `extractConditionsData` retirée (`**Score conditions: X/100**` + breakdown, désormais morte ; findings/valuation/etc. verbaux conservés).
+- `src/agents/orchestrator/persistence.ts` + `src/app/api/deals/[dealId]/terms/route.ts` : `Deal.conditionsScore` neutralisé (`null` ; colonne droppée en P5) ; cache `conditionsAnalysis` verbal conservé.
+- `src/components/deals/conditions/types.ts` : `ScoreBreakdownItem` (weight/score) → `DimensionAssessmentItem` (criterion/justification verbal) ; `conditionsBreakdown` retypé.
+- `src/services/terms-normalization.ts` : `conditionsBreakdown` lit `findings.dimensionAssessment` puis **fallback legacy** `score.breakdown.map(criterion, justification)` pour snapshots historiques pré-P4.
+- `src/components/deals/conditions/conditions-analysis-cards.tsx` : prop `breakdown` retypé `DimensionAssessmentItem[]` (rendu criterion + justification inchangé — G4 « justifs par critère conservés »).
+- `src/agents/__tests__/conditions-analyst-e2e.test.ts` (−49) : assertions `data.score.*` retirées (scoreless), 2 tests renommés.
+
+### Description
+**Chantier dé-scorisation, P4-b2 (BORNÉE, gaté Codex APPROVE après 2 REQUEST_CHANGES productifs).** 2e producteur P4. Retrait de la **note conditions** (`score.value`/grade) + neutralisation `Deal.conditionsScore`. **Fourche tranchée par Codex = Option B** : la décision G4 « justifs par critère conservées » (hero card) imposait de préserver les justifications verbales qui vivaient dans `score.breakdown` → déplacées vers `findings.dimensionAssessment` (verbal pur), avec fallback legacy `score.breakdown` pour les snapshots historiques. Carve-out du contrat partagé (comme synthesis-deal-scorer en P4-a). **Différé LARGE/P5** : `structuredAssessment.trancheAssessments[].score` (sous-note par tranche, non restituée depuis G4). **Pas de bump `STEPWISE_GRAPH_VERSION`** (contrat évalué à la PRODUCTION, pas au replay ; lecteurs legacy préservés). tsc 0 ; conditions e2e + transform + prompt.guard + schemas + 2 pipelines + doctrine guards = 104+ verts ; suite complète verte dans le payload gate.
+
+---
 ## 2026-06-15 — Dé-scorisation — P4-b1 — team-investigator : retrait des notes par fondateur
 
 ### Fichiers
@@ -292,12 +310,3 @@ Même pattern que l'étape 1 (headline orientation × solidité, bi-reader score
 
 ### Description
 Pattern-setter du sous-chantier PDF (8 fichiers, ~136 occurrences score/100/grade/ScoreCircle). La « Confiance » globale est SUPPRIMÉE : l'axe 2 doctrine est la Solidité des preuves (déterministe), pas une auto-confiance LLM (anti-pattern fui). Aucune dérivation d'orientation depuis un score (garde-fou anti score-caché). Helpers PDF `recLabel`/`proofLabel` déjà créés (P2) — `proofLabel` wiré ici pour la 1ʳᵉ fois. Divergence temporaire assumée avec la decision-strip écran (encore en `aggregateOrientation` 5 valeurs) : le PDF consomme déjà la taxonomie doctrine 4 valeurs via le bi-reader (la garde-fou P3 l'exige). Producteurs (scores agents) intacts = P4. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3-f — Retrait de la carte « Score mémo : X/100 » du mémo UI (analysis-memo-full)
-
-### Fichiers
-- `src/components/deals/analysis-memo-full.tsx` : suppression du bloc JSX conditionnel (`memoData.signalProfile?.score != null`) qui rendait une carte « Score mémo » avec `signalProfile.score`/100. Composant rendu par `analysis-panel` (legacy) ET `analysis-preview-tabs`.
-
-### Description
-Note de deal restituée en UI = bannie (doctrine § 4). L'orientation reste affichée verbalement juste à côté via le Badge `recommendation` (`recommendationLabels[…].label`) — aucune perte d'information d'orientation. `signalProfile.openQuestions` reste consommé ailleurs (l.302) → aucun code mort introduit. Le champ producteur `signalProfile.score` existe encore dans le type (nettoyage producteur = P4) ; seule la RESTITUTION part (P3). Exécution directe de la décision verrouillée, pas un choix d'UX discrétionnaire. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; suite unit 4509 passed / 9 skipped / 0 failed.
