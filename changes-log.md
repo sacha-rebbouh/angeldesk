@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Doctrine (dé-scorisation P0) — « aucune note de deal restituée, jamais » + allowlist/banned-list
+
+### Fichiers
+- `docs-doctrine/angeldesk-strategic-pivot.md` : § 4 renommée « Restitution analytique — aucune note de deal, modèle à 2 axes verbal » (décision verrouillée 2026-06-12 datée + orientation dérivée des signaux/couverture/solidité, jamais d'un score caché) ; nouvelle § 4.1 allowlist/banned-list ; § 5 interdit durci (« Score global mono-axe » → « Toute note de deal restituée ») ; § 7 reframe Scoring ; date d'en-tête bumpée.
+- `CLAUDE.md` : principe 4 « Dérivation déterministe, aucune note de deal restituée » ; section « Restitution analytique » miroir + allowlist/banned-list ; reframe Scoring ; ligne « État de l'implémentation » → PLAN-DESCORING 7 phases.
+
+### Description
+P0 du chantier dé-scorisation (`PLAN-DESCORING.md`). Verrouille en doctrine : (a) « aucune note restituée » remplace « score subordonné » ; (b) allowlist/banned-list PRÉCISE — bannir les PATTERNS de note (overallScore, score global, grade A-F, Deal Score, x/100 près de score/verdict/recommendation) sans bannir les nombres légitimes (ARR, valo, croissance, percentile de métrique observable, signalIntensity interne, confiance sur fait précis). Contrat qu'appliqueront les source-guards de P6. Pure documentation (markdown) — tsc/vitest inchangés. Gate Codex : APPROVE direct (doctrine sans ambiguïté, allowlist correcte ; note non bloquante : harmoniser plus tard « confiance de thèse » du plan avec la formulation canonique « confiance sur fait précis »).
+
+---
 ## 2026-06-12 — Perf/Robustesse — Part 2 chantier memo-generator : LLM borné à 120s (fix racine de la boucle 300s)
 
 ### Fichiers

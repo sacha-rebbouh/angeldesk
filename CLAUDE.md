@@ -26,7 +26,7 @@ Définition stratégique de référence : *"Angel Desk est un environnement anal
 1. **Valeur dès le premier dossier** — L'utilisateur voit de la valeur dès le premier dossier.
 2. **Le contexte prime** — Pas d'analyse sans contexte (Funding DB cible 5K+ deals, benchmarks sectoriels datés, couche evidence-first interne).
 3. **Discipline anti-faux-positifs** — Les signaux d'alerte doivent viser : source citée, fiabilité/provenance explicite, et cross-référence documentaire ou externe pertinente lorsque disponible. Discipline du **processus de détection**, pas garantie de résultat.
-4. **Scoring déterministe** — Agrégation de score déterministe par formule TypeScript sur les sous-scores et signaux disponibles. Certains sous-scores peuvent provenir de sorties LLM ; la reproductibilité bout-en-bout reste à tester. Les variations entre versions doivent être explicables par de nouvelles preuves ou un changement de méthodologie tracé, pas par un jugement opaque (cf. § 8 target_scoring_model + § 20 deterministic_scoring).
+4. **Dérivation déterministe, aucune note de deal restituée** — Angel Desk ne restitue plus jamais de note de deal (ni 0-100, ni grade A-F, ni percentile de score) ; cf. § « Restitution analytique — aucune note de deal ». L'orientation du signal et la solidité des preuves sont dérivées par formule TypeScript déterministe sur des signaux evidence-first (intensité des signaux, couverture par dimension, provenance, fraîcheur, contradiction, fiabilité source), jamais d'un score numérique caché. Le numérique reste autorisé en mécanique interne non restituée (tri, budgets, qualité d'extraction, benchmarks de métriques observables). Les variations entre versions doivent être explicables par de nouvelles preuves ou un changement de méthodologie tracé, pas par un jugement opaque.
 5. **Evidence-first** — Les affirmations factuelles critiques sont rattachées à leur source, leur date disponible ou l'absence de date explicitée, leur fiabilité. Contradictions détectées exposées. Zones d'incertitude. Fraîcheur tracée.
 
 ---
@@ -67,21 +67,45 @@ Cette règle est **vérifiable mécaniquement** : sanitizers de labels, linters 
 | **"Evidence Engine"** en public | Jargon interne | "Les affirmations factuelles critiques rattachées à leur source, leur date disponible ou l'absence de date explicitée, leur fiabilité ; contradictions détectées ; zones d'incertitude ; fraîcheur tracée" |
 | **"Le meilleur partenaire d'aide à la décision parfaite"** | "Le meilleur" + "parfaite" = oraculaire | "Le copilote analytique des investisseurs privés" |
 
-### Scoring à 2 axes — orientation × solidité des preuves
+### Restitution analytique — aucune note de deal, modèle à 2 axes verbal
 
-Cible produit : remplacer le scoring mono-axe (*Excellent / Solide / À approfondir / Points d'attention / Zone d'alerte*) par un modèle à 2 axes indépendants. Un dossier avec signaux d'alerte bien documentés ≠ un dossier avec signaux favorables mal sourcés. Les deux doivent être distinguables.
+**Décision verrouillée (2026-06-12, Sacha)** : Angel Desk ne restitue **plus jamais de note de deal** — ni score 0-100, ni grade A-F, ni percentile de score, ni « Deal Score ». Même geste doctrinal que le retrait des agents exit-strategist / scenario-modeler : *« on ne vient pas scorer un deal, on vient l'analyser »*. Cela **remplace** l'ancien framing *« score subordonné »* (le score restait affiché, plus petit) par *« aucune note restituée »*. L'orientation n'est plus dérivée d'un score caché (anti-pattern `synthesis-deal-scorer` historique) mais de l'intensité des signaux, de la couverture par dimension et de la solidité des preuves.
+
+Cible produit : remplacer le scoring mono-axe (*Excellent / Solide / À approfondir / Points d'attention / Zone d'alerte*) par un modèle à 2 axes indépendants, **tous deux VERBAUX (aucun nombre de note rendu)**. Un dossier avec signaux d'alerte bien documentés ≠ un dossier avec signaux favorables mal sourcés. Les deux doivent être distinguables.
 
 | Axe | Valeurs | Source de la valeur |
 |---|---|---|
-| **Orientation du signal** | favorable / contrasté / alerte / non exploitable | Synthèse des constats agents, avec justification sourcée |
+| **Orientation du signal** | favorable / contrasté / alerte / non exploitable | Synthèse des constats agents, justification sourcée — dérivée de l'intensité des signaux + couverture par dimension + solidité, **jamais d'un score numérique caché** |
 | **Solidité des preuves** | solide / partielle / contradictoire / insuffisante | **Formule TypeScript déterministe** sur signaux evidence-first (provenance, fraîcheur, contradiction, couverture documentaire, fiabilité source) |
 
 **Critique** : l'axe 2 s'appelle **"Solidité des preuves"** et **PAS "Confiance"**. *"Confiance"* recréerait l'anti-pattern fui — *"une machine qui dit 'je suis confiante'"*. La donnée doit être objective, pas une auto-évaluation LLM.
+
+**`non exploitable`** = décision de COUVERTURE explicite (cap table manquante, extraction faible, sources contradictoires, agents critiques échoués), jamais un fallback flou vers `contrasté`.
 
 Cas distincts qui ne sont plus conflués :
 - *Mauvais dossier bien documenté* = Signaux d'alerte × Preuves solides → les signaux d'alerte sont fortement étayés
 - *Bon dossier mal sourcé* = Signaux favorables × Données insuffisantes → tendance positive avec caveat majeur
 - *Pas exploitable* = Non exploitable × Insuffisante → pas même de signal à interpréter
+
+#### Numérique interne autorisé vs note de deal bannie (allowlist / banned-list)
+
+L'interdit porte sur la **note de deal restituée**, PAS sur tout nombre (Option B : numérique toléré en mécanique INTERNE non restituée).
+
+**Banni — toute note de deal, partout où elle est restituée (UI, PDF, chat, exports, contextes LLM réinjectés via `previousResults`)** :
+- `overallScore`, « score global », « Deal Score », « note du deal »
+- grade A-F / A+ / lettres de notation d'un deal
+- percentile **de score** (« meilleur que 78 % des deals »)
+- tout `x/100`, `x/10`, `x sur 100` à proximité de score / verdict / recommendation / orientation
+- sous-scores numériques par dimension restitués (`dimensionScores[].score`)
+
+**Autorisé — numérique de mécanique interne (jamais restitué comme note) OU métrique observable du deal** :
+- tri / classement interne, budgets de coût, seuils de qualité d'extraction
+- `signalIntensity` (comptes de red flags par sévérité) — interne, sert à dériver l'orientation
+- métriques **OBSERVABLES** du deal restituées telles quelles : ARR, MRR, croissance, valorisation, runway, montant levé, taille de marché
+- percentile d'une **métrique observable** (« valorisation dans le P75 du secteur ») = benchmark de marché, pas une note de deal
+- niveau de confiance d'un agent sur un **fait précis** (pas une note globale du deal)
+
+Règle d'arbitrage : un nombre est **banni** s'il agrège une appréciation du deal en une note ; il est **autorisé** s'il décrit une grandeur observable du deal ou une mécanique interne non rendue. C'est ce contrat que les source-guards (P6) feront respecter — bannir les PATTERNS de note, pas tous les nombres.
 
 ### Règle d'or — test rapide
 
@@ -113,7 +137,7 @@ L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne
 | **Live Coaching** | *"IA temps réel — quoi répondre au fondateur"* | *"Vérification des preuves en temps réel pendant le call — fait remonter contradictions deck/fondateur, benchmarks dépassés, infos nouvelles, questions à poser maintenant."* |
 | **22 experts sectoriels** | *"Aucun analyste n'est expert en 22 secteurs"* | *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)."* |
 | **43 agents** | Accroche principale | *"Architecture en 4 couches — extraction, analyse horizontale (12 lentilles), expertise sectorielle (22 bibliothèques), synthèse et challenge (6 mécanismes). 43 agents / composants selon convention § 7 (3 + 12 + 22 + 6 ; thesis-reconciler conditionnel hors total), sous le capot."* |
-| **Scoring** | Score global 0-100 en écran principal | Score subordonné. Dimensions + solidité des preuves + sources + contradictions + questions montrés en premier. |
+| **Scoring** | Score global 0-100 / « score subordonné » | **Aucune note de deal restituée, jamais** (cf. § Restitution analytique). Orientation × solidité des preuves (verbal) + dimensions + sources + contradictions + questions montrés en premier. |
 
 ### Où ça s'applique concrètement
 
@@ -137,7 +161,7 @@ L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne
 
 **Reste à faire (cascade en cours)** :
 - Cascade documentaire : `reference.yaml`, `product-overview.md`, `exec-summary.md`, `pitch-deck.md`, slides — à aligner sur la nouvelle doctrine
-- Chantier scoring 2 axes : schema synthesis-deal-scorer, ui-configs, ScoreBadge, pdf-helpers, prompts agents
+- Chantier dé-scorisation (`PLAN-DESCORING.md`, 7 phases P0→P6, gate Codex par phase) : plus aucune note de deal restituée. P0 = doctrine + allowlist/banned-list ; P1 = fondation compat (type AnalysisSignalProfile, mapper 5→4, bi-reader, scrubber LLM) ; P2 = synthèse scoreless + budgets deadline-aware ; P3 = consumers/UI(analysis-v2)/PDF/chat ; P4 = retrait des scores producteurs ; P5 = migration DB ; P6 = guards + replay + re-test prod
 - Surfaces publiques (landing, pricing, blog) — à reprendre APRÈS fermeture du gate de release actif
 - Purge finale des vestiges oraculaires dans les prompts Tier 3 (synthesis-deal-scorer, memo-generator, devils-advocate)
 
