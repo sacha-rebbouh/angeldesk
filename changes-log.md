@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation cluster — étape G2 — dashboard : suppression du KPI « Score moyen » + métriques portfolio observables
+
+### Fichiers
+- `src/app/(dashboard)/dashboard/page.tsx` : (1) carte KPI « Score moyen » (`avgScore/100` + « N deals scorés ») **supprimée**. (2) data : calcul `scores`/`avgScore` retiré ; `sectorDistribution` **découplé de globalScore** (secteurs distincts de tout le portefeuille, observable) ; `dealsWithScoresCount` → `portfolioDealsCount` (= `metricDeals.length`, observable) ; select Prisma `globalScore` retiré de `metricDeals` ; appel mort `loadCanonicalDealSignals(signals)` (servait aux scores) retiré ; commentaire cap portfolio mis à jour. (3) carte « Métriques Portfolio » : gate `avgScore !== null` → `sectorDistribution.length > 0` ; tuile « Deals scorés » → « Deals suivis ». **Conservé** : « Secteurs couverts ».
+
+### Description
+Directive Sacha : dégager tous les scores. Dashboard scoreless ; métriques portfolio = observables (secteurs couverts, deals suivis). **Gate Codex APPROVE** (nit commentaire stale corrigé). Note hors-scope : `recentDeals` passe encore `globalScore` à `resolveCanonicalDealFields` (input du read-model canonique, **non restitué** par `RecentDealsList` — vérifié) → carry interne, sweep canonical-read-model/P5. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; eslint dashboard clean ; doctrine guards 27 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation cluster — étape G1 — comparaison de deals : suppression pure des notes /100
 
 ### Fichiers
