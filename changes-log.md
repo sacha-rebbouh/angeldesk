@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 8/N (C1) — tier1-results.tsx : ScoreBadge par carte d'agent → chip d'intensité verbal
+
+### Fichiers
+- `src/components/deals/tier1-results.tsx` : nouveau composant `Tier1SignalChip` (chip verbal d'intensité Tier 1, lit `signalIntensity` natif + fallback read-only `alertSignal.recommendation` via `resolveTier1SignalIntensity` / `TIER1_SIGNAL_INTENSITY_LABELS` / `TIER1_SIGNAL_INTENSITY_BADGE_CLASS`). Les **12 `ScoreBadge` par carte d'agent** (financial, team, competitive, deck-crédibilité, market, tech-stack, tech-ops, legal, cap-table, gtm, customer, question-master — note /100, bannie) remplacés par ce chip. Variable morte `score` (carte market) induite par le changement retirée.
+
+### Description
+Étape 1/4 du gros fichier tier1-results.tsx (3885 l) : retrait des notes /100 par carte d'agent, remplacées par le signal verbal Tier 1 (mêmes libellés/classes que `Tier1AlertSignalDisplay`). Dérivation **score-indépendante** (aucune lecture de `score.value`). Le `ScoreBadge` agrégé du résumé (`avgScore`) + l'import restent volontairement (étapes C3/C4). **Gate Codex APPROVE** : chip scoreless confirmé, doublon chip-en-tête / bloc-corps sur 5 cartes acceptable (scan rapide en tête + justification dans le corps = densité duale de l'ancien, à traiter en polish UX éventuel, pas un problème doctrine). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 77 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 7/N — suppression du reader mort score-utils.ts
 
 ### Fichiers

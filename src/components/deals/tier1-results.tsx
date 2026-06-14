@@ -284,6 +284,32 @@ const Tier1AlertSignalDisplay = memo(function Tier1AlertSignalDisplay({
   );
 });
 
+/**
+ * Dé-scorisation P3 — chip d'intensité verbal en tête de carte agent, en
+ * remplacement de l'ancien `ScoreBadge` (note /100, bannie). Aucune note de
+ * deal restituée : on affiche le signal verbal Tier 1 (`signalIntensity` natif,
+ * fallback read-only sur `alertSignal.recommendation`) avec les mêmes libellés
+ * et classes que `Tier1AlertSignalDisplay` (cf. `ui-configs.ts`).
+ */
+const Tier1SignalChip = memo(function Tier1SignalChip({
+  signalIntensity,
+  recommendation,
+}: {
+  signalIntensity: string | null | undefined;
+  recommendation?: string | null;
+}) {
+  const intensity = resolveTier1SignalIntensity(signalIntensity, recommendation);
+  const label = intensity
+    ? TIER1_SIGNAL_INTENSITY_LABELS[intensity]
+    : ALERT_SIGNAL_LABELS[recommendation ?? ""] ?? "À QUALIFIER";
+  const badgeClass = intensity ? TIER1_SIGNAL_INTENSITY_BADGE_CLASS[intensity] : "bg-muted text-muted-foreground";
+  return (
+    <Badge variant="outline" className={cn("text-xs font-semibold uppercase tracking-wide", badgeClass)}>
+      {label}
+    </Badge>
+  );
+});
+
 // Financial Auditor Card - Rich display
 const FinancialAuditCard = memo(function FinancialAuditCard({
   data,
@@ -318,7 +344,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
                 limitations={data.meta?.limitations}
               />
             )}
-            <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
           </div>
         </div>
         {/* Summary */}
@@ -684,7 +710,7 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Background check et complémentarité</CardDescription>
       </CardHeader>
@@ -837,7 +863,7 @@ const CompetitiveIntelCard = memo(function CompetitiveIntelCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Paysage concurrentiel et moat</CardDescription>
       </CardHeader>
@@ -972,7 +998,7 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
         <div className="p-3 rounded-lg bg-muted">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium">Crédibilité</span>
-            <ScoreBadge score={data.score?.value ?? 0} />
+            <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
           </div>
           <p className="text-sm text-muted-foreground">{data.narrative?.summary}</p>
         </div>
@@ -1104,7 +1130,6 @@ const MarketIntelCard = memo(function MarketIntelCard({
   onShowTrace?: () => void;
 }) {
   const findings = data?.findings;
-  const score = data?.score;
   const narrative = data?.narrative;
   const redFlags = data?.redFlags;
   const timingAssessmentColors: Record<string, string> = {
@@ -1138,7 +1163,7 @@ const MarketIntelCard = memo(function MarketIntelCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data?.signalIntensity} recommendation={data?.alertSignal?.recommendation} />
         </div>
         <CardDescription>Validation TAM / SAM / SOM et timing</CardDescription>
       </CardHeader>
@@ -1269,7 +1294,7 @@ const TechStackDDCard = memo(function TechStackDDCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Stack technique, scalabilité, dette</CardDescription>
       </CardHeader>
@@ -1421,7 +1446,7 @@ const TechOpsDDCard = memo(function TechOpsDDCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Maturité, équipe, sécurité, IP</CardDescription>
       </CardHeader>
@@ -1602,7 +1627,7 @@ const LegalRegulatoryCard = memo(function LegalRegulatoryCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Structure juridique et compliance</CardDescription>
       </CardHeader>
@@ -1733,7 +1758,7 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
 
               />
             )}
-            <ScoreBadge score={scoreValue ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={signalIntensity} recommendation={alertSignal?.recommendation} />
           </div>
         </div>
         <CardDescription>Dilution, terms, investisseurs</CardDescription>
@@ -2124,7 +2149,7 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
 
               />
             )}
-            <ScoreBadge score={scoreValue ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={signalIntensity} recommendation={alertSignal?.recommendation} />
           </div>
         </div>
         <CardDescription>Go-to-market et efficacité commerciale</CardDescription>
@@ -2495,7 +2520,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
 
               />
             )}
-            <ScoreBadge score={scoreValue ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={signalIntensity} recommendation={alertSignal?.recommendation} />
           </div>
         </div>
         <CardDescription>Base clients et PMF signals</CardDescription>
@@ -3015,7 +3040,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                 {READINESS_LABELS[tier1Summary.overallReadiness] ?? tier1Summary.overallReadiness.replace(/_/g, " ")}
               </Badge>
             )}
-            <ScoreBadge score={scoreValue ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={signalIntensity} recommendation={alertSignal?.recommendation} />
           </div>
         </div>
         <CardDescription>Questions killer, négociation et roadmap DD</CardDescription>
