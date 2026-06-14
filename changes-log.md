@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation cluster — étape G1 — comparaison de deals : suppression pure des notes /100
+
+### Fichiers
+- `src/components/deals/deal-comparison.tsx` : retrait des 5 lignes de notes /100 (Score Global/Équipe/Marché/Produit/Financier) + `DIMENSION_LABELS` + memo `bestScores` + footnote « Meilleur score » + champs score du type `DealComparisonData` + import `useMemo` devenu inutile. Lignes **observables conservées** : Red Flags, Valorisation, ARR, Croissance.
+- `src/app/api/deals/compare/route.ts` : retrait des 5 `*Score` du select Prisma + de toute la machinerie qui ne servait qu'à extraire les scores (thèses, analyses, `pickCanonicalAnalysis`, `loadResults`, `extractAnalysisScores`, `resultsByAnalysisId`, `analysisScores`, `canFallbackToDealScores`). La route ne charge plus que les current facts (valo/ARR/croissance) + redFlags → simplification + suppression du chargement de blobs `results` multi-MB pour la comparaison.
+- `src/app/api/deals/compare/__tests__/route.test.ts` : réécrit pour le contrat scoreless (assert métriques observables + `redFlagCount`/`criticalRedFlagCount` + assert explicite ABSENCE des champs score = guard anti-régression).
+
+### Description
+Directive Sacha (suite AskUserQuestion) : **on dégage tous les scores, pas de remplacement**. La comparaison reste sur les métriques observables. **Gate Codex APPROVE** : comparaison scoreless de bout en bout, aucune note restituée, machinerie morte retirée. Note hors-scope : un `globalScore` subsiste dans `src/components/deals/types.ts` (type interne, à traiter dans le sweep cluster/P5). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; compare route test 2 passed ; doctrine guards 27 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 14/N (D) — suppression des composants score partagés orphelins (clôt la cible du plan)
 
 ### Fichiers
