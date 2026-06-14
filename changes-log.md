@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P2-d.2 — Budget deadline-aware du step synthesis-deal-scorer (fix racine boucle 300s) — P2 COMPLET
+
+### Fichiers
+- `src/agents/tier3/synthesis-deal-scorer.ts` : NOUVEAU const module `SYNTHESIS_LLM_CALL_OPTIONS = { timeoutMs: 100_000, disableModelFallback: true, maxRetries: 1 }` passé aux DEUX appels `llmCompleteJSON<LLMSynthesisResponse>` (1er + retry in-execute conditionnel). Constructeur `config.timeoutMs` 300000 → 220000.
+- `src/agents/tier3/__tests__/synthesis-deal-scorer-llm-budget.guard.test.ts` : NOUVEAU source-guard (const borné présent ; tous les appels `llmCompleteJSON<LLMSynthesisResponse>` bornés ; config 220000 < plafond Vercel 300000 ; marge Vercel ≥ 60s ; pire cas 2 appels in-execute < config).
+
+### Description
+Dernier sous-bloc de P2-d → **P2 EST COMPLET**. Fix racine de la boucle 300s du step de synthèse. Mécanisme (vérifié dans base-agent.ts) : `run()` enveloppe `execute()` dans `withTimeout(config.timeoutMs)` (l.415) et NE re-throw PAS — il retourne `success:false` (catch l.455-494). La boucle prod (`cmq9lg9un`) venait de `config.timeoutMs == 300000 == plafond Vercel` : le kill plateforme gagnait la course contre le `withTimeout` gracieux, mid-write du snapshot → step tué avant écriture → retry Inngest → boucle. Avec config 220s < 300s, le timeout gracieux gagne, `success:false` est rendu et le snapshot s'écrit bien avant 300s. Bornage PAR APPEL (100s) + `disableModelFallback:true` (coupe le failover cross-modèle long, router.ts:856 = une génération complète de plus) + `maxRetries:1` (retry router same-model borné). Pire cas execute ~210s (2×100s + F37 percentile Promise.race 10s) < config 220s ; marge Vercel 80s pour rehydrate+write. Durabilité : `config.timeoutMs` n'alimente que le wrapper run(), le défaut per-call timeout et le label `promptVersion` des traces — absent du chemin durable (grep `promptVersion`/`timeoutMs` dans orchestrator/orchestration/inngest = vide) → step ids/topologie/clé durable inchangés → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Volontairement NON touché (scope ultérieur) : `config.maxRetries:2` (mort sur ce chemin — non lu par run() ni les helpers LLM ; levier effectif = per-call), retry in-execute (retrait P4 avec dimensionScores), bloc F37 percentile score-based (P5). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; suite unit 4502 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P2-d.1 — Retrait de l'exception 140k de budget documentaire (synthesis / memo / devils)
 
 ### Fichiers

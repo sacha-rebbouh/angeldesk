@@ -305,6 +305,27 @@ export interface SynthesisDealScorerResult extends AgentResult {
 // AGENT IMPLEMENTATION
 // =============================================================================
 
+/**
+ * Budget wall-clock des appels LLM de synthèse (dé-scorisation P2-d, fix racine de la
+ * boucle 300s). L'invocation Vercel du step `synthesis-deal-scorer` porte la réhydratation
+ * du snapshot stepwise + execute() + l'écriture du snapshot suivant. Sans bornage PAR APPEL,
+ * un seul appel LLM (jusqu'à 3 tentatives router + fallback model-aware implicite = une
+ * génération complète de plus sur un autre modèle) pouvait consommer tout le budget 300s →
+ * kill Vercel mid-write → boucle de retries Inngest (post-mortem cmq9lg9un…).
+ *
+ * - `timeoutMs: 100_000` borne CHAQUE appel (l'in-execute retry en fait au plus 2, gardés par
+ *   `canRetry` ; 2×100s + F37 ≈ 210s < config.timeoutMs 220s).
+ * - `disableModelFallback: true` coupe le failover cross-modèle long (cf. reconciler 6752c9e).
+ * - `maxRetries: 1` borne le retry router same-model (2 tentatives partageant les 100s).
+ *
+ * config.timeoutMs (220_000, < plafond Vercel 300s) garde la marge pour rehydrate/write snapshot.
+ */
+const SYNTHESIS_LLM_CALL_OPTIONS = {
+  timeoutMs: 100_000,
+  disableModelFallback: true,
+  maxRetries: 1,
+} as const;
+
 export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData, SynthesisDealScorerResult> {
   constructor() {
     super({
@@ -312,7 +333,10 @@ export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData,
       description: "Synthèse finale: score pondéré + recommandation d'investissement basée sur tous les agents",
       modelComplexity: "complex",
       maxRetries: 2,
-      timeoutMs: 300000,
+      // Dé-scorisation P2-d : 220s < plafond Vercel 300s → le timeout gracieux de run()
+      // gagne la course contre le kill plateforme et laisse écrire le snapshot avant 300s
+      // (fix racine boucle Inngest). Bornage par appel : SYNTHESIS_LLM_CALL_OPTIONS.
+      timeoutMs: 220000,
       dependencies: [
         // Tier 1 - Analysis agents
         "deck-forensics",
@@ -498,7 +522,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
     // Time-budget aware: only retry if we have enough time left (< 50% of timeout used).
     let data: LLMSynthesisResponse;
     const callStart = Date.now();
-    const firstAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt);
+    const firstAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt, SYNTHESIS_LLM_CALL_OPTIONS);
     const firstCallMs = Date.now() - callStart;
     const firstBreakdown = firstAttempt.data.score?.breakdown ?? firstAttempt.data.dimensionScores ?? [];
 
@@ -512,7 +536,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
           `[synthesis-deal-scorer] LLM returned ${firstBreakdown.length} dimension scores — retrying (${Math.round(timeRemaining / 1000)}s remaining)`
         );
         const retryPrompt = prompt + `\n\n---\n\n**INSTRUCTION CRITIQUE**: Ta réponse DOIT inclure "score.breakdown" avec AU MINIMUM 6 dimensions (Team, Financials, Market, Product/Tech, GTM/Traction, Competitive), chacune avec "criterion", "weight", "score" et "justification". Sans ce breakdown, l'analyse est inutilisable.`;
-        const retryAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(retryPrompt);
+        const retryAttempt = await this.llmCompleteJSON<LLMSynthesisResponse>(retryPrompt, SYNTHESIS_LLM_CALL_OPTIONS);
         data = retryAttempt.data;
       } else {
         console.warn(
