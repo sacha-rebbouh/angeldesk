@@ -25,6 +25,7 @@
 | 2026-06-03 | PRÉCONDITION | Reconduit le pattern "raffiner le graphe stepwise EN PLACE" (splits d-4..d-7) sans réévaluer sa précondition (flag OFF) — désormais ON ; risque cross-deploy noté tôt PUIS écarté, Codex l'a escaladé en blocking |
 | 2026-06-11 | RECHERCHE | Affirmé "aucun AUTRE chemin n'écrit Deal.growthRate" depuis un grep `growthRate:` (object-literal) sur-filtré ; raté l'assignation par propriété `updateData.growthRate = info.growthRateYoY` (persistence orchestrateur) — Codex l'a trouvée au 1er tour du gate |
 | 2026-06-12 | EXÉCUTION | `codex exec` lancé avec prompt en argument sans TTY → process gelés 0% CPU ~50 min, annoncé « ça tourne » sur la foi du statut `running` ; fix = pattern stdin/-o du gate + vérif CPU/sortie sous 30 s |
+| 2026-06-14 | COMMUNICATION | Proposé des remplacements "score-like" en question produit alors que la directive était « dégager tous les scores » (sur-généralisation Q1/Q2, sur-sollicitation) |
 
 ---
 
@@ -207,3 +208,11 @@
 - **Comment corrigé** : `ps aux` a montré 0:00.01 de temps CPU après 45 min → kill des deux, relance avec le pattern stdin/-o du gate, et vérification à +20 s que les events logs croissent (193 KB / 95 KB) et que le CPU est consommé.
 - **Impact** : ~50 min d'attente perdue pour Sacha (3 relances « on en est où ? / Alora ? »).
 - **Lesson** : pour tout `codex exec` hors gate, reprendre l'invocation EXACTE du helper éprouvé (prompt par stdin, `-o` pour la sortie, `--color never`). Et pour TOUT process long lancé en arrière-plan : vérifier sous 30 s qu'il consomme du CPU ou que sa sortie croît — `running` n'est pas une preuve de progrès.
+
+### 2026-06-14 — COMMUNICATION — Proposé des remplacements "score-like" en question produit alors que la directive était "dégager tous les scores"
+- **Contexte** : chantier dé-scorisation, cluster read-model/delta/compare. Sacha avait déjà répondu Q1 (overview → BadgePair) et Q2 (listes → compteur de signaux) plus tôt. Arrivé sur la comparaison de deals (`deal-comparison.tsx`, 5 lignes de notes /100) et le KPI dashboard « Score moyen », j'ai posé un `AskUserQuestion` batché offrant des options de REMPLACEMENT (« intensité par dimension », « 1 ligne orientation », « distribution d'orientation »).
+- **Erreur** : traiter « par quoi remplacer le score » comme une vraie question produit, et proposer des artefacts qui RESSEMBLENT à du scoring (comparaison dimension-par-dimension, distribution agrégée). Sacha : « JAI DIT QUON DÉGAGE TOUS LES SCORES CEST TOUT LE PRINCIPE… ». La réponse évidente était : supprimer, sans rien réinventer.
+- **Cause racine du raisonnement** : sur-généralisation des réponses Q1/Q2 (où un remplacement verbal mono-signal — BadgePair / compteur — avait du sens dans un slot per-deal) à des surfaces où il n'y a PAS de slot mono-signal naturel (tableau de comparaison multi-deals, KPI portefeuille). J'ai inféré « il faut toujours proposer un remplacement » alors que la directive doctrinale de fond était « retirer la note ». Sur-sollicitation : poser une question là où l'intention était déjà tranchée.
+- **Comment corrigé** : Sacha a recadré sèchement. Bascule en suppression pure (G1 : retrait des 5 lignes + machinerie route, observables conservés ; gate APPROVE). Plus de question produit pour ce type de cas.
+- **Impact** : 1 aller-retour de friction + agacement utilisateur.
+- **Lesson** : sur un chantier dont le PRINCIPE est « retirer X », le défaut est SUPPRIMER X, pas proposer un substitut. Ne réintroduire un remplacement verbal que s'il existe un slot mono-signal évident (overview BadgePair, chip per-deal) ET sans recréer une lecture score-like (comparaison par dimension, moyenne, distribution = scoring déguisé). Ne poser une question produit que s'il y a une vraie fourche NON déjà tranchée par la directive de fond ; sinon, supprimer et continuer.
