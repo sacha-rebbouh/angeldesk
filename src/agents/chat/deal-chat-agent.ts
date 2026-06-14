@@ -19,7 +19,7 @@ import type {
   LiveSessionContextData,
 } from "@/services/chat-context";
 import { sanitizeForLLM } from "@/lib/sanitize";
-import { scrubAgentScoreData } from "@/services/signal-profile";
+import { scrubAgentScoreData, stripDealScoreMentions } from "@/services/signal-profile";
 import {
   retrieveContext,
   type RetrievedContext,
@@ -713,7 +713,13 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
         preserveNewlines: true,
         warnOnSuspicious: true,
       });
-      history += `\n**${role}**: ${sanitizedContent}\n`;
+      // Dé-scorisation : scrub les mentions de note dans les réponses ASSISTANT
+      // historiques (générées avant la bascule, ex. « Score : 81/100 ») avant de
+      // les réinjecter dans le prompt ; les messages UTILISATEUR restent intacts
+      // (ce sont ses mots propres, pas une note que nous restituons).
+      const content =
+        msg.role === "user" ? sanitizedContent : stripDealScoreMentions(sanitizedContent);
+      history += `\n**${role}**: ${content}\n`;
     }
 
     return history;
@@ -1145,14 +1151,17 @@ Reponds en JSON:
             includeScores: !context.thesis || context.thesis.thesisBypass,
           }
         );
-        retrievedContextPrompt = this.buildRetrievedContextPrompt(retrievedCtx);
+        // Dé-scorisation : scrub des mentions de note au niveau du bloc de
+        // contexte assemblé (summaries/findings/red flags historiques peuvent
+        // contenir « Score : X/100 »). N'altère ni le system prompt ni la question.
+        retrievedContextPrompt = stripDealScoreMentions(this.buildRetrievedContextPrompt(retrievedCtx));
         console.log(`[DealChatAgent] Retrieved context for intent ${intent}: ${retrievedCtx.facts.length} facts, ${retrievedCtx.agentResults.length} agent results, ${retrievedCtx.redFlags.length} red flags`);
       } catch (retrieveError) {
         console.warn("[DealChatAgent] Failed to retrieve context, continuing with basic context:", retrieveError);
       }
 
       // Step 3: Build full prompt
-      const contextPrompt = this.buildContextPrompt();
+      const contextPrompt = stripDealScoreMentions(this.buildContextPrompt());
       const historyPrompt = this.buildConversationHistory();
       const intentGuidance = this.getIntentGuidance(intent);
 

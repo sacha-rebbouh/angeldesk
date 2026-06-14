@@ -288,6 +288,60 @@ export function scrubAllScoresForLLMContext<R extends Record<string, unknown>>(r
   return cloned as R;
 }
 
+/**
+ * Retire les MENTIONS de note de deal d'un TEXTE LIBRE (ex. `Analysis.summary`
+ * persisté AVANT la dé-scorisation, qui peut encore contenir « Score global :
+ * 81/100 », « note de 72/100 », « Grade B »). Les scrubbers ci-dessus retirent
+ * des CHAMPS d'objet ; celui-ci retire des PATTERNS dans une chaîne, avant
+ * restitution (export RGPD) ou réinjection dans un contexte LLM (chat).
+ *
+ * Ciblé sur les patterns de NOTE (X/100, score/note + qualifieur deal, grade
+ * A-F) pour éviter de toucher les métriques OBSERVABLES (pourcentages, montants,
+ * « 9/10 » de satisfaction). Idempotent, pur.
+ */
+export function stripDealScoreMentions(text: string): string {
+  if (!text) return text;
+  return text
+    // « score … 81/100 » / « note … 72/100 »
+    .replace(/\b(?:score|note)\b[^.\n;]{0,40}?\b\d{1,3}\s*\/\s*100\b/gi, "")
+    // « score global/final/du deal … 81 » (sans /100)
+    .replace(
+      /\b(?:score|note)\s+(?:global(?:e)?|final(?:e)?|du?\s+deal|d['’e]?\s*investissement)\b[^.\n;]{0,20}?\b\d{1,3}\b/gi,
+      ""
+    )
+    // « 81/100 » nu
+    .replace(/\b\d{1,3}\s*\/\s*100\b/g, "")
+    // « Grade : B » / « grade A »
+    .replace(/\bgrade\b\s*:?\s*[A-F][+-]?\b/gi, "")
+    // nettoyage : parenthèses/labels orphelins + espaces doublés + ponctuation isolée
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.,;:])/g, "$1")
+    // ponctuation orpheline en tête de chaîne (laissée par un retrait initial)
+    .replace(/^[\s.,;:–—-]+/, "")
+    .trim();
+}
+
+/**
+ * Applique `stripDealScoreMentions` récursivement à toutes les chaînes d'une
+ * structure (objet/array), pour scruber les champs texte historiques d'un
+ * payload restitué (ex. red flags de l'export RGPD : title/description/evidence/
+ * questionsToAsk). Ne recurse QUE dans les objets simples et les arrays — laisse
+ * intacts Date, Decimal Prisma et autres instances de classe. Pur.
+ */
+export function deepStripScoreMentions<T>(value: T): T {
+  if (typeof value === "string") return stripDealScoreMentions(value) as T;
+  if (Array.isArray(value)) return value.map((entry) => deepStripScoreMentions(entry)) as T;
+  if (isRecord(value) && (value.constructor === Object || value.constructor === undefined)) {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      out[key] = deepStripScoreMentions(entry);
+    }
+    return out as T;
+  }
+  return value;
+}
+
 // ============================================================================
 // 4. Bi-reader durable old/new
 // ============================================================================

@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation cluster — étape G3 — export RGPD + contexte LLM chat scoreless (+ scrubber texte libre)
+
+### Fichiers
+- `src/services/signal-profile/index.ts` : nouveaux scrubbers de **texte libre** `stripDealScoreMentions(text)` (retire les patterns de NOTE : `X/100`, `score/note` qualifié deal, `grade A-F` ; préserve les observables %/montants/ratios non-/100 ; idempotent) et `deepStripScoreMentions(value)` (récursif, ne recurse que dans objets simples + arrays, laisse intacts Date/Decimal).
+- `src/app/api/user/export/route.ts` (RGPD) : retrait des 7 `*Score` du select + des champs score par deal + du champ `scores` par analyse + de la machinerie `loadResults`/`extractAnalysisScores` (morte). `analysis.summary` scrubé via `stripDealScoreMentions` ; red flags historiques via `deepStripScoreMentions` (summaries/red flags persistés avant la bascule pouvaient contenir « Score : X/100 »).
+- `src/agents/chat/deal-chat-agent.ts` : **scrub au niveau du bloc de contexte** — `contextPrompt` (l.1158) et `retrievedContextPrompt` (l.1151) passés par `stripDealScoreMentions` (couvre agentSummaries/keyFindings/findings/fallback summary/analysisSummary) ; `buildConversationHistory` scrub les messages **ASSISTANT** historiques (user intact). System prompt déjà sans note, `scrubAgentScoreData` (P3-a) sur les fullData agents conservé.
+- Tests : `signal-profile.test.ts` (+10 cas strip/deep), `user/export/__tests__/route.test.ts` réécrit (assert observables + guard d'ABSENCE de score).
+
+### Description
+Directive Sacha : dégager tous les scores. **Vérification chat LLM** : le prompt n'expose aucune note (system prompt propre, blocs de contexte scrubés au boundary, historique assistant scrubé, `dealMetrics` mort sans consumer). **Export RGPD** scoreless (les `results` blobs gardent `overallScore` même après le drop DB P5 → scrub explicite requis, fait). **Gate Codex APPROVE après 3 REQUEST_CHANGES** (convergence : summary → agentSummaries/findings/red flags → historique assistant ; chaque vecteur distinct corrigé). Caveat non-bloquant acté : le scrub bloc retire aussi de rares « X/100 » de confiance de thèse (pas une note de deal ; la confiance reste exprimable en %). Internes tolérés (Option B, → P5) : `canonical-read-model.*Score`, `score-extraction`, `dealMetrics`. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; signal-profile 40 + chat/route/chat-context 46 + export 1 tests verts.
+
+---
 ## 2026-06-14 — Dé-scorisation cluster — étape G2 — dashboard : suppression du KPI « Score moyen » + métriques portfolio observables
 
 ### Fichiers

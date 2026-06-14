@@ -19,6 +19,8 @@ import {
   scrubScoresFromResults,
   scrubAllScoresForLLMContext,
   scrubAgentScoreData,
+  stripDealScoreMentions,
+  deepStripScoreMentions,
   readDoctrineOrientation,
   type AnalysisSignalProfile,
 } from "../index";
@@ -422,5 +424,71 @@ describe("scrubAgentScoreData (P3 — fullData chat)", () => {
     expect(scrubAgentScoreData("x", undefined)).toBeUndefined();
     expect(scrubAgentScoreData("x", "raw")).toBe("raw");
     expect(scrubAgentScoreData("x", 42)).toBe(42);
+  });
+});
+
+describe("stripDealScoreMentions — scrub de note dans un texte libre", () => {
+  it("retire les mentions de note (X/100, score/note qualifié, grade)", () => {
+    const samples = [
+      "Score global : 81/100. Bonne traction commerciale.",
+      "Deal noté 72/100 par l'analyse.",
+      "Grade : B. Risque cap table.",
+      "81/100 — à approfondir.",
+    ];
+    for (const s of samples) {
+      const out = stripDealScoreMentions(s);
+      expect(out, `"${s}" → "${out}" expose encore une note`).not.toMatch(/\/\s*100/);
+      expect(out).not.toMatch(/\bgrade\s*:?\s*[A-F]\b/i);
+    }
+  });
+
+  it("retire un score de deal qualifié sans /100", () => {
+    expect(stripDealScoreMentions("Note finale de deal : 65. Risque équipe.")).not.toMatch(/\b65\b/);
+  });
+
+  it("préserve les métriques observables (%, montants, ratios non-/100)", () => {
+    const out = stripDealScoreMentions("ARR 1,2M€, croissance 88%, NRR 110%, satisfaction 9/10.");
+    expect(out).toContain("88%");
+    expect(out).toContain("110%");
+    expect(out).toContain("9/10");
+    expect(out).toContain("1,2M€");
+  });
+
+  it("est idempotent et neutre sur un texte sans note", () => {
+    const clean = "Traction solide, équipe complémentaire, marché en croissance.";
+    expect(stripDealScoreMentions(clean)).toBe(clean);
+    const once = stripDealScoreMentions("Score : 81/100. Risque cap table.");
+    expect(stripDealScoreMentions(once)).toBe(once);
+  });
+
+  it("gère la chaîne vide", () => {
+    expect(stripDealScoreMentions("")).toBe("");
+  });
+});
+
+describe("deepStripScoreMentions — scrub récursif des champs texte", () => {
+  it("scrub les chaînes imbriquées (objet + array), préserve nombres/Date", () => {
+    const detectedAt = new Date("2026-04-19T10:00:00Z");
+    const rf = {
+      title: "Score global : 81/100 sous la médiane",
+      description: "Risque cap table",
+      confidenceScore: 87,
+      detectedAt,
+      questionsToAsk: ["Quel est le détail du 65/100 ?", "Vesting des fondateurs ?"],
+    };
+    const out = deepStripScoreMentions(rf);
+    expect(out.title).not.toMatch(/\/\s*100/);
+    expect(out.description).toBe("Risque cap table");
+    expect(out.confidenceScore).toBe(87); // nombre intact
+    expect(out.detectedAt).toBe(detectedAt); // Date intacte (non recursée)
+    expect(out.questionsToAsk[0]).not.toMatch(/\/\s*100/);
+    expect(out.questionsToAsk[1]).toBe("Vesting des fondateurs ?");
+  });
+
+  it("laisse intactes les valeurs non-string/non-plain", () => {
+    expect(deepStripScoreMentions(42)).toBe(42);
+    expect(deepStripScoreMentions(null)).toBe(null);
+    const d = new Date("2026-01-01T00:00:00Z");
+    expect(deepStripScoreMentions(d)).toBe(d);
   });
 });

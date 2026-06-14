@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   creditTransactionFindMany: vi.fn(),
   apiKeyFindMany: vi.fn(),
   thesisFindMany: vi.fn(),
-  loadResults: vi.fn(),
   getCurrentFactsFromView: vi.fn(),
   handleApiError: vi.fn(),
 }));
@@ -38,10 +37,6 @@ vi.mock("@/lib/prisma", () => ({
       findMany: mocks.thesisFindMany,
     },
   },
-}));
-
-vi.mock("@/services/analysis-results/load-results", () => ({
-  loadResults: mocks.loadResults,
 }));
 
 vi.mock("@/services/fact-store/current-facts", () => ({
@@ -93,13 +88,6 @@ describe("GET /api/user/export", () => {
         amountRequested: 250000,
         valuationPre: 1500000,
         status: "IN_DD",
-        globalScore: 11,
-        fundamentalsScore: 20,
-        conditionsScore: 30,
-        teamScore: 12,
-        marketScore: 13,
-        productScore: 14,
-        financialsScore: 15,
         createdAt: new Date("2026-04-10T10:00:00Z"),
         updatedAt: new Date("2026-04-20T10:00:00Z"),
         founders: [],
@@ -204,39 +192,6 @@ describe("GET /api/user/export", () => {
         lastUpdatedAt: new Date("2026-04-19T10:00:00Z"),
       },
     ]);
-    mocks.loadResults.mockImplementation(async (analysisId: string) => {
-      if (analysisId === "analysis_linked") {
-        return {
-          "synthesis-deal-scorer": {
-            success: true,
-            data: {
-              overallScore: 91,
-              dimensionScores: [
-                { dimension: "Equipe", score: 83 },
-                { dimension: "Marche", score: 79 },
-                { dimension: "Produit", score: 77 },
-                { dimension: "Financials", score: 75 },
-              ],
-            },
-          },
-        };
-      }
-
-      if (analysisId === "analysis_unrelated") {
-        return {
-          "synthesis-deal-scorer": {
-            success: true,
-            data: {
-              overallScore: 22,
-              dimensionScores: [],
-            },
-          },
-        };
-      }
-
-      return null;
-    });
-
     const response = await GET();
     const payload = await response.json();
 
@@ -248,37 +203,23 @@ describe("GET /api/user/export", () => {
       website: "https://canonical.example",
       arr: 1200000,
       growthRate: 88,
-      globalScore: 91,
-      teamScore: 83,
-      marketScore: 79,
-      productScore: 77,
-      financialsScore: 75,
       canonicalAnalysisId: "analysis_linked",
       canonicalThesisId: "thesis_active",
     });
-    expect(payload.deals[0].analyses).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "analysis_linked",
-          scores: {
-            globalScore: 91,
-            teamScore: 83,
-            marketScore: 79,
-            productScore: 77,
-            financialsScore: 75,
-          },
-        }),
-        expect.objectContaining({
-          id: "analysis_unrelated",
-          scores: {
-            globalScore: 22,
-            teamScore: null,
-            marketScore: null,
-            productScore: null,
-            financialsScore: null,
-          },
-        }),
-      ])
-    );
+    // Dé-scorisation : aucune note de deal restituée dans l'export RGPD.
+    for (const field of [
+      "globalScore",
+      "teamScore",
+      "marketScore",
+      "productScore",
+      "financialsScore",
+      "fundamentalsScore",
+      "conditionsScore",
+    ]) {
+      expect(payload.deals[0]).not.toHaveProperty(field);
+    }
+    for (const analysis of payload.deals[0].analyses) {
+      expect(analysis).not.toHaveProperty("scores");
+    }
   });
 });

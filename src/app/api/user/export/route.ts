@@ -15,11 +15,10 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { handleApiError } from "@/lib/api-error";
-import { loadResults } from "@/services/analysis-results/load-results";
-import { extractAnalysisScores } from "@/services/analysis-results/score-extraction";
 import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
 import type { CurrentFact } from "@/services/fact-store/types";
 import { pickCanonicalAnalysis } from "@/services/deals/canonical-read-model";
+import { stripDealScoreMentions, deepStripScoreMentions } from "@/services/signal-profile";
 
 function buildCurrentFactMap(currentFacts: CurrentFact[]): Map<string, CurrentFact> {
   return new Map(currentFacts.map((fact) => [fact.factKey, fact]));
@@ -95,13 +94,6 @@ export async function GET() {
             amountRequested: true,
             valuationPre: true,
             status: true,
-            globalScore: true,
-            fundamentalsScore: true,
-            conditionsScore: true,
-            teamScore: true,
-            marketScore: true,
-            productScore: true,
-            financialsScore: true,
             createdAt: true,
             updatedAt: true,
             // Founders
@@ -234,28 +226,16 @@ export async function GET() {
       latestTheses.map((thesis) => [thesis.dealId, thesis])
     );
 
-    const analysisIds = deals.flatMap((deal) =>
-      deal.analyses
-        .filter((analysis) => analysis.completedAt != null)
-        .map((analysis) => analysis.id)
+    // Dé-scorisation : l'export RGPD ne restitue plus de note de deal. On ne
+    // charge plus les blobs `results` (qui ne servaient qu'à extraire les scores)
+    // — uniquement les current facts (métriques observables).
+    const currentFactsEntries = await Promise.all(
+      deals.map(async (deal) => [
+        deal.id,
+        await getCurrentFactsFromView(deal.id),
+      ] as const)
     );
 
-    const [resultsEntries, currentFactsEntries] = await Promise.all([
-      Promise.all(
-        analysisIds.map(async (analysisId) => [
-          analysisId,
-          await loadResults(analysisId),
-        ] as const)
-      ),
-      Promise.all(
-        deals.map(async (deal) => [
-          deal.id,
-          await getCurrentFactsFromView(deal.id),
-        ] as const)
-      ),
-    ]);
-
-    const resultsByAnalysisId = new Map(resultsEntries);
     const currentFactsByDealId = new Map(currentFactsEntries);
 
     const serializedDeals = deals.map((deal) => {
@@ -267,9 +247,6 @@ export async function GET() {
           dealId: deal.id,
         }))
       );
-      const canonicalScores = canonicalAnalysis
-        ? extractAnalysisScores(resultsByAnalysisId.get(canonicalAnalysis.id))
-        : null;
       const factMap = buildCurrentFactMap(currentFactsByDealId.get(deal.id) ?? []);
 
       return {
@@ -288,26 +265,21 @@ export async function GET() {
         valuationPre:
           getCurrentFactNumber(factMap, "financial.valuation_pre") ??
           (deal.valuationPre != null ? Number(deal.valuationPre) : null),
-        globalScore: canonicalScores?.globalScore ?? deal.globalScore,
-        teamScore: canonicalScores?.teamScore ?? deal.teamScore,
-        marketScore: canonicalScores?.marketScore ?? deal.marketScore,
-        productScore: canonicalScores?.productScore ?? deal.productScore,
-        financialsScore:
-          canonicalScores?.financialsScore ?? deal.financialsScore,
         canonicalAnalysisId: canonicalAnalysis?.id ?? null,
         canonicalThesisId: latestThesis?.id ?? null,
         redFlags: deal.redFlags.map((rf) => ({
-          ...rf,
+          // Dé-scorisation : scrub des champs texte historiques (title/description/
+          // evidence/questionsToAsk) qui peuvent contenir « Score : X/100 ».
+          ...deepStripScoreMentions(rf),
           confidenceScore:
             rf.confidenceScore != null ? Number(rf.confidenceScore) : null,
         })),
         analyses: deal.analyses.map((analysis) => ({
           ...analysis,
+          // Dé-scorisation : les summaries persistés avant la bascule peuvent
+          // encore contenir « Score : X/100 » → scrub avant restitution.
+          summary: analysis.summary ? stripDealScoreMentions(analysis.summary) : analysis.summary,
           totalCost: analysis.totalCost != null ? Number(analysis.totalCost) : null,
-          scores:
-            analysis.completedAt != null
-              ? extractAnalysisScores(resultsByAnalysisId.get(analysis.id))
-              : null,
         })),
       };
     });
