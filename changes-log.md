@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (PDF) étape 5/N — tier1-agents scoreless (retrait scores par agent + sous-scores)
+
+### Fichiers
+- `src/lib/pdf/pdf-sections/tier1-agents.tsx` : 6 sites — (1) `AgentBlock` générique : retrait complet du bloc « Score: X/100 (grade) » + rationale + table breakdown (colonne `Score`) ; déclaration `score` supprimée, import `fmtWeight` retiré (devenu inutilisé). Le signal par agent reste rendu VERBALEMENT par le bloc existant `signalIntensity` (`resolveTier1SignalIntensity` + `TIER1_SIGNAL_INTENSITY_LABELS`). (2) `TeamFindings` : colonnes table « Exp. entrepreneuriale »/« Score » (/100) retirées (table = Fondateur + Expertise) ; `complementarityScore` /100 retiré. (3) `DeckForensics` : `storyCoherence` /100 + `deckQuality.{professionalism,completeness,transparency}` /100 retirés (issues + credibilityAssessment conservés). (4) `TechStack` : `modernityScore` + `scalability.score` /100 retirés. (5) `TechOps` : `stabilityScore` + `securityScore` + `ipScore` + `capabilityScore` /100 retirés. (6) `CustomerFindings` : `pmf.score` /100 retiré (`pmf.verdict` conservé). Champs de type inline correspondants trimés.
+
+### Description
+« Le restitué Tier1 devient signalIntensity » (doctrine) — déjà câblé, donc aucun nouveau label dérivé d'un score (Codex : ne PAS inventer un signal verbal depuis l'ancien score). Conservés (allowlist) : métriques OBSERVABLES (NRR/churn/grossRetention/top10Percent %, benchmarks rétention), confiances/probabilités PAR ITEM (techRisks severity/probability), et `meta.confidenceLevel` par agent (confiance d'un agent sur sa propre analyse, hors `AGENT_DEAL_NOTE_KEYS` du scrubber). Producteurs intacts = P4. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (PDF) étape 4/N — tier2-expert scoreless (retrait sous-scores /100)
 
 ### Fichiers

@@ -16,7 +16,7 @@ import {
   Spacer,
   BodyText,
 } from "../pdf-components";
-import { s, sup, formatValue, fmtPct, fmtWeight, severityOrder } from "../pdf-helpers";
+import { s, sup, formatValue, fmtPct, severityOrder } from "../pdf-helpers";
 import { AGENT_DISPLAY_NAMES } from "@/lib/format-utils";
 import {
   ALERT_SIGNAL_LABELS,
@@ -62,18 +62,6 @@ function AgentBlock({
     dataCompleteness?: string;
     confidenceLevel?: number;
     limitations?: string[];
-  } | undefined;
-
-  const score = data.score as {
-    value?: number;
-    grade?: string;
-    rationale?: string;
-    breakdown?: Array<{
-      criterion?: string;
-      weight?: number;
-      score?: number;
-      justification?: string;
-    }>;
   } | undefined;
 
   const narrative = data.narrative as {
@@ -136,37 +124,6 @@ function AgentBlock({
             .filter(Boolean)
             .join(" | ")}
         </Text>
-      )}
-
-      {/* Score */}
-      {score?.value !== undefined && (
-        <>
-          <LabelValue
-            label="Score"
-            value={`${score.value}/100 (${score.grade ?? "N/A"})`}
-          />
-          {score.rationale && (
-            <Text style={[gs.small, { marginBottom: 4 }]}>
-              {score.rationale}
-            </Text>
-          )}
-          {score.breakdown && score.breakdown.length > 0 && (
-            <PdfTable
-              columns={[
-                { header: "Critère", width: 20 },
-                { header: "Poids", width: 10 },
-                { header: "Score", width: 10 },
-                { header: "Justification", width: 60 },
-              ]}
-              rows={score.breakdown.map((b) => [
-                s(b.criterion),
-                fmtWeight(b.weight),
-                b.score !== undefined ? `${b.score}/100` : "N/A",
-                s(b.justification),
-              ])}
-            />
-          )}
-        </>
       )}
 
       {/* Narrative */}
@@ -488,12 +445,9 @@ function TeamFindings({ f }: { f: Record<string, unknown> }) {
   const profiles = f.founderProfiles as Array<{
     name?: string;
     domainExpertise?: string;
-    entrepreneurialExperience?: number;
-    score?: number;
   }> | undefined;
   const comp = f.teamComposition as {
     teamSize?: number;
-    complementarityScore?: number;
     gaps?: unknown[];
     keyHires?: unknown[];
   } | undefined;
@@ -509,18 +463,12 @@ function TeamFindings({ f }: { f: Record<string, unknown> }) {
           <H3>Profils fondateurs</H3>
           <PdfTable
             columns={[
-              { header: "Fondateur", width: 25 },
-              { header: "Expertise", width: 30 },
-              { header: "Exp. entrepreneuriale", width: 25 },
-              { header: "Score", width: 20 },
+              { header: "Fondateur", width: 35 },
+              { header: "Expertise", width: 65 },
             ]}
             rows={profiles.slice(0, 5).map((p) => [
               s(p.name),
               s(p.domainExpertise),
-              p.entrepreneurialExperience !== undefined
-                ? `${p.entrepreneurialExperience}/100`
-                : "N/A",
-              p.score !== undefined ? `${p.score}/100` : "N/A",
             ])}
           />
         </>
@@ -530,12 +478,6 @@ function TeamFindings({ f }: { f: Record<string, unknown> }) {
           <H3>Composition équipe</H3>
           {comp.teamSize != null && (
             <LabelValue label="Taille" value={String(comp.teamSize)} />
-          )}
-          {comp.complementarityScore !== undefined && (
-            <LabelValue
-              label="Complémentarité"
-              value={`${comp.complementarityScore}/100`}
-            />
           )}
           {comp.gaps && comp.gaps.length > 0 && (
             <LabelValue
@@ -655,7 +597,6 @@ function CompetitiveFindings({ f }: { f: Record<string, unknown> }) {
 
 function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
   const narr = f.narrativeAnalysis as {
-    storyCoherence?: number;
     credibilityAssessment?: string;
     criticalMissingInfo?: Array<{ info?: string; whyItMatters?: string }>;
   } | undefined;
@@ -671,9 +612,6 @@ function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
     severity?: string;
   }> | undefined;
   const quality = f.deckQuality as {
-    professionalism?: number;
-    completeness?: number;
-    transparency?: number;
     issues?: string[];
   } | undefined;
 
@@ -681,12 +619,6 @@ function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
     <>
       {narr && (
         <>
-          {narr.storyCoherence !== undefined && (
-            <LabelValue
-              label="Cohérence narrative"
-              value={`${narr.storyCoherence}/100`}
-            />
-          )}
           {narr.credibilityAssessment && (
             <LabelValue
               label="Crédibilité"
@@ -731,30 +663,10 @@ function DeckForensicsFindings({ f }: { f: Record<string, unknown> }) {
           />
         </>
       )}
-      {quality && (
+      {quality?.issues && quality.issues.length > 0 && (
         <>
           <H3>Qualité du deck</H3>
-          {quality.professionalism !== undefined && (
-            <LabelValue
-              label="Professionnalisme"
-              value={`${quality.professionalism}/100`}
-            />
-          )}
-          {quality.completeness !== undefined && (
-            <LabelValue
-              label="Complétude"
-              value={`${quality.completeness}/100`}
-            />
-          )}
-          {quality.transparency !== undefined && (
-            <LabelValue
-              label="Transparence"
-              value={`${quality.transparency}/100`}
-            />
-          )}
-          {quality.issues && quality.issues.length > 0 && (
-            <BulletList items={quality.issues.slice(0, 5)} />
-          )}
+          <BulletList items={quality.issues.slice(0, 5)} />
         </>
       )}
       {narr?.criticalMissingInfo && narr.criticalMissingInfo.length > 0 && (
@@ -903,12 +815,6 @@ function TechStackFindings({ f }: { f: Record<string, unknown> }) {
       {stack && (
         <>
           <H3>Stack technique</H3>
-          {stack.modernityScore !== undefined && (
-            <LabelValue
-              label="Score modernité"
-              value={`${stack.modernityScore}/100`}
-            />
-          )}
           {stack.frontend && (
             <LabelValue label="Frontend" value={formatValue(stack.frontend)} />
           )}
@@ -925,12 +831,6 @@ function TechStackFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {scale && (
         <>
-          {scale.score !== undefined && (
-            <LabelValue
-              label="Score scalabilité"
-              value={`${scale.score}/100`}
-            />
-          )}
           {scale.x10Readiness && (
             <LabelValue
               label="Prêt x10"
@@ -1003,12 +903,6 @@ function TechOpsFindings({ f }: { f: Record<string, unknown> }) {
               value={sup(maturity.stage)}
             />
           )}
-          {maturity.stabilityScore !== undefined && (
-            <LabelValue
-              label="Score stabilité"
-              value={`${maturity.stabilityScore}/100`}
-            />
-          )}
         </>
       )}
       {security && (
@@ -1017,12 +911,6 @@ function TechOpsFindings({ f }: { f: Record<string, unknown> }) {
             <LabelValue
               label="Posture sécurité"
               value={sup(security.posture)}
-            />
-          )}
-          {security.securityScore !== undefined && (
-            <LabelValue
-              label="Score sécurité"
-              value={`${security.securityScore}/100`}
             />
           )}
           {Array.isArray(security.compliance) &&
@@ -1038,9 +926,6 @@ function TechOpsFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {ip && (
         <>
-          {ip.ipScore !== undefined && (
-            <LabelValue label="Score IP" value={`${ip.ipScore}/100`} />
-          )}
           {ip.patents !== undefined && (
             <LabelValue label="Brevets" value={formatValue(ip.patents)} />
           )}
@@ -1048,12 +933,6 @@ function TechOpsFindings({ f }: { f: Record<string, unknown> }) {
       )}
       {team && (
         <>
-          {team.capabilityScore !== undefined && (
-            <LabelValue
-              label="Score équipe tech"
-              value={`${team.capabilityScore}/100`}
-            />
-          )}
           {Array.isArray(team.gaps) && team.gaps.length > 0 && (
             <LabelValue
               label="Gaps équipe"
@@ -1332,7 +1211,6 @@ function CustomerFindings({ f }: { f: Record<string, unknown> }) {
     churn?: number;
   } | undefined;
   const pmf = f.pmf as {
-    score?: number;
     verdict?: string;
   } | undefined;
   const concentration = f.concentration as {
@@ -1373,15 +1251,10 @@ function CustomerFindings({ f }: { f: Record<string, unknown> }) {
           )}
         </>
       )}
-      {pmf && (
+      {pmf?.verdict && (
         <>
           <H3>Product-Market Fit</H3>
-          {pmf.score !== undefined && (
-            <LabelValue label="Score PMF" value={`${pmf.score}/100`} />
-          )}
-          {pmf.verdict && (
-            <LabelValue label="Verdict" value={pmf.verdict} />
-          )}
+          <LabelValue label="Verdict" value={pmf.verdict} />
         </>
       )}
       {concentration && (
