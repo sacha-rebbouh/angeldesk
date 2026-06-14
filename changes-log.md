@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 4/N — analysis-investor-view.tsx (Vue investisseur) scoreless
+
+### Fichiers
+- `src/components/deals/analysis-investor-view.tsx` : surface « Vue investisseur » partagée (legacy panel + preview-tabs) rendue entièrement scoreless. (1) badge de recommandation dont `getRecommendation` dérivait l'orientation d'un score (seuil `currentScore >= 70` = anti-pattern score caché, garde-fou P3 n°1) → remplacé par l'atome `BadgePair` (orientation × solidité) alimenté par `aggregateOrientation`/`aggregateSolidity` (sélecteurs v2 score-indépendants, mêmes que decision-strip + tier3-results) ; `getRecommendation` supprimé. (2) bandeau de tuiles de note supprimé (`Score final /100`, `Cohérence du dossier /100`, `Finance /100`). (3) dimensions (Marché/Clients/Finance/Équipe/Technique) verbalisées via `signalIntensity` (`resolveTier1SignalIntensity` + `TIER1_SIGNAL_INTENSITY_LABELS`/`BADGE_CLASS`), `DimensionBar` → `DimensionRow` (chip d'intensité, plus de barre/nombre). (4) ligne « Contradictions » de la santé d'analyse (note d'agent) → compte OBSERVABLE de contradictions détectées (`findings.contradictions.length`). (5) prop `currentScore` retirée de `AnalysisInvestorView` + `AnalysisPreviewTabs` ; consumer dev-only `avekapeti/page.tsx` perd `extractDealScore` + var ; `analysis-panel.tsx` ne passe plus `currentScore` à `AnalysisInvestorView`. Helpers morts retirés (`extractScore`, `toneFromScore`, `toneClasses`, `recordAt`, `MetricTile`, `DimensionBar`).
+- `src/components/deals/analysis-preview-tabs.tsx`, `src/app/(dashboard)/deals/analysis-preview/avekapeti/page.tsx`, `src/components/deals/analysis-panel.tsx` : retrait du plumbing `currentScore` vers la Vue investisseur.
+
+### Description
+La Vue investisseur ne restitue plus aucune note de deal ni orientation dérivée d'un score. **Gate Codex APPROVE** (aucun nit). Conservé (allowlist) : `thesis.confidence` (% sur un fait précis), badges qualitatifs par item/question, compte de contradictions (observable). `analysis-panel.tsx` garde encore `currentScore` pour `DeltaIndicator` + `SuiviDDTab` (étapes suivantes). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; suite unit complète 4509 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 3/N — tier2-results.tsx (expert sectoriel) scoreless
 
 ### Fichiers

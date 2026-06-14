@@ -18,7 +18,15 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import {
+  resolveTier1SignalIntensity,
+  TIER1_SIGNAL_INTENSITY_LABELS,
+  TIER1_SIGNAL_INTENSITY_BADGE_CLASS,
+  type Tier1SignalIntensityValue,
+} from "@/lib/ui-configs";
 import { extractDecisionRisks } from "./analysis-risk-utils";
+import { BadgePair } from "./analysis-v2/atoms/badge-pair";
+import { aggregateOrientation, aggregateSolidity } from "./analysis-v2/lib/solidity-aggregator";
 
 interface AgentResult {
   agentName: string;
@@ -45,7 +53,6 @@ interface AnalysisInvestorViewProps {
   thesis?: AnalysisThesis | null;
   totalTimeMs?: number | null;
   totalCost?: number | null;
-  currentScore?: number | null;
 }
 
 type Severity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO";
@@ -65,9 +72,7 @@ interface QuestionItem {
 
 interface DimensionItem {
   label: string;
-  value: number | null;
-  display: string;
-  tone: "good" | "warning" | "danger" | "neutral";
+  intensity: Tier1SignalIntensityValue | null;
 }
 
 const verdictLabels: Record<string, string> = {
@@ -96,15 +101,6 @@ function numberValue(value: unknown): number | null {
     return Number(value);
   }
   return null;
-}
-
-function recordAt(root: unknown, path: string[]): Record<string, unknown> | null {
-  let cursor: unknown = root;
-  for (const key of path) {
-    if (!isRecord(cursor)) return null;
-    cursor = cursor[key];
-  }
-  return isRecord(cursor) ? cursor : null;
 }
 
 function valueAt(root: unknown, path: string[]): unknown {
@@ -169,26 +165,13 @@ function severityClasses(severity: Severity): string {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
-function toneClasses(tone: "good" | "warning" | "danger" | "neutral"): string {
-  if (tone === "good") return "bg-emerald-500";
-  if (tone === "warning") return "bg-amber-500";
-  if (tone === "danger") return "bg-red-500";
-  return "bg-slate-400";
-}
-
-function toneFromScore(value: number | null): DimensionItem["tone"] {
-  if (value == null) return "neutral";
-  if (value >= 70) return "good";
-  if (value >= 40) return "warning";
-  return "danger";
-}
-
-function extractScore(data: Record<string, unknown> | null): { value: number | null; grade: string | null } {
-  const score = recordAt(data, ["score"]);
-  return {
-    value: numberValue(score?.value),
-    grade: text(score?.grade) || null,
-  };
+function dimensionIntensity(data: Record<string, unknown> | null): Tier1SignalIntensityValue | null {
+  const native = valueAt(data, ["signalIntensity"]);
+  const legacy = valueAt(data, ["alertSignal", "recommendation"]);
+  return resolveTier1SignalIntensity(
+    typeof native === "string" ? native : null,
+    typeof legacy === "string" ? legacy : null,
+  );
 }
 
 function itemText(item: unknown): string {
@@ -370,91 +353,17 @@ function getPrimarySummary(results: Record<string, AgentResult>, thesis?: Analys
   return memoSummary || synthesisSummary || devilsSummary || contradictionSummary || financialSummary || marketSummary || thesisText || "L’analyse a été consolidée en lecture investisseur. Les détails restent disponibles dans la section complète.";
 }
 
-function getRecommendation(params: {
-  criticalRisks: number;
-  highRisks: number;
-  financeScore: number | null;
-  currentScore?: number | null;
-  thesisVerdict?: string | null;
-}): { title: string; note: string; tone: "good" | "warning" | "danger" } {
-  if (params.thesisVerdict === "alert_dominant") {
-    return {
-      title: "Pause avant investissement",
-      note: "La thèse contient des alertes dominantes. Le dossier doit être challengé avant comité.",
-      tone: "danger",
-    };
-  }
-  if (params.thesisVerdict === "vigilance") {
-    return {
-      title: "Due diligence ciblée",
-      note: "Le dossier peut avancer uniquement avec des preuves complémentaires sur les points fragiles.",
-      tone: "warning",
-    };
-  }
-  if (params.criticalRisks > 0 || (params.financeScore != null && params.financeScore < 30)) {
-    return {
-      title: "Pause avant investissement",
-      note: "Les signaux bloquants doivent être résolus avant de défendre un ticket.",
-      tone: "danger",
-    };
-  }
-  if (params.highRisks > 1 || params.thesisVerdict === "contrasted") {
-    return {
-      title: "Due diligence ciblée",
-      note: "Le dossier peut avancer, mais seulement avec des preuves complémentaires.",
-      tone: "warning",
-    };
-  }
-  if (params.currentScore != null && params.currentScore >= 70) {
-    return {
-      title: "Passer en comité",
-      note: "Les signaux principaux sont assez solides pour une discussion d’investissement.",
-      tone: "good",
-    };
-  }
-  return {
-    title: "À creuser",
-    note: "Le dossier contient des signaux utiles, mais la conviction reste incomplète.",
-    tone: "warning",
-  };
-}
-
-function MetricTile({
-  label,
-  value,
-  note,
-  tone = "neutral",
-}: {
-  label: string;
-  value: string;
-  note?: string;
-  tone?: "good" | "warning" | "danger" | "neutral";
-}) {
+function DimensionRow({ item }: { item: DimensionItem }) {
+  const label = item.intensity ? TIER1_SIGNAL_INTENSITY_LABELS[item.intensity] : "Non qualifié";
+  const badgeClass = item.intensity
+    ? TIER1_SIGNAL_INTENSITY_BADGE_CLASS[item.intensity]
+    : "bg-slate-100 text-slate-700";
   return (
-    <div className="rounded-lg border bg-background p-4">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className={cn(
-        "mt-2 text-2xl font-semibold tracking-normal",
-        tone === "good" && "text-emerald-700",
-        tone === "warning" && "text-amber-700",
-        tone === "danger" && "text-red-700"
-      )}>
-        {value}
-      </p>
-      {note && <p className="mt-2 text-xs leading-5 text-muted-foreground">{note}</p>}
-    </div>
-  );
-}
-
-function DimensionBar({ item }: { item: DimensionItem }) {
-  const width = item.value == null ? 12 : Math.max(6, Math.min(100, item.value));
-  return (
-    <div className="grid grid-cols-[88px_minmax(0,1fr)_48px] items-center gap-3 text-sm">
+    <div className="flex items-center justify-between gap-3 text-sm">
       <span className="truncate text-muted-foreground">{item.label}</span>
-      <span className="h-2 rounded-full bg-muted">
-        <span className={cn("block h-full rounded-full", toneClasses(item.tone))} style={{ width: `${width}%` }} />
+      <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide", badgeClass)}>
+        {label}
       </span>
-      <span className="text-right font-medium">{item.display}</span>
     </div>
   );
 }
@@ -465,7 +374,6 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
   thesis,
   totalTimeMs,
   totalCost,
-  currentScore,
 }: AnalysisInvestorViewProps) {
   const displayedDealName = displayDealName(dealName);
   const financial = agentData(results, "financial-auditor");
@@ -474,14 +382,12 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
   const customer = agentData(results, "customer-intel");
   const team = agentData(results, "team-investigator");
   const techOps = agentData(results, "tech-ops-dd");
-  const deckCoherence = agentData(results, "deck-coherence-checker");
 
-  const financeScore = extractScore(financial);
-  const contradictionScore = extractScore(contradiction);
-  const marketScore = extractScore(market);
-  const customerScore = extractScore(customer);
-  const teamScore = extractScore(team);
-  const techScore = extractScore(techOps);
+  // Dé-scorisation : orientation × solidité (modèle 2 axes verbal), dérivées
+  // par les mêmes sélecteurs score-indépendants que la decision-strip v2 et
+  // tier3-results. Aucune note de deal restituée.
+  const orientation = useMemo(() => aggregateOrientation(results), [results]);
+  const evidenceSolidity = useMemo(() => aggregateSolidity(results), [results]);
 
   const allRisks = useMemo(() => extractDecisionRisks(results), [results]);
   const risks = allRisks.slice(0, 5);
@@ -493,46 +399,15 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
   const failedCount = Object.values(results).length - succeededCount;
   const criticalRisks = allRisks.filter((risk) => risk.severity === "CRITICAL").length;
   const highRisks = allRisks.filter((risk) => risk.severity === "HIGH").length;
-  const coherenceScore = numberValue(deckCoherence?.coherenceScore);
-  const recommendation = getRecommendation({
-    criticalRisks,
-    highRisks,
-    financeScore: financeScore.value,
-    currentScore,
-    thesisVerdict: thesis?.verdict ?? null,
-  });
+  // Métrique OBSERVABLE (nombre de contradictions détectées) — pas une note.
+  const contradictionCount = records(valueAt(contradiction, ["findings", "contradictions"])).length;
 
   const dimensions: DimensionItem[] = [
-    {
-      label: "Marché",
-      value: marketScore.value,
-      display: marketScore.value != null ? String(marketScore.value) : marketScore.grade ?? "n/a",
-      tone: toneFromScore(marketScore.value),
-    },
-    {
-      label: "Clients",
-      value: customerScore.value,
-      display: customerScore.value != null ? String(customerScore.value) : customerScore.grade ?? "n/a",
-      tone: toneFromScore(customerScore.value),
-    },
-    {
-      label: "Finance",
-      value: financeScore.value,
-      display: financeScore.value != null ? String(financeScore.value) : financeScore.grade ?? "n/a",
-      tone: toneFromScore(financeScore.value),
-    },
-    {
-      label: "Équipe",
-      value: teamScore.value,
-      display: teamScore.value != null ? String(teamScore.value) : teamScore.grade ?? "n/a",
-      tone: toneFromScore(teamScore.value),
-    },
-    {
-      label: "Technique",
-      value: techScore.value,
-      display: techScore.value != null ? String(techScore.value) : techScore.grade ?? "n/a",
-      tone: toneFromScore(techScore.value),
-    },
+    { label: "Marché", intensity: dimensionIntensity(market) },
+    { label: "Clients", intensity: dimensionIntensity(customer) },
+    { label: "Finance", intensity: dimensionIntensity(financial) },
+    { label: "Équipe", intensity: dimensionIntensity(team) },
+    { label: "Technique", intensity: dimensionIntensity(techOps) },
   ];
 
   const summary = getPrimarySummary(results, thesis);
@@ -545,9 +420,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className={cn("border", severityClasses(recommendation.tone === "danger" ? "CRITICAL" : recommendation.tone === "warning" ? "HIGH" : "LOW"))}>
-                  {recommendation.title}
-                </Badge>
+                <BadgePair orientation={orientation} solidity={evidenceSolidity} size="sm" />
                 {thesis?.verdict && (
                   <Badge variant="secondary">
                     Thèse {verdictLabels[thesis.verdict] ?? thesis.verdict}
@@ -561,7 +434,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
                 Lecture investisseur de {displayedDealName}
               </h2>
               <p className="mt-2 max-w-4xl text-sm leading-6 text-muted-foreground">
-                {recommendation.note}
+                Lecture consolidée des signaux disponibles : orientation et solidité des preuves ci-dessus, signaux favorables et points bloquants détaillés plus bas. La décision reste la vôtre.
               </p>
             </div>
             <div className="grid grid-cols-3 gap-2 rounded-lg border bg-background p-2 text-center lg:min-w-[280px]">
@@ -579,27 +452,6 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
               </div>
             </div>
           </div>
-        </div>
-
-        <div className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-4">
-          <MetricTile
-            label="Score final"
-            value={currentScore != null ? `${currentScore}/100` : "Non calculé"}
-            note={currentScore == null ? "Score final indisponible, lecture basée sur les analyses disponibles." : "Score consolidé de l’analyse."}
-            tone={currentScore == null ? "warning" : toneFromScore(currentScore)}
-          />
-          <MetricTile
-            label="Cohérence du dossier"
-            value={coherenceScore != null ? `${coherenceScore}/100` : "n/a"}
-            note={criticalRisks > 0 ? `${criticalRisks} sujet${criticalRisks > 1 ? "s" : ""} critique${criticalRisks > 1 ? "s" : ""}` : "Aucune contradiction critique remontée."}
-            tone={coherenceScore == null ? "neutral" : toneFromScore(coherenceScore)}
-          />
-          <MetricTile
-            label="Finance"
-            value={financeScore.value != null ? `${financeScore.value}/100` : financeScore.grade ?? "n/a"}
-            note={text(valueAt(financial, ["findings", "valuation", "verdict"]), "Qualité financière à valider.")}
-            tone={toneFromScore(financeScore.value)}
-          />
         </div>
 
         <div className="border-t bg-muted/20 p-5">
@@ -795,7 +647,7 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
             </div>
             <div className="mt-4 space-y-3">
               {dimensions.map((item) => (
-                <DimensionBar key={item.label} item={item} />
+                <DimensionRow key={item.label} item={item} />
               ))}
             </div>
           </section>
@@ -811,8 +663,8 @@ export const AnalysisInvestorView = memo(function AnalysisInvestorView({
                 <span className="font-medium">{succeededCount}/{Object.keys(results).length}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Contradictions</span>
-                <span className="font-medium">{contradictionScore.value ?? contradictionScore.grade ?? "n/a"}</span>
+                <span className="text-muted-foreground">Contradictions détectées</span>
+                <span className="font-medium">{contradictionCount}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Temps d’analyse</span>

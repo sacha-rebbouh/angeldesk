@@ -1555,7 +1555,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     thesis={thesis}
                     totalTimeMs={displayedResult.totalTimeMs}
                     totalCost={displayedResult.totalCost}
-                    currentScore={currentScore ?? null}
                   />
                 )}
 
