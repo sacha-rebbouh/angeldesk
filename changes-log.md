@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 1/N — tier3 hero scoreless (orientation × solidité via BadgePair v2)
+
+### Fichiers
+- `src/components/deals/tier3-results.tsx` : keystone du sous-chantier legacy panel. Import de `BadgePair` (atome v2) + `aggregateOrientation`/`aggregateSolidity` (sélecteurs v2 score-indépendants). Calcul `orientation`/`evidenceSolidity` en `useMemo` dans `Tier3Results`. Hero card (Summary Header) : remplace le bloc `{scorerData.overallScore}/100` + `VerdictBadge` par `<BadgePair orientation solidity layout="stacked" size="sm" />`. Texte thèse-gated reformulé « Score global masqué » → « Orientation masquée ».
+
+### Description
+Micro-étape 1 (keystone) de la dé-scorisation du legacy panel encore rendu LIVE (`AnalysisPanelWrapper` → `analysis-panel.tsx` → tier1/2/3-results, reachable juste après la 1ère analyse avant bascule v2). **Décision de modèle gatée Codex APPROVE** : mirror la decision-strip v2 (`BadgePair` 5 valeurs, `RECOMMENDATION_CONFIG`/`EVIDENCE_SOLIDITY_CONFIG`) plutôt que le 4-valeurs `readDoctrineOrientation` du PDF — cohérence écran-à-écran + réutilisation de l'atome, le collapse 5→4 étant une migration cross-surface séparée (v2 + legacy ensemble). `aggregateOrientation` score-indépendant (lit `signalContribution.orientation` → `verdict` → `signalIntensity`, jamais `overallScore`). Codex a flaggé que `showNoGo < 35` est un comportement SCORE-BASED (pas un simple affichage) → à corriger micro-étape suivante. Sites restants tier3 (dimensionScores/100, percentile de score, skepticism/100, consistency/100, confidence%, SynthesisScorerCard header) = micro-étapes suivantes. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). tsc 0 ; tests `src/components/deals/__tests__` 434 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (PDF) étape 6/6 — nettoyage helpers/composants de rendu de score morts
 
 ### Fichiers

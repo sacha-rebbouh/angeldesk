@@ -39,6 +39,8 @@ import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
 import { ResolutionBadge } from "./resolution-badge";
 import { ResolutionDialog } from "./resolution-dialog";
 import { AdjustedScoreBadge } from "./adjusted-score-badge";
+import { BadgePair } from "./analysis-v2/atoms/badge-pair";
+import { aggregateOrientation, aggregateSolidity } from "./analysis-v2/lib/solidity-aggregator";
 import type { AlertResolution, CreateResolutionInput } from "@/hooks/use-resolutions";
 
 interface Tier3ResultsProps {
@@ -1029,6 +1031,11 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
   const contradictionData = getAgentData<ContradictionDetectorData>("contradiction-detector");
   const memoData = getAgentData<MemoGeneratorData>("memo-generator");
 
+  // Dé-scorisation : orientation × solidité (modèle 2 axes verbal), dérivés
+  // par les mêmes sélecteurs score-indépendants que la decision-strip v2.
+  const orientation = useMemo(() => aggregateOrientation(results), [results]);
+  const evidenceSolidity = useMemo(() => aggregateSolidity(results), [results]);
+
   // Thesis-first meta-gate : masquer le score global si these fragile sans bypass
   const fragileThesisVerdicts = new Set(["alert_dominant", "vigilance"]);
   const thesisGated =
@@ -1083,14 +1090,11 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
                       Thèse prioritaire
                     </p>
                     <p className="mt-1 text-sm text-red-100">
-                      Score global masqué tant que la thèse reste fragile.
+                      Orientation masquée tant que la thèse reste fragile.
                     </p>
                   </div>
                 ) : (
-                  <>
-                    <div className="text-4xl font-bold text-white">{scorerData.overallScore}<span className="text-xl text-slate-400">/100</span></div>
-                    <VerdictBadge verdict={scorerData.verdict} />
-                  </>
+                  <BadgePair orientation={orientation} solidity={evidenceSolidity} layout="stacked" size="sm" />
                 )}
               </div>
             )}
