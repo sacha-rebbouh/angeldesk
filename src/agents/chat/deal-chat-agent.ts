@@ -19,6 +19,7 @@ import type {
   LiveSessionContextData,
 } from "@/services/chat-context";
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { scrubAgentScoreData } from "@/services/signal-profile";
 import {
   retrieveContext,
   type RetrievedContext,
@@ -423,13 +424,6 @@ ${thesisCtxEarly.decision ? `**Decision BA** : ${thesisCtxEarly.decision}${thesi
 - **Montant demande**: ${deal.amountRequested != null ? `${this.formatMoneyValue(Number(deal.amountRequested))}` : "Non specifie"}
 - **Valorisation pre-money**: ${deal.valuationPre != null ? `${this.formatMoneyValue(Number(deal.valuationPre))}` : "Non specifie"}
 
-## Scores d'analyse (si disponibles)
-- **Score global**: ${deal.globalScore ?? "Non calcule"}/100
-- **Equipe**: ${deal.teamScore ?? "-"}/100
-- **Marche**: ${deal.marketScore ?? "-"}/100
-- **Produit**: ${deal.productScore ?? "-"}/100
-- **Financials**: ${deal.financialsScore ?? "-"}/100
-
 ## Fondateurs
 ${deal.founders && deal.founders.length > 0
   ? deal.founders.map((f) => {
@@ -559,9 +553,6 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
           contextPrompt += `\n### ${this.formatAgentName(agentName)}\n`;
           if (summary.summary) {
             contextPrompt += `${summary.summary}\n`;
-          }
-          if (summary.score !== undefined) {
-            contextPrompt += `**Score**: ${summary.score}/100\n`;
           }
           if (summary.keyFindings && summary.keyFindings.length > 0) {
             contextPrompt += `**Points cles**:\n`;
@@ -761,15 +752,15 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       let agentsSection = "## RÉSULTATS D'AGENTS (Données COMPLÈTES)\n";
       for (const result of retrievedCtx.agentResults) {
         agentsSection += `\n### ${this.formatAgentName(result.agent)}\n`;
-        if (scoresAllowed && result.score !== undefined) {
-          agentsSection += `**Score**: ${result.score}/100\n`;
-        }
         if (result.confidence !== undefined) {
           agentsSection += `**Confiance**: ${result.confidence}%\n`;
         }
-        // Include FULL agent data if available
+        // Include FULL agent data if available — scrubbé des champs de NOTE DE
+        // DEAL (overallScore/score/grade/dimensionScores…) avant sérialisation,
+        // sinon le JSON brut réinjecte les notes que le prompt n'affiche plus.
         if (result.fullData) {
-          agentsSection += `**Données complètes de l'agent**:\n\`\`\`json\n${JSON.stringify(result.fullData, null, 2).slice(0, 15000)}\n\`\`\`\n`;
+          const scrubbedFullData = scrubAgentScoreData(result.agent, result.fullData);
+          agentsSection += `**Données complètes de l'agent**:\n\`\`\`json\n${JSON.stringify(scrubbedFullData, null, 2).slice(0, 15000)}\n\`\`\`\n`;
         } else {
           // Fallback to summary/findings if no fullData
           if (result.summary) {

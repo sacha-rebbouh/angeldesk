@@ -250,6 +250,23 @@ const AGENT_DEAL_NOTE_KEYS = [
 ] as const;
 
 /**
+ * Retire les champs de NOTE DE DEAL du `data` d'UN SEUL agent avant réinjection
+ * dans un contexte LLM (ex. sérialisation JSON brute de `fullData` d'un agent
+ * dans le prompt du chat). synthesis-deal-scorer reçoit le scrub profond dédié
+ * (`scrubSynthesisScoreData`) ; tout autre agent perd ses clés de note de
+ * premier niveau (`AGENT_DEAL_NOTE_KEYS`). Pur et IMMUTABLE. Les scores
+ * imbriqués profonds (ex. `findings.*Score`) restent une traîne retirée par P4.
+ */
+export function scrubAgentScoreData<T>(agentName: string, data: T): T {
+  if (!isRecord(data)) return data;
+  return (
+    agentName === "synthesis-deal-scorer"
+      ? scrubSynthesisScoreData(data)
+      : stripKeys(data, AGENT_DEAL_NOTE_KEYS)
+  ) as T;
+}
+
+/**
  * Clone de la map de résultats agents où CHAQUE agent a ses champs de NOTE DE
  * DEAL retirés du `data`, avant réinjection dans un contexte LLM (board / memo /
  * summary). synthesis-deal-scorer reçoit le scrub profond dédié
@@ -266,11 +283,7 @@ export function scrubAllScoresForLLMContext<R extends Record<string, unknown>>(r
       cloned[name] = result;
       continue;
     }
-    const scrubbedData =
-      name === "synthesis-deal-scorer"
-        ? scrubSynthesisScoreData(data)
-        : stripKeys(data, AGENT_DEAL_NOTE_KEYS);
-    cloned[name] = { ...(result as Record<string, unknown>), data: scrubbedData };
+    cloned[name] = { ...(result as Record<string, unknown>), data: scrubAgentScoreData(name, data) };
   }
   return cloned as R;
 }

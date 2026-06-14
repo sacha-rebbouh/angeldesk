@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3-a — Scrub des notes de deal du contexte LLM du chat (première micro-étape P3)
+
+### Fichiers
+- `src/agents/chat/deal-chat-agent.ts` : retrait du bloc `## Scores d'analyse` (5 notes /100 : Score global / Équipe / Marché / Produit / Financials depuis `deal.*Score`). Retrait des deux autres injections `**Score**: X/100` (résumés agents `summary.score` + résultats agents `result.score`). `result.fullData` (sérialisé en JSON brut dans le prompt) passe désormais par `scrubAgentScoreData(result.agent, …)` avant `JSON.stringify` (sinon overallScore/grade/dimensionScores réinjectés). Conservé (allowlist) : confiances en %, confiance de thèse /100, benchmarks P25/Median/P75, bloc MÉTRIQUES QUANTIFIÉES (`scoredFindings` = métriques observables).
+- `src/services/signal-profile/index.ts` : NOUVEAU helper `scrubAgentScoreData(agentName, data)` — scrub d'UN SEUL `data` agent (synthesis = scrub profond `scrubSynthesisScoreData` ; autres = `AGENT_DEAL_NOTE_KEYS`). Pur+immutable. `scrubAllScoresForLLMContext` (P2-c) refactoré pour le réutiliser (DRY, source unique).
+- `src/services/signal-profile/__tests__/signal-profile.test.ts` : NOUVEAU describe `scrubAgentScoreData` (synthèse scrub profond, agent non-synthèse clés premier niveau, immutabilité, entrée non-record).
+
+### Description
+Première micro-étape de P3 (consumers → profil scoreless). Le chat était explicitement déféré de P2-c. Achève le scrub des contextes LLM (P2-c : board/mémo/summary → +chat). Le grep initial « Score global » n'avait capté qu'une des trois injections ; le gate Codex (REQUEST_CHANGES round 1) a fait remonter `summary.score`, `result.score` et la sérialisation brute de `fullData` — toutes corrigées round 2. Changement de chaîne de prompt + helper pur uniquement, aucune topologie de graphe durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Périmètre chirurgical : champs de type `*Score` sur les interfaces d'entrée du chat conservés (miroir DB, retrait = sous-bloc read-model / P5) ; le plumbing read-model qui porte `globalScore` (route chat → agent) reste. DÉFÉRÉ comme item P3 séparé : `src/lib/live/context-compiler.ts` (Live Coaching, feature-flagged) qui dérive `signalProfile = getSignalProfile(globalScore)` (anti-pattern score caché, garde-fou #1) + injecte le même bloc `## Scores d'analyse` en /100 — rework Live à traiter avant de clore P3. Gate Codex : REQUEST_CHANGES (round 1) → APPROVE (round 2). tsc 0 ; suite unit 4506 passed (+4) / 9 skipped / 0 failed.
+
+---
 ## 2026-06-14 — Dé-scorisation P2-d.2 — Budget deadline-aware du step synthesis-deal-scorer (fix racine boucle 300s) — P2 COMPLET
 
 ### Fichiers

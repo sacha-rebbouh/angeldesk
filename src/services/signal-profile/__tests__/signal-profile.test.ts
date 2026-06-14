@@ -18,6 +18,7 @@ import {
   scrubSynthesisScoreData,
   scrubScoresFromResults,
   scrubAllScoresForLLMContext,
+  scrubAgentScoreData,
   readDoctrineOrientation,
   type AnalysisSignalProfile,
 } from "../index";
@@ -381,5 +382,45 @@ describe("scrubAllScoresForLLMContext (P2 — condition dure #1)", () => {
     const results = { "gtm-analyst": failed };
     const out = scrubAllScoresForLLMContext(results);
     expect(out["gtm-analyst"]).toBe(failed);
+  });
+});
+
+// ----------------------------------------------------------------------------
+// scrubAgentScoreData — scrub d'UN SEUL data agent (fullData chat sérialisé)
+// ----------------------------------------------------------------------------
+
+describe("scrubAgentScoreData (P3 — fullData chat)", () => {
+  it("synthesis-deal-scorer → scrub PROFOND (overallScore/grade/dimensionScores[].score retirés, verdict gardé)", () => {
+    const out = scrubAgentScoreData("synthesis-deal-scorer", makeLegacyScorerResult().data) as Record<string, unknown>;
+    expect(out).not.toHaveProperty("overallScore");
+    expect(out).not.toHaveProperty("grade");
+    expect(out).not.toHaveProperty("scoreBreakdown");
+    expect(out.verdict).toBe("favorable");
+    expect((out.dimensionScores as Array<Record<string, unknown>>)[0]).not.toHaveProperty("score");
+  });
+
+  it("agent non-synthèse → retire les notes de premier niveau (marketScore, score), garde le narratif", () => {
+    const out = scrubAgentScoreData("market-intelligence", {
+      marketScore: 60,
+      score: { value: 60 },
+      narrative: { summary: "ok" },
+    }) as Record<string, unknown>;
+    expect(out).not.toHaveProperty("marketScore");
+    expect(out).not.toHaveProperty("score");
+    expect(out.narrative).toEqual({ summary: "ok" });
+  });
+
+  it("IMMUTABLE : l'entrée n'est jamais mutée", () => {
+    const input = { overallScore: 50, score: { value: 50 }, narrative: { summary: "x" } };
+    scrubAgentScoreData("financial-auditor", input);
+    expect(input).toHaveProperty("overallScore", 50);
+    expect(input).toHaveProperty("score");
+  });
+
+  it("entrée non-record → renvoyée telle quelle", () => {
+    expect(scrubAgentScoreData("x", null)).toBeNull();
+    expect(scrubAgentScoreData("x", undefined)).toBeUndefined();
+    expect(scrubAgentScoreData("x", "raw")).toBe("raw");
+    expect(scrubAgentScoreData("x", 42)).toBe(42);
   });
 });
