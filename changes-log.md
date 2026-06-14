@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — étape G4-b — cleanup composants + helpers de score orphelins
+
+### Fichiers
+- `src/components/deals/verdict-panel.tsx` : **supprimé** (composant MORT, 0 importeur ; panneau de score ScoreRing + dimensions + VERDICT_CONFIG).
+- `src/components/ui/score-ring.tsx` : **supprimé** (orphelin après dé-scorisation G4 de conditions-analysis-cards ; seul consumer restant = verdict-panel supprimé).
+- `src/lib/ui-configs.ts` : retrait section « Score Thresholds » — `getScoreColor` + `getScoreLabel` (ancienne échelle mono-axe Excellent/Solide/…) + `getScoreBarColor` (importeurs = verdict-panel + score-ring seulement). Commentaire périmé « verdict-panel » → « tier3-results & analysis-v2 ».
+- `src/lib/format-utils.ts` : retrait `getScoreColor` (0 importeur, team-management a sa version locale) + `getScoreBadgeColor` (0 ref, orphelin depuis suppression score-badge étape D = le NIT du plan).
+
+### Description
+Cleanup des vestiges de score rendus orphelins par la dé-scorisation. Tous vérifiés orphelins par `git grep` avant suppression. **Hors-scope laissé (Karpathy)** : `team-management.tsx` garde `getScoreColor`/`getScoreBg` LOCAUX (scores fondateurs `overallFounderScore`/`domainExpertise`…) = surface de score SÉPARÉE vivante → sweep de complétude avant P4. Le source-guard `orientation-solidity-display.test.ts` référence `getScoreColor`/`getScoreLabel` comme chaînes BANNIES (pas de consommation) → non cassé. **Gate Codex APPROVE.** tsc 0 ; doctrine-guard 10 + doctrine-runtime-guard 17 + orientation-solidity 14 + ui-configs 71 verts.
+
+---
 ## 2026-06-14 — Dé-scorisation — étape G4 — onglet Conditions entièrement scoreless (4 sous-onglets + 2 routes)
 
 ### Fichiers

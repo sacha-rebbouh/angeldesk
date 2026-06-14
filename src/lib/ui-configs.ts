@@ -66,45 +66,6 @@ export function getSeverityStyle(severity: string) {
 }
 
 // =============================================================================
-// Score Thresholds — canonical scale used across the app
-// =============================================================================
-
-/**
- * Canonical score color mapping.
- * Use this everywhere for consistent score coloring.
- */
-export function getScoreColor(score: number): string {
-  if (score >= 80) return "text-green-600";
-  if (score >= 60) return "text-blue-600";
-  if (score >= 40) return "text-yellow-600";
-  if (score >= 20) return "text-orange-600";
-  return "text-red-600";
-}
-
-/**
- * Canonical score label mapping.
- * Aligned with score-badge.tsx SCORE_SCALE.
- */
-export function getScoreLabel(score: number): string {
-  if (score >= 80) return "Excellent";
-  if (score >= 60) return "Solide";
-  if (score >= 40) return "À approfondir";
-  if (score >= 20) return "Points d'attention";
-  return "Zone d'alerte";
-}
-
-/**
- * Canonical score bar color mapping (for progress bars).
- */
-export function getScoreBarColor(score: number): string {
-  if (score >= 80) return "bg-green-500";
-  if (score >= 60) return "bg-blue-500";
-  if (score >= 40) return "bg-yellow-500";
-  if (score >= 20) return "bg-orange-500";
-  return "bg-red-500";
-}
-
-// =============================================================================
 // Orientation du signal — 5 valeurs canoniques (axe 1 du modèle 2 axes)
 // =============================================================================
 
@@ -120,7 +81,7 @@ export const ORIENTATION_VALUES = [
 export type Orientation = (typeof ORIENTATION_VALUES)[number];
 
 // =============================================================================
-// Recommendation Config — centralized for verdict-panel & tier3-results
+// Recommendation Config — centralized for tier3-results & analysis-v2
 // =============================================================================
 
 export const RECOMMENDATION_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
