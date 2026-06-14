@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P4-b4 — retrait du write de persistence inerte (synthesis → Deal.*Score) — P4 producteurs COMPLET
+
+### Fichiers
+- `src/agents/orchestrator/persistence.ts` : case `synthesis-deal-scorer` de `persistAgentResult` **retiré** (écrivait `Deal.{fundamentals,global,team,market,product,financials}Score` depuis `synthResult.data.overallScore` + `dimensionScores`). Inerte depuis P4-a (synthesis ne produit plus `overallScore` → garde `if (overallScore != null)` toujours faux). Remplacé par un commentaire (drop colonnes + readers = P5). Import `SynthesisDealScorerResult` retiré (orphelin).
+
+### Description
+**Chantier dé-scorisation, P4-b4 (gaté Codex APPROVE — clôt P4 producteurs).** Dernier nettoyage P4 : retrait du write DB mort. **P4 producteurs COMPLET** : b1 (team-investigator founder scores), b2 (conditions-analyst note + Option B dimensionAssessment), b3 (retrait deal-scorer Tier 0), b4 (persistence inerte). **Reporté à P5 (périmètre validé Codex)** : la PURGE des champs optionnels de note (synthesis `overallScore`/`dimensionScores`/`scoreBreakdown`/`comparativeRanking`/`confidence` ; conditions `score`) est entrelacée avec les lecteurs défensifs (`score-extraction`, `canonical-read-model`) + le drop des colonnes `Deal.*Score` → cluster P5, pas P4 (les retirer maintenant casserait les readers `?? null` et la compat snapshots). **Pas de bump `STEPWISE_GRAPH_VERSION`** (retrait d'un write inerte, aucun changement graphe/snapshot). tsc 0 ; persistence idempotence + salvage + progress-monotone = 32 verts.
+
+---
 ## 2026-06-15 — Dé-scorisation — P4-b3 — retrait de l'agent deal-scorer Tier 0 (pur producteur de note)
 
 ### Fichiers
@@ -307,12 +316,3 @@ Sous-scores /100 retirés (classe `sectorScore`/`sectorFitScore` du scrubber). L
 
 ### Description
 Notes de deal / sous-scores agrégés retirés (classe `consistencyScore`/`overallSkepticism` du scrubber `AGENT_DEAL_NOTE_KEYS`). Conservés (allowlist doctrine — confiance/probabilité PAR ITEM sur un fait/scénario précis, jamais une note de deal) : `confidenceLevel` par contradiction, `worstCase.probability`, `alt.plausibility`, ainsi que tout le contenu verbal (`narrative.summary`, `consistency.interpretation`, `skepticism.verdict`/`verdictRationale`, structuralRisks, blindSpots, objections, altNarratives, dataGaps, convergence). Producteurs intacts = P4. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (PDF) étape 2/N — cover headline scoreless (orientation × solidité)
-
-### Fichiers
-- `src/lib/pdf/pdf-sections/cover.tsx` : headline (coin haut-droit de la couverture) — retrait du `ScoreCircle(overallScore)` + `recLabel(verdict)`. Remplacement par le bloc 2 axes verbal aligné à droite : ORIENTATION DU SIGNAL (`readDoctrineOrientation(analysis.results)` → `DOCTRINE_ORIENTATION_CONFIG` uppercase) + SOLIDITÉ DES PREUVES (`signalProfile.evidenceSolidity`, fallback `signalContribution.evidenceSolidity` → `proofLabel`). Affiché seulement si `orientationLabel` existe et thèse non fragile. Branche `thesisGated` : texte « Score global masqué… » → « Orientation du signal masquée… ». Variables `overallScore`/`verdict` + imports `ScoreCircle`/`recLabel` retirés ; commentaire `Company name + score` → `Company name + profil du signal`.
-
-### Description
-Même pattern que l'étape 1 (headline orientation × solidité, bi-reader scoreless). Après ce diff, le helper `recLabel` (5 valeurs) n'a plus aucun consommateur — son retrait + `ScoreCircle`/`ScoreBar`/`scoreColor` est groupé dans l'étape finale de nettoyage des helpers/composants PDF (relisible en un diff). Producteurs intacts = P4. Aucune topologie durable touchée → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
