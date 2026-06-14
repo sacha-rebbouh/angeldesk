@@ -19,7 +19,8 @@ import { AnalysisV2Live } from "@/components/deals/analysis-v2/analysis-v2-live"
 import { AnalysisRunningOverlay } from "@/components/deals/analysis-v2/analysis-running-overlay";
 import { buildAnalysisV2ViewModel } from "@/components/deals/analysis-v2/lib/selectors";
 import type { ResultsMap } from "@/components/deals/analysis-v2/lib/extractors";
-import { ScoreGrid } from "@/components/deals/score-display";
+import { BadgePair } from "@/components/deals/analysis-v2/atoms/badge-pair";
+import { aggregateOrientation, aggregateSolidity } from "@/components/deals/analysis-v2/lib/solidity-aggregator";
 import { DocumentsTab } from "@/components/deals/documents-tab";
 import { DealDetailTabs } from "@/components/deals/deal-detail-tabs";
 import { TeamManagement } from "@/components/deals/team-management";
@@ -215,7 +216,6 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
     !!latestThesis &&
     new Set(["alert_dominant", "vigilance"]).has(latestThesis.verdict) &&
     !overviewAnalysisForThesis?.thesisBypass;
-  const showOverviewScores = canonicalDeal.globalScore != null && !!latestThesis && !thesisGated;
 
   const [latestCompletedAnalysis, latestThesisFull] = await Promise.all([
     prisma.analysis.findFirst({
@@ -242,6 +242,17 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
   const latestCompletedResults = latestCompletedAnalysis
     ? await loadResults(latestCompletedAnalysis.id)
     : null;
+
+  // Dé-scorisation P3 (Q1 Sacha) : la vue d'ensemble ne restitue plus de note
+  // de deal (ScoreGrid /100). Orientation × solidité verbale (modèle 2 axes),
+  // dérivées des mêmes agrégateurs score-indépendants que l'analyse v2.
+  const overviewResultsMap =
+    latestCompletedResults && typeof latestCompletedResults === "object" && !Array.isArray(latestCompletedResults)
+      ? (latestCompletedResults as unknown as ResultsMap)
+      : null;
+  const overviewOrientation = overviewResultsMap ? aggregateOrientation(overviewResultsMap) : null;
+  const overviewSolidity = overviewResultsMap ? aggregateSolidity(overviewResultsMap) : null;
+  const showOverviewSignal = overviewOrientation != null && !!latestThesis && !thesisGated;
 
   const analysisV2ViewModel =
     latestCompletedAnalysis &&
@@ -370,33 +381,25 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
                   <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-foreground/5">
                     <Brain className="h-4 w-4 text-foreground/70" />
                   </div>
-                  <h3 className="text-[15px] font-semibold tracking-tight">Scores</h3>
+                  <h3 className="text-[15px] font-semibold tracking-tight">Orientation</h3>
                 </div>
-                {showOverviewScores && (
+                {showOverviewSignal && (
                   <span className="text-[11px] text-muted-foreground/60 font-medium">Analyse IA</span>
                 )}
               </div>
               <div className="px-6 py-5">
-                {showOverviewScores ? (
-                  <ScoreGrid
-                    scores={{
-                      global: canonicalDeal.globalScore,
-                      fundamentals: deal.fundamentalsScore,
-                      ...(conditionsTabEnabled ? { conditions: deal.conditionsScore } : {}),
-                      team: canonicalDeal.teamScore,
-                      market: canonicalDeal.marketScore,
-                      product: canonicalDeal.productScore,
-                      financials: canonicalDeal.financialsScore,
-                    }}
-                    stage={deal.stage}
-                  />
+                {showOverviewSignal ? (
+                  <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+                    <BadgePair orientation={overviewOrientation} solidity={overviewSolidity} size="md" />
+                    <p className="text-xs text-muted-foreground">Orientation du signal · solidité des preuves</p>
+                  </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-10 text-center">
                     <div className="rounded-2xl bg-muted/50 p-4">
                       <Brain className="h-10 w-10 text-muted-foreground/40" />
                     </div>
                     <p className="mt-5 text-sm font-semibold">
-                      {thesisGated ? "Score masqué par la thèse canonique" : "Score indisponible dans la vue d'ensemble"}
+                      {thesisGated ? "Orientation masquée par la thèse canonique" : "Orientation indisponible dans la vue d'ensemble"}
                     </p>
                     <p className="mt-1.5 text-xs text-muted-foreground max-w-xs">
                       {thesisGated

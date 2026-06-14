@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 13/N (F) — vue d'ensemble : ScoreGrid /100 → BadgePair orientation × solidité (décision Sacha)
+
+### Fichiers
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` : la carte « Scores » de l'overview rendait un `ScoreGrid` de 7 sous-scores /100 (`global`/`team`/`market`/`product`/`financials` depuis `canonicalDeal.*Score` + `fundamentals`/`conditions` depuis `deal.*Score` — toutes notes de deal bannies). Remplacé par **`BadgePair` (orientation × solidité)**. Orientation/solidité dérivées via `aggregateOrientation`/`aggregateSolidity` sur `latestCompletedResults` (déjà chargé server-side pour le view model analysis-v2 → aucun chargement de blob supplémentaire, pas de régression perf SSR). Gating `showOverviewScores` (globalScore != null) → `showOverviewSignal` (orientation != null && latestThesis && !thesisGated, gating thèse conservé). En-tête « Scores » → « Orientation » ; empty-state « Score masqué/indisponible » → « Orientation masquée/indisponible ». Import `ScoreGrid` retiré (→ `BadgePair` + agrégateurs).
+
+### Description
+Décision produit Sacha (AskUserQuestion, Q1 overview) : remplacer le score grid par le modèle 2 axes verbal. **Gate Codex APPROVE** (« plus de ScoreGrid ni 7 notes /100, BadgePair depuis results déjà chargé, gating thèse préservé, orientation dérivée sans lecture de note de deal »). Mêmes agrégateurs score-indépendants que tier3/investor-view/tier1 (caveat C3 connu : `aggregateSolidity` peut en dernier fallback dériver une solidité verbale depuis `coherenceScore` documentaire — pas la note de deal, nombre jamais rendu). **Périmètre = surface overview uniquement.** Le CLUSTER read-model/delta/compare (`canonical-read-model.ts` expose encore `*Score`, `analysis-delta` scoreDelta, `analysis-variance`, `compare/route.ts`, `score-extraction.ts`) = sous-chantier séparé à venir ; champs DB intacts (= P5). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; eslint page clean ; doctrine guards 54 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 12/N (E) — listes de deals : note /100 → compteur de signaux (décision Sacha)
 
 ### Fichiers
