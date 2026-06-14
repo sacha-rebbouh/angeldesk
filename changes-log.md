@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 14/N (D) — suppression des composants score partagés orphelins (clôt la cible du plan)
+
+### Fichiers
+- **Supprimés** (4 fichiers totalement orphelins, 0 consumer runtime, 0 import de test) : `src/components/shared/score-badge.tsx` (`ScoreBadge`, plus aucun consumer après tier1-results C1-C4 + listes E) ; `src/components/deals/score-display.tsx` (`ScoreGrid`, plus aucun consumer après overview F) ; `src/components/deals/delta-indicator.tsx` + `src/components/deals/adjusted-score-badge.tsx` (orphelins préexistants depuis le cluster analysis-panel).
+- **Conservé** : `src/components/ui/score-ring.tsx` — consumer **vivant** `conditions/conditions-analysis-cards.tsx` (via `conditions-tab.tsx`) ; `verdict-panel.tsx` l'importe aussi mais est MORT (aucun importeur).
+
+### Description
+Cleanup des composants de note de deal devenus orphelins après la bascule des consumers (tier1-results, listes, overview). **Gate Codex APPROVE** : 4 suppressions sûres (aucun import runtime restant de `ScoreBadge`/`ScoreGrid`/`DeltaIndicator`/`AdjustedScoreBadge` dans `src` ; occurrences restantes = docs/commentaires) ; conservation de `score-ring.tsx` correcte. **Ceci clôt la cible du plan de relais (« tier1-results puis composants score partagés »).** Restent des sous-chantiers SÉPARÉS hors cible : (1) cluster read-model/delta/compare/score-extraction (`canonical-read-model.ts` expose encore `*Score`, `analysis-delta`, `analysis-variance`, `compare`, `score-extraction`) ; (2) sous-chantier conditions (`conditions-analysis-cards.tsx` rend `ScoreRing(score)`) ; (3) nit futur `getScoreBadgeColor` dans `format-utils.ts` (à nettoyer si plus aucun consumer). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; doctrine guards 40 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 13/N (F) — vue d'ensemble : ScoreGrid /100 → BadgePair orientation × solidité (décision Sacha)
 
 ### Fichiers
