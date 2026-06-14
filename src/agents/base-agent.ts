@@ -1345,7 +1345,11 @@ ${sanitizedDeal.description}
 
   private getGlobalDocumentContextBudget(): number {
     if (this.config.name === "financial-auditor") return 150_000;
-    if (["synthesis-deal-scorer", "memo-generator", "devils-advocate"].includes(this.config.name)) return 140_000;
+    // Dé-scorisation P2-d : l'exception 140k pour synthesis/memo/devils est retirée.
+    // Elle autorisait un contexte documentaire géant (prompt synthèse ~137k) qui, combiné
+    // au plafond Vercel 300s, alimentait la boucle du step de synthèse (post-mortem cmq9lg9un…).
+    // Ces agents de synthèse travaillent surtout sur les sorties des autres agents
+    // (previousResults), pas sur le corpus brut → ils s'alignent sur le budget général.
     return GENERAL_DOCUMENT_CONTEXT_BUDGET;
   }
 

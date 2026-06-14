@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P2-d.1 — Retrait de l'exception 140k de budget documentaire (synthesis / memo / devils)
+
+### Fichiers
+- `src/agents/base-agent.ts` : `getGlobalDocumentContextBudget()` — retrait de l'exception `return 140_000` qui s'appliquait à synthesis-deal-scorer / memo-generator / devils-advocate. Ces 3 agents de synthèse retombent sur `GENERAL_DOCUMENT_CONTEXT_BUDGET` (120_000). Exception `financial-auditor` (150_000) préservée.
+- `src/agents/__tests__/document-context-budget.guard.test.ts` : NOUVEAU source-guard — l'exception 140k a disparu, plus de special-case synthesis/memo/devils, financial-auditor 150k conservé, fallback GENERAL.
+
+### Description
+Premier sous-bloc de P2-d (budgets deadline-aware, fix racine de la boucle 300s du step de synthèse — post-mortem `cmq9lg9un`). L'exception 140k autorisait un contexte documentaire géant (prompt synthèse ~137k) qui, combiné au plafond Vercel 300s, alimentait la boucle. Les agents de synthèse exploitent surtout `previousResults` (sorties des autres agents), pas le corpus brut → budget général suffisant. memo déjà borné 120s LLM + fallback déterministe (0109961), devils déjà `timeoutMs 120000` + score-free (P2-b). Aucun changement de forme du graphe stepwise → PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; base-agent + tier3 221 tests verts.
+
+---
 ## 2026-06-14 — Dé-scorisation P2-c — Scrub des notes de deal dans les contextes LLM (board / mémo / summary)
 
 ### Fichiers
