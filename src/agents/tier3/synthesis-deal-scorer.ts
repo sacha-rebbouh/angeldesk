@@ -1019,22 +1019,11 @@ Aucune incohérence majeure détectée entre les agents.`;
     }
 
     const data = conditionsResult.data as Record<string, unknown>;
-    const score = data.score as { value?: number; breakdown?: { criterion: string; score: number; justification: string }[] } | undefined;
     const findings = data.findings as Record<string, unknown> | undefined;
     const redFlags = data.redFlags as { severity?: string; title?: string }[] | undefined;
     const narrative = data.narrative as { oneLiner?: string } | undefined;
 
     const lines: string[] = [];
-
-    // Score
-    if (score?.value != null) {
-      lines.push(`**Score conditions: ${score.value}/100**`);
-      if (score.breakdown) {
-        for (const b of score.breakdown) {
-          lines.push(`- ${b.criterion}: ${b.score}/100 — ${b.justification}`);
-        }
-      }
-    }
 
     // Source
     if (findings?.termsSource) {

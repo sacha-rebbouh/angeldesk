@@ -79,7 +79,13 @@ export function buildTermsResponse(
     mode,
     tranches,
     conditionsScore,
-    conditionsBreakdown: cached?.score?.breakdown ?? null,
+    // Chantier P4 — évaluation qualitative par critère (scoreless). Nouveau champ
+    // findings.dimensionAssessment ; compat lecture legacy depuis score.breakdown
+    // (criterion + justification) pour les snapshots historiques pré-P4.
+    conditionsBreakdown:
+      cached?.findings?.dimensionAssessment ??
+      cached?.score?.breakdown?.map(b => ({ criterion: b.criterion, justification: b.justification })) ??
+      null,
     conditionsAnalysis: (cached?.findings ?? null) as ConditionsFindings | null,
     negotiationAdvice: advice.length > 0 ? advice : null,
     redFlags: flags.length > 0 ? flags : null,

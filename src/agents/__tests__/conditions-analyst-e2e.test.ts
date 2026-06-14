@@ -368,17 +368,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     expect(data.meta.confidenceLevel).toBeGreaterThan(0);
     expect(data.meta.confidenceLevel).toBeLessThanOrEqual(100);
 
-    // Score (0-100)
-    expect(data.score.value).toBeGreaterThanOrEqual(0);
-    expect(data.score.value).toBeLessThanOrEqual(100);
-    expect(["A", "B", "C", "D", "F"]).toContain(data.score.grade);
-    expect(data.score.breakdown).toHaveLength(4);
-    for (const b of data.score.breakdown!) {
-      expect(b.score).toBeGreaterThanOrEqual(0);
-      expect(b.score).toBeLessThanOrEqual(100);
-      expect(b.weight).toBeGreaterThan(0);
-      expect(b.justification).toBeTruthy();
-    }
+    // Chantier P4 — conditions-analyst SCORELESS : plus de note de deal produite.
 
     // Findings — termsSource
     expect(data.findings.termsSource).toBe("form");
@@ -431,7 +421,6 @@ describe("Conditions Analyst — E2E Tests", () => {
     expect(Array.isArray(data.narrative.keyInsights)).toBe(true);
     expect(Array.isArray(data.narrative.forNegotiation)).toBe(true);
 
-    console.log(`[Standalone] Score: ${data.score.value}/100 (${data.score.grade})`);
     console.log(`[Standalone] Source: ${data.findings.termsSource}`);
     console.log(`[Standalone] Valuation verdict: ${data.findings.valuation.verdict}`);
     console.log(`[Standalone] Instrument: ${data.findings.instrument.type} (${data.findings.instrument.assessment})`);
@@ -463,11 +452,6 @@ describe("Conditions Analyst — E2E Tests", () => {
 
     const data = (result as { data: ConditionsAnalystData }).data;
 
-    // Score structure
-    expect(data.score.value).toBeGreaterThanOrEqual(0);
-    expect(data.score.value).toBeLessThanOrEqual(100);
-    expect(data.score.breakdown).toHaveLength(4);
-
     // In pipeline mode, cross-reference insights should be populated
     expect(Array.isArray(data.findings.crossReferenceInsights)).toBe(true);
     for (const insight of data.findings.crossReferenceInsights) {
@@ -482,13 +466,12 @@ describe("Conditions Analyst — E2E Tests", () => {
     const hasStandaloneLimitation = data.meta.limitations?.some(l => l.toLowerCase().includes("standalone"));
     expect(hasStandaloneLimitation).toBe(false);
 
-    console.log(`[Pipeline] Score: ${data.score.value}/100 (${data.score.grade})`);
     console.log(`[Pipeline] Cross-reference insights: ${data.findings.crossReferenceInsights.length}`);
     console.log(`[Pipeline] Confidence: ${data.meta.confidenceLevel}%`);
   });
 
   // ── Test 3: No conditions data — returns fallback result ──
-  it("No conditions: returns score=0, isFallback=true, and generates priority questions", async () => {
+  it("No conditions: returns fallback result and generates priority questions", async () => {
     const { ConditionsAnalystAgent } = await import("../tier3/conditions-analyst");
     const agent = new ConditionsAnalystAgent();
 
@@ -516,10 +499,7 @@ describe("Conditions Analyst — E2E Tests", () => {
 
     const data = (result as { data: ConditionsAnalystData }).data;
 
-    // Score should be 0 with isFallback
-    expect(data.score.value).toBe(0);
-    expect(data.score.grade).toBe("F");
-    expect(data.score.isFallback).toBe(true);
+    // Chantier P4 — fallback SCORELESS : plus de note (ni value=0 ni isFallback de score).
 
     // Source should be "none"
     expect(data.findings.termsSource).toBe("none");
@@ -542,7 +522,6 @@ describe("Conditions Analyst — E2E Tests", () => {
     expect(data.meta.confidenceLevel).toBe(0);
     expect(data.meta.dataCompleteness).toBe("minimal");
 
-    console.log(`[No conditions] Score: ${data.score.value}/100 (${data.score.grade}, fallback=${data.score.isFallback})`);
     console.log(`[No conditions] Questions: ${data.questions.length} (critical: ${hasCriticalQuestion})`);
     console.log(`[No conditions] Narrative: ${data.narrative.oneLiner}`);
   });
@@ -573,7 +552,7 @@ describe("Conditions Analyst — E2E Tests", () => {
   });
 
   // ── Test 5: Score normalization and validation ──
-  it("Output scores are clamped to 0-100 and grades are consistent", async () => {
+  it("Output red flags and negotiation advice have valid severity/priority", async () => {
     const { ConditionsAnalystAgent } = await import("../tier3/conditions-analyst");
     const agent = new ConditionsAnalystAgent();
 
@@ -590,25 +569,7 @@ describe("Conditions Analyst — E2E Tests", () => {
     const result = await agent.run(context);
     const data = (result as { data: ConditionsAnalystData }).data;
 
-    // Main score
-    expect(data.score.value).toBeGreaterThanOrEqual(0);
-    expect(data.score.value).toBeLessThanOrEqual(100);
-    expect(Number.isInteger(data.score.value)).toBe(true);
-
-    // Grade consistency
-    const v = data.score.value;
-    if (v >= 85) expect(data.score.grade).toBe("A");
-    else if (v >= 70) expect(data.score.grade).toBe("B");
-    else if (v >= 55) expect(data.score.grade).toBe("C");
-    else if (v >= 40) expect(data.score.grade).toBe("D");
-    else expect(data.score.grade).toBe("F");
-
-    // Breakdown scores
-    for (const b of data.score.breakdown!) {
-      expect(b.score).toBeGreaterThanOrEqual(0);
-      expect(b.score).toBeLessThanOrEqual(100);
-      expect(Number.isInteger(b.score)).toBe(true);
-    }
+    // Chantier P4 — conditions-analyst SCORELESS : assertions de note/grade retirées.
 
     // Severity validation on red flags
     const validSeverities = ["CRITICAL", "HIGH", "MEDIUM"];

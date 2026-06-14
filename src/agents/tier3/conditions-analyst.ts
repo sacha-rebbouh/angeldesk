@@ -29,7 +29,6 @@ import type {
   ConditionsAnalystResult,
   ConditionsAnalystFindings,
   AgentMeta,
-  AgentScore,
   AgentRedFlag,
   AgentQuestion,
   AgentAlertSignal,
@@ -43,17 +42,9 @@ import type {
 // ============================================================================
 
 interface LLMConditionsResponse {
-  score: {
-    value: number;
-    breakdown: {
-      criterion: string;
-      weight: number;
-      score: number;
-      justification: string;
-    }[];
-  };
   findings: {
     termsSource: string;
+    dimensionAssessment?: { criterion: string; justification: string }[];
     valuation: {
       assessedValue: number | null;
       percentileVsDB: number | null;
@@ -455,17 +446,9 @@ Produis un JSON avec cette structure exacte:
 
 \`\`\`json
 {
-  "score": {
-    "value": 0-100,
-    "breakdown": [
-      { "criterion": "Valorisation", "weight": 0.35, "score": 0-100, "justification": "..." },
-      { "criterion": "Instrument", "weight": 0.20, "score": 0-100, "justification": "..." },
-      { "criterion": "Protections", "weight": 0.25, "score": 0-100, "justification": "..." },
-      { "criterion": "Gouvernance", "weight": 0.20, "score": 0-100, "justification": "..." }
-    ]
-  },
   "findings": {
     "termsSource": "${termsSource.type}",
+    "dimensionAssessment": [{ "criterion": "Valorisation"|"Instrument"|"Protections"|"Gouvernance", "justification": "1-2 phrases qualitatives par critère, AUCUNE note chiffrée" }],
     "valuation": { "assessedValue": number|null, "percentileVsDB": 0-100|null, "verdict": "UNDERVALUED"|"FAIR"|"AGGRESSIVE"|"VERY_AGGRESSIVE", "rationale": "1-2 phrases", "benchmarkUsed": "source" },
     "instrument": { "type": "...", "assessment": "STANDARD"|"FAVORABLE"|"UNFAVORABLE"|"TOXIC", "rationale": "1-2 phrases", "stageAppropriate": true|false },
     "protections": { "overallAssessment": "STRONG"|"ADEQUATE"|"WEAK"|"NONE", "keyProtections": [{"item":"...","present":true|false,"assessment":"..."}], "missingCritical": ["..."] },
@@ -479,7 +462,7 @@ Produis un JSON avec cette structure exacte:
 }
 \`\`\`
 
-**CONCISION OBLIGATOIRE:** breakdown=4 items, crossReferenceInsights MAX 5, negotiationAdvice MAX 5, redFlags MAX 5, questions MAX 5.`);
+**CONCISION OBLIGATOIRE:** dimensionAssessment=4 critères (Valorisation, Instrument, Protections, Gouvernance), crossReferenceInsights MAX 5, negotiationAdvice MAX 5, redFlags MAX 5, questions MAX 5.`);
 
     // Structured deals: add extra section + output schema for structuredAssessment
     if (context.dealStructure?.mode === "STRUCTURED") {
@@ -536,12 +519,6 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
 
       const data = result.data as Record<string, unknown>;
       const agentLines: string[] = [`### ${name.toUpperCase()}`];
-
-      // Score
-      const score = data.score as { value?: number; grade?: string } | undefined;
-      if (score?.value != null) {
-        agentLines.push(`Score: ${score.value}/100 (${score.grade ?? "?"})`);
-      }
 
       // Key findings (extract top-level string/number fields to avoid truncated JSON)
       if (data.findings && typeof data.findings === "object") {
@@ -600,20 +577,9 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       limitations: ["Aucune condition d'investissement disponible (formulaire vide, pas de term sheet, pas de mention dans le deck)"],
     };
 
-    const score: AgentScore = {
-      value: 0,
-      grade: "F",
-      isFallback: true,
-      breakdown: [
-        { criterion: "Valorisation", weight: 0.35, score: 0, justification: "Conditions non disponibles" },
-        { criterion: "Instrument", weight: 0.20, score: 0, justification: "Conditions non disponibles" },
-        { criterion: "Protections", weight: 0.25, score: 0, justification: "Conditions non disponibles" },
-        { criterion: "Gouvernance", weight: 0.20, score: 0, justification: "Conditions non disponibles" },
-      ],
-    };
-
     const findings: ConditionsAnalystFindings = {
       termsSource: "none",
+      dimensionAssessment: [],
       valuation: { assessedValue: null, percentileVsDB: null, verdict: "FAIR", rationale: "Pas de donnees de valorisation disponibles.", benchmarkUsed: "N/A" },
       instrument: { type: null, assessment: "STANDARD", rationale: "Pas d'instrument renseigne.", stageAppropriate: true },
       protections: { overallAssessment: "NONE", keyProtections: [], missingCritical: ["Toutes les protections sont inconnues"] },
@@ -650,7 +616,6 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
 
     return {
       meta,
-      score,
       findings,
       redFlags: [],
       questions,
@@ -680,19 +645,6 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
     termsSource: "form" | "term_sheet" | "deck",
     context: EnrichedAgentContext
   ): ConditionsAnalystData {
-    // Score
-    const scoreValue = Math.min(100, Math.max(0, Math.round(data.score?.value ?? 50)));
-    const score: AgentScore = {
-      value: scoreValue,
-      grade: this.getGrade(scoreValue),
-      breakdown: (data.score?.breakdown ?? []).map(b => ({
-        criterion: b.criterion ?? "",
-        weight: b.weight ?? 0,
-        score: Math.min(100, Math.max(0, Math.round(b.score ?? 0))),
-        justification: b.justification ?? "",
-      })),
-    };
-
     // Meta
     const meta: AgentMeta = {
       agentName: "conditions-analyst",
@@ -705,6 +657,11 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
     // Findings
     const findings: ConditionsAnalystFindings = {
       termsSource,
+      // Chantier P4 — évaluation qualitative par critère (remplace score.breakdown ; aucune note).
+      dimensionAssessment: (data.findings?.dimensionAssessment ?? [])
+        .filter(d => d && typeof d.criterion === "string" && d.criterion.trim().length > 0)
+        .map(d => ({ criterion: d.criterion, justification: d.justification ?? "" }))
+        .slice(0, 4),
       valuation: {
         assessedValue: data.findings?.valuation?.assessedValue ?? null,
         percentileVsDB: data.findings?.valuation?.percentileVsDB != null
@@ -818,7 +775,7 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       hasBlocker: findings.signalIntensity === "critical" || criticalRedFlags >= 1,
       blockerReason: redFlags.find(rf => rf.severity === "CRITICAL")?.title,
       recommendation: this.signalIntensityToRecommendation(findings.signalIntensity),
-      justification: data.narrative?.summary ?? `Intensité du signal: ${findings.signalIntensity} (${criticalRedFlags} red flags CRITICAL, ${highRedFlags} HIGH, score ${scoreValue}/100).`,
+      justification: data.narrative?.summary ?? `Intensité du signal: ${findings.signalIntensity} (${criticalRedFlags} red flags CRITICAL, ${highRedFlags} HIGH).`,
     };
 
     // Narrative
@@ -829,7 +786,7 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
       forNegotiation: data.narrative?.forNegotiation ?? [],
     };
 
-    return { meta, score, findings, redFlags, questions, alertSignal, narrative };
+    return { meta, findings, redFlags, questions, alertSignal, narrative };
   }
 
   // ============================================================================
@@ -910,13 +867,6 @@ REGLE CRITIQUE — COMPARAISON ECONOMIQUE DES INSTRUMENTS:
     }
   }
 
-  private getGrade(score: number): "A" | "B" | "C" | "D" | "F" {
-    if (score >= 85) return "A";
-    if (score >= 70) return "B";
-    if (score >= 55) return "C";
-    if (score >= 40) return "D";
-    return "F";
-  }
 
   private validateSeverity(s: string | undefined): "CRITICAL" | "HIGH" | "MEDIUM" {
     const upper = (s ?? "").toUpperCase();

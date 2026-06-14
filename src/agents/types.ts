@@ -3133,6 +3133,11 @@ export type Tier3SignalIntensity = "low" | "elevated" | "high" | "critical";
 export interface ConditionsAnalystFindings {
   termsSource: "form" | "term_sheet" | "deck" | "none";
 
+  // Chantier P4 — conditions-analyst SCORELESS : évaluation qualitative par
+  // critère (Valorisation/Instrument/Protections/Gouvernance + justification
+  // verbale). Remplace l'ancien score.breakdown. AUCUNE note chiffrée.
+  dimensionAssessment: { criterion: string; justification: string }[];
+
   valuation: {
     assessedValue: number | null;
     percentileVsDB: number | null;
@@ -3201,7 +3206,8 @@ export interface ConditionsAnalystFindings {
 
 export interface ConditionsAnalystData {
   meta: AgentMeta;
-  score: AgentScore;
+  /** Chantier P4 — note de deal non produite ; OPTIONNEL pour compat durable (snapshots v4 en vol + analyses historiques + lecteurs défensifs). */
+  score?: AgentScore;
   findings: ConditionsAnalystFindings;
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];

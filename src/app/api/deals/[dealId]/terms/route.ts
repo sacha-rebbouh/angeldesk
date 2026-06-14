@@ -352,13 +352,12 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       console.error(`[conditions-analyst] Standalone analysis ${analysisStatus}:`, msg);
     }
 
-    // --- 3. Update deal scores ---
-    const conditionsScore = analysisResult?.score?.value ?? null;
+    // --- 3. Update deal (cache analyse conditions ; note neutralisée — chantier P4, colonne droppée en P5) ---
     await prisma.$transaction([
       prisma.deal.update({
         where: { id: dealId },
         data: {
-          conditionsScore: conditionsScore != null ? Math.round(conditionsScore) : null,
+          conditionsScore: null,
           conditionsAnalysis: analysisResult
             ? (analysisResult as unknown as Prisma.InputJsonValue)
             : undefined,
@@ -383,7 +382,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const response = buildTermsResponse(
       upsertedTerms as unknown as Record<string, unknown>,
       analysisResult,
-      conditionsScore != null ? Math.round(conditionsScore) : null,
+      null,
       mode as DealMode,
       responseTranches,
     );

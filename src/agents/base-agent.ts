@@ -1442,7 +1442,6 @@ ${sanitizedDeal.description}
       "gtm-analyst",
       "customer-intel",
       "question-master",
-      "conditions-analyst",
       "contradiction-detector",
       "devils-advocate",
     ]);
@@ -1454,6 +1453,12 @@ ${sanitizedDeal.description}
       // retirés des champs requis (note de deal non produite) ; `verdict` +
       // `signalProfile` (orientation scoreless) deviennent les garants.
       return ["verdict", "investmentRecommendation", "keyStrengths", "keyWeaknesses", "criticalRisks", "signalProfile"];
+    }
+    if (this.config.name === "conditions-analyst") {
+      // Chantier P4 — contrat SCORELESS : `score` retiré des champs requis
+      // (note conditions non produite) ; l'orientation est portée par
+      // findings.signalIntensity + signalContribution scoreless.
+      return ["meta", "findings", "redFlags", "questions", "alertSignal", "narrative"];
     }
     if (this.config.name === "memo-generator") {
       return ["executiveSummary", "companyOverview", "investmentHighlights", "keyRisks", "dueDiligenceFindings", "nextSteps"];

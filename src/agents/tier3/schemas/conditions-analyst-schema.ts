@@ -24,10 +24,19 @@ import {
  */
 export const ConditionsAnalystResponseSchema = z.object({
   meta: Tier3MetaSchema,
-  score: Tier3ScoreSchema,
+  // Chantier P4 — conditions-analyst SCORELESS : note de deal plus produite ; OPTIONNEL pour compat (schéma hors-runtime, agent typé LLMConditionsResponse).
+  score: Tier3ScoreSchema.optional(),
 
   findings: z.object({
     termsSource: z.enum(["form", "term_sheet", "deck", "none"]),
+
+    // Chantier P4 — conditions-analyst SCORELESS : évaluation qualitative par
+    // critère (remplace score.breakdown). criterion + justification UNIQUEMENT,
+    // aucune note. Optionnel + default [] pour compat historique.
+    dimensionAssessment: z.array(z.object({
+      criterion: z.string(),
+      justification: z.string(),
+    }).strict()).optional().default([]),
 
     valuation: z.object({
       assessedValue: z.number().nullable(),

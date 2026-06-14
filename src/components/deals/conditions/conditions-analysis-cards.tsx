@@ -16,7 +16,7 @@ import { ResolutionBadge } from "@/components/deals/resolution-badge";
 import { ResolutionDialog } from "@/components/deals/resolution-dialog";
 import type { AlertResolution, CreateResolutionInput } from "@/hooks/use-resolutions";
 import type {
-  ScoreBreakdownItem,
+  DimensionAssessmentItem,
   NegotiationAdviceItem,
   RedFlagItem,
   NarrativeData,
@@ -47,7 +47,7 @@ export const ConditionsHeroCard = React.memo(function ConditionsHeroCard({
   onOpenSimulator,
   onOpenComparator,
 }: {
-  breakdown: ScoreBreakdownItem[] | null;
+  breakdown: DimensionAssessmentItem[] | null;
   narrative: NarrativeData | null;
   valuation: ValuationFindings | null;
   redFlagCount: number;
