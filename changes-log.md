@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 9/N (C2) — tier1-results.tsx : sous-scores numériques par dimension retirés
+
+### Fichiers
+- `src/components/deals/tier1-results.tsx` : retrait des sous-scores d'appréciation 0-100 restitués par dimension (anti-pattern `dimensionScores[].score`). (1) Carte équipe : grille 3 tuiles `technicalStrength`/`businessStrength`/`complementarityScore` supprimée (aucun verdict verbal companion). (2) Carte équipe : ligne par fondateur `domainExpertise`/`entrepreneurialExperience` (/100) supprimée. (3) Carte concurrence : barre de progression + `overallMoatStrength`/100 supprimées (la barre visualisait le score) — verdict verbal `moatVerdict` (MOAT_LABELS) **conservé**. (4) Carte deck : grille `storyCoherence`/`professionalismScore`/`transparencyScore` supprimée. (5) Carte customer : `pmfScore`/100 supprimé — verdict verbal `pmfVerdict` (PMF_LABELS) **conservé**. (6) Carte question-master : grille `agentsAnalyzed` affichait `grade` (A-F) + `score` (0-100) coloré par score → retiré ; **conservés** le nom d'agent + le compteur observable `criticalRedFlagsCount`.
+
+### Description
+Étape 2/4 de tier1-results.tsx : suppression des notes d'appréciation par dimension. Principe : retirer les nombres d'appréciation du deal, conserver les verdicts verbaux existants (`moatVerdict`/`pmfVerdict`, pas de re-dérivation depuis un score) et les comptes observables (`criticalRedFlagsCount`), **sans inventer de contenu de remplacement** (choix produit/UX réservé à l'utilisateur, YAGNI). Allowlist conservée : métriques observables (NRR/churn %, ACV, CAC, croissance %, percentiles de métriques, dilution/parts %), confiance ReAct par item (`reactData.confidence.score`%, non une note de deal). **Gate Codex APPROVE** (aucun nit). Hors périmètre, suivront : résumé `avgScore`/`dim.score` (C3) ; 4 vars mortes `scoreValue` induites par C1 (C4 cleanup). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 54 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 8/N (C1) — tier1-results.tsx : ScoreBadge par carte d'agent → chip d'intensité verbal
 
 ### Fichiers

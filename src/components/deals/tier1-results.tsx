@@ -720,24 +720,6 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
           <p className="text-sm text-muted-foreground">{data.narrative.summary}</p>
         )}
 
-        {/* Team Composition */}
-        {teamComposition && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
-            <div className="p-2 rounded-lg bg-muted">
-              <div className="text-lg font-bold">{teamComposition.technicalStrength}</div>
-              <div className="text-xs text-muted-foreground">Tech</div>
-            </div>
-            <div className="p-2 rounded-lg bg-muted">
-              <div className="text-lg font-bold">{teamComposition.businessStrength}</div>
-              <div className="text-xs text-muted-foreground">Business</div>
-            </div>
-            <div className="p-2 rounded-lg bg-muted">
-              <div className="text-lg font-bold">{teamComposition.complementarityScore}</div>
-              <div className="text-xs text-muted-foreground">Complémentarité</div>
-            </div>
-          </div>
-        )}
-
         {/* Founder Profiles */}
         <ExpandableSection title={`Fondateurs (${founderProfiles.length})`} defaultOpen>
           <div className="space-y-3 mt-2">
@@ -746,10 +728,6 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-medium">{f.name}</span>
                   <Badge variant="outline">{f.role}</Badge>
-                </div>
-                <div className="flex gap-2 text-xs">
-                  <span>Domain: {f.scores?.domainExpertise ?? 0}/100</span>
-                  <span>Startup XP: {f.scores?.entrepreneurialExperience ?? 0}/100</span>
                 </div>
                 {f.linkedinVerified && (
                   <div className="text-xs text-green-600 mt-1">✓ LinkedIn vérifié</div>
@@ -880,15 +858,6 @@ const CompetitiveIntelCard = memo(function CompetitiveIntelCard({
               <span className="text-sm font-medium">Moat</span>
               <Badge variant="outline">{moatAnalysis.primaryMoatType?.replace(/_/g, " ")}</Badge>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-2 rounded-full bg-background">
-                <div
-                  className="h-full rounded-full bg-purple-500"
-                  style={{ width: `${moatAnalysis.overallMoatStrength ?? 0}%` }}
-                />
-              </div>
-              <span className="text-sm font-medium">{moatAnalysis.overallMoatStrength ?? 0}/100</span>
-            </div>
             <p className="text-xs text-muted-foreground mt-1">{moatAnalysis.moatJustification}</p>
             <Badge variant="outline" className={cn(
               "mt-2 text-xs",
@@ -1002,28 +971,6 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
           </div>
           <p className="text-sm text-muted-foreground">{data.narrative?.summary}</p>
         </div>
-
-        {/* Narrative Analysis */}
-        {data.findings?.narrativeAnalysis && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
-            <div className="p-2 rounded-lg bg-muted">
-              <div className="text-lg font-bold">{data.findings.narrativeAnalysis.storyCoherence}</div>
-              <div className="text-xs text-muted-foreground">Cohérence</div>
-            </div>
-            {data.findings.deckQuality && (
-              <>
-                <div className="p-2 rounded-lg bg-muted">
-                  <div className="text-lg font-bold">{data.findings.deckQuality.professionalismScore}</div>
-                  <div className="text-xs text-muted-foreground">Professionnalisme</div>
-                </div>
-                <div className="p-2 rounded-lg bg-muted">
-                  <div className="text-lg font-bold">{data.findings.deckQuality.transparencyScore}</div>
-                  <div className="text-xs text-muted-foreground">Transparence</div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
 
         {/* Claim Verification */}
         {Array.isArray(data.findings?.claimVerification) && (
@@ -2548,7 +2495,6 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
                 )}>
                   {getEnumLabel(pmf.pmfVerdict, PMF_LABELS)}
                 </Badge>
-                <span className="text-sm font-bold">{pmf.pmfScore}/100</span>
               </div>
             </div>
             <p className="text-xs text-muted-foreground">{pmf.pmfJustification}</p>
@@ -3077,21 +3023,12 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
               <div className="mt-2 grid grid-cols-3 md:grid-cols-6 gap-1">
                 {tier1Summary.agentsAnalyzed.map((a: {
                   agentName: string;
-                  score: number;
-                  grade: string;
                   criticalRedFlagsCount: number;
                 }, i: number) => (
                   <div key={i} className="p-1 rounded bg-white text-center text-xs">
                     <div className="truncate text-muted-foreground">{a.agentName.replace("-", " ").slice(0, 10)}</div>
-                    <div className={cn(
-                      "font-bold",
-                      a.score >= 80 ? "text-green-600" :
-                      a.score >= 60 ? "text-yellow-600" : "text-red-600"
-                    )}>
-                      {a.grade} ({a.score})
-                    </div>
                     {a.criticalRedFlagsCount > 0 && (
-                      <div className="text-red-600">{a.criticalRedFlagsCount} crit.</div>
+                      <div className="text-red-600 font-bold">{a.criticalRedFlagsCount} crit.</div>
                     )}
                   </div>
                 ))}
