@@ -24,6 +24,7 @@
 | 2026-06-03 | DIAGNOSTIC | Fix Bug 1 conçu depuis la FORME du crash avant de lire l'exception exacte (pourtant dans analysis.summary) ; gate Codex REQUEST_CHANGES a recadré avant toute implémentation |
 | 2026-06-03 | PRÉCONDITION | Reconduit le pattern "raffiner le graphe stepwise EN PLACE" (splits d-4..d-7) sans réévaluer sa précondition (flag OFF) — désormais ON ; risque cross-deploy noté tôt PUIS écarté, Codex l'a escaladé en blocking |
 | 2026-06-11 | RECHERCHE | Affirmé "aucun AUTRE chemin n'écrit Deal.growthRate" depuis un grep `growthRate:` (object-literal) sur-filtré ; raté l'assignation par propriété `updateData.growthRate = info.growthRateYoY` (persistence orchestrateur) — Codex l'a trouvée au 1er tour du gate |
+| 2026-06-12 | EXÉCUTION | `codex exec` lancé avec prompt en argument sans TTY → process gelés 0% CPU ~50 min, annoncé « ça tourne » sur la foi du statut `running` ; fix = pattern stdin/-o du gate + vérif CPU/sortie sous 30 s |
 
 ---
 
@@ -198,3 +199,11 @@
 - **Comment corrigé** : gate Codex REQUEST_CHANGES au 1er tour, finding précis (fichier:ligne). Vérifié (receiving-code-review) → réel → centralisé les bornes (`growth-rate-bounds.ts`) et borné les 3 chemins (skip+warn sur l'extrait). Re-gate APPROVE.
 - **Impact** : 1 tour de gate ; le bypass aurait survécu sans Codex (la borne aurait été incomplète). Zéro code erroné mergé.
 - **Lesson** : pour prouver « tous les chemins d'écriture de la colonne X », chercher les SITES d'écriture (`.deal.update`/`.create`/`.upsert` + leur `data`) ET les deux formes du champ : object-literal `X:` ET assignation `\.X\s*=`. Ne jamais conclure « exhaustif » depuis un seul motif sur-filtré. Le grep par nom de champ rate les builders d'updateData (accumulateur `Record<string, unknown>`).
+
+### 2026-06-12 — EXÉCUTION — `codex exec` lancé avec prompt en argument sans TTY → gel silencieux ~50 min
+- **Contexte** : deux consults Codex indépendants (diagnostic racine du run prod `cmq9lg9un…` + sounding board dé-scorisation) lancés en arrière-plan pendant que Sacha attendait.
+- **Erreur** : invoqué `codex exec -s read-only "<prompt>"` (prompt en argument positionnel) dans un contexte backgroundé sans TTY → les process sont restés VIVANTS mais GELÉS (0,0 % CPU, < 0,1 s de temps CPU cumulé, 0 octet de sortie après 45 min). Annoncé deux fois à Sacha « ça tourne, c'est normal que ce soit long » sur la seule foi du statut `running`.
+- **Cause racine du raisonnement** : (1) invocation divergente de celle ÉPROUVÉE par le helper du projet (`codex-gate-drive.sh` passe le prompt par stdin `- < promptfile` + sortie via `-o outfile`) — j'ai improvisé une forme non testée ; (2) confondu « process existant » avec « process qui travaille » : aucune vérification précoce de consommation CPU ni de croissance de la sortie.
+- **Comment corrigé** : `ps aux` a montré 0:00.01 de temps CPU après 45 min → kill des deux, relance avec le pattern stdin/-o du gate, et vérification à +20 s que les events logs croissent (193 KB / 95 KB) et que le CPU est consommé.
+- **Impact** : ~50 min d'attente perdue pour Sacha (3 relances « on en est où ? / Alora ? »).
+- **Lesson** : pour tout `codex exec` hors gate, reprendre l'invocation EXACTE du helper éprouvé (prompt par stdin, `-o` pour la sortie, `--color never`). Et pour TOUT process long lancé en arrière-plan : vérifier sous 30 s qu'il consomme du CPU ou que sa sortie croît — `running` n'est pas une preuve de progrès.
