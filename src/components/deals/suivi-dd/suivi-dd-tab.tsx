@@ -39,7 +39,6 @@ export interface SuiviDDTabProps {
     success: boolean;
   } | null;
   resolutionMap: Record<string, AlertResolution>;
-  resolutions: AlertResolution[];
   onResolve: (input: CreateResolutionInput) => Promise<unknown>;
   onUnresolve: (alertKey: string) => Promise<unknown>;
   isResolving: boolean;
@@ -49,14 +48,12 @@ export interface SuiviDDTabProps {
   onSubmitAndReanalyze: (responses: QuestionResponse[], freeNotes: string) => Promise<void>;
   isSubmittingResponses: boolean;
   isReanalyzing: boolean;
-  currentScore: number;
 }
 
 export const SuiviDDTab = memo(function SuiviDDTab({
   dealId,
   displayedResult,
   resolutionMap,
-  resolutions,
   onResolve,
   onUnresolve,
   isResolving,
@@ -66,7 +63,6 @@ export const SuiviDDTab = memo(function SuiviDDTab({
   onSubmitAndReanalyze,
   isSubmittingResponses,
   isReanalyzing,
-  currentScore,
 }: SuiviDDTabProps) {
   // Fetch conditions data
   const { data: conditionsData } = useQuery<TermsResponse>({
@@ -171,8 +167,6 @@ export const SuiviDDTab = memo(function SuiviDDTab({
       <SuiviDDDashboard
         counts={counts}
         progressPct={progressPct}
-        currentScore={currentScore}
-        resolutions={resolutions}
       />
 
       {/* Filters */}

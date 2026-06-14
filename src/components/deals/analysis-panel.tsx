@@ -1700,7 +1700,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   dealId={dealId}
                   displayedResult={displayedResult}
                   resolutionMap={resolutionMap}
-                  resolutions={resolutions}
                   onResolve={resolveAlert}
                   onUnresolve={unresolveAlert}
                   isResolving={isResolving}
@@ -1710,7 +1709,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   onSubmitAndReanalyze={handleSubmitAndReanalyze}
                   isSubmittingResponses={isSubmittingResponses}
                   isReanalyzing={mutation.isPending}
-                  currentScore={currentScore ?? 0}
                 />
               </TabsContent>
 

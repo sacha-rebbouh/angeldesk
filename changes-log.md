@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 5/N — SuiviDD (onglet Suivi DD) scoreless
+
+### Fichiers
+- `src/components/deals/suivi-dd/suivi-dd-dashboard.tsx` : le dashboard SuiviDD affichait `AdjustedScoreBadge` (note de deal originale ajustée par les résolutions = note de deal restituée, bannie). Retrait du badge + import. Les props `currentScore` et `resolutions` (qui n'existaient que pour ce badge) supprimées ; import de type `AlertResolution` devenu inutile retiré ; div header droit vide retiré. La progression DD reste rendue par la barre (alertes traitées/total + %) et les compteurs de sévérité (OBSERVABLES).
+- `src/components/deals/suivi-dd/suivi-dd-tab.tsx` : prop `currentScore` retirée ; prop `resolutions` retirée (ne servait qu'à forwarder vers le dashboard ; `resolutionMap`, distinct, reste consommé par `useUnifiedAlerts`).
+- `src/components/deals/analysis-panel.tsx` : ne passe plus `currentScore` ni `resolutions` à `SuiviDDTab` (garde encore `currentScore` pour `DeltaIndicator` + `resolutions` pour `Tier3Results`, traités à l'étape suivante).
+
+### Description
+L'onglet Suivi DD ne restitue plus aucune note de deal. **Gate Codex APPROVE** (aucun nit) : cascade de props correcte, `resolutionMap` préservé, métriques restantes (progression, %, compteurs sévérité, réponses) toutes observables. `AdjustedScoreBadge` n'a plus aucun consumer (tier3-results l'a retiré cette session) → composant préexistant laissé sur disque (Karpathy), signalé. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests deals 521 passed.
+
+---
 ## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 4/N — analysis-investor-view.tsx (Vue investisseur) scoreless
 
 ### Fichiers
