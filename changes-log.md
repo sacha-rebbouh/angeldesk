@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — UX — masque d'analyse affiché dès le clic (fix latence ~30s)
+
+### Fichiers
+- `src/components/deals/analysis-v2/analysis-running-overlay.tsx` : lecture non réactive `getQueryData(launchedAt)` → `useQuery` client-only abonné à la clé (enabled:false, initialData lit le cache, staleTime/gcTime Infinity) → `setQueryData(launchedAt)` re-render désormais l'overlay.
+- `src/components/deals/analysis-v2/analysis-v2-live.tsx` : `handleRelaunch` pose `launchedAt` AVANT le `fetch` (optimiste) + rollback (`→0`) sur 403/upgradeRequired et dans le `catch` ; 409/succès gardent le signal ; suppression des 2 `setQueryData(launchedAt)` post-fetch redondants.
+
+### Description
+**Fix UX (diagnostic + fix indépendants Codex, gaté APPROVE).** Trouvé pendant le re-test E2E (Sacha) : ~30 s de latence entre le clic « Relancer l'analyse » et l'apparition du masque « Analyse en cours ». Cause racine (convergence Claude+Codex, Codex a complété) : le signal `launchedAt` (qui doit afficher le masque immédiatement via la fenêtre de grâce 150 s) était posé **après** le POST `/api/analyze` (lent : auth + checks DB séquentiels + dispatch Inngest, ~30 s à froid) **ET** lu de façon **non réactive** (`getQueryData`) → `setQueryData` ne re-render pas l'overlay. Fix optimiste + abonnement réactif → le masque s'affiche au clic ; rollback couvre le refus crédits (403) et l'échec réel (pas de masque fantôme). Note (Codex, non bloquante) : la fenêtre de grâce peut théoriquement tenir le masque jusqu'à 150 s si un terminal arrive très vite — même compromis que l'existant. Indépendant du chantier synthèse SDS. tsc 0 ; suite unit complète 4548 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-15 — Synthèse SDS — étape B2 — nettoyage user-prompt mission + builders Tier 1 (scoreless)
 
 ### Fichiers
@@ -325,14 +335,5 @@ Décision produit Sacha (AskUserQuestion, Q2 listes) : remplacer la note de deal
 
 ### Description
 Étape 4/4 (cleanup) qui **clôt le chantier tier1-results.tsx** (C1 chips de tête, C2 sous-scores par dimension, C3 résumé agrégé scoreless, C4 cleanup). Plus aucune note de deal restituée dans le fichier (vérifié : zéro `/100` hors commentaires, zéro `ScoreBadge`, zéro grade A-F, zéro sous-score d'appréciation ; allowlist conservée = métriques observables + confiances par item). Warning eslint `hiddenCriticalCount` **préexistant** (présent dès le HEAD pré-session `6796cca`, non induit) laissé en place par principe Karpathy. **Gate Codex APPROVE** (cleanup pur confirmé). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 54 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 10/N (C3) — tier1-results.tsx : résumé agrégé scoreless (BadgePair + dimensions verbales)
-
-### Fichiers
-- `src/components/deals/tier1-results.tsx` : le résumé agrégé (carte « Analyse détaillée » + onglet Résumé `Tier1SummaryView`) ne restitue plus aucune note de deal. **Retirés** : memos `scores` (note /100 par agent) + `avgScore` (moyenne /100), le `ScoreBadge avgScore` en tête, la grille par agent affichant la note, le hero `avgScore/100` et le tri « points faibles » par note la plus basse. **Ajoutés** : memo `dimensions` (intensité verbale par agent via nouveau helper `dimensionIntensityOf`, lecture read-only `signalIntensity`/`alertSignal.recommendation`, aucune lecture de `score.value`) ; `overallOrientation`/`overallSolidity` via `aggregateOrientation`/`aggregateSolidity` rendus en `BadgePair` (modèle 2 axes verbal 5 valeurs, cohérent écran-à-écran avec tier3-results / investor-view) ; tête de résumé = `BadgePair` + liste 2 colonnes des dimensions (nom + chip `Tier1IntensityBadge`) ; `Tier1SummaryView` = hero `BadgePair` + bloc « Dimensions à investiguer en priorité » (intensité high/critical). Import `ScoreBadge` retiré (dernière utilisation supprimée). Nouveaux helpers : `dimensionIntensityOf` + `Tier1IntensityBadge`.
-
-### Description
-Étape 3/4 de tier1-results.tsx : le résumé bascule du score moyen /100 vers le modèle 2 axes verbal (orientation × solidité). Les chips par dimension sont **score-indépendants** (intensité de signal uniquement). **Gate Codex APPROVE après push-back argumenté** : 1er tour REQUEST_CHANGES (le BadgePair de solidité expose `aggregateSolidity`, qui en dernier fallback dérive une solidité verbale depuis `deck-coherence-checker.coherenceScore`). Push-back vérifié contre le codebase et accepté : `coherenceScore` est une métrique de cohérence/fiabilité **documentaire** (signal evidence-first listé par la doctrine pour la solidité), pas la note de deal ; la sortie est verbale, le nombre jamais rendu ; c'est le pattern déjà verrouillé par P3-b (`buildDecisionStripModel` dérive `coherenceBand` de `coherenceScore`, lock `doctrine-runtime-guard.test.ts:310-319`) ; le retirer ferait diverger la solidité du BadgePair de la bande de cohérence du decision-strip (incohérence cross-surface). Nuance de vocabulaire actée : `aggregateSolidity` n'est pas « score-indépendant » au sens strict (peut utiliser ce score documentaire interne), mais reste conforme (pas de note de deal restituée, pas de dérivation d'orientation depuis une note cachée). Reste C4 : cleanup des 4 vars mortes `scoreValue` (induites par C1). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 77 passed.
 
 ---
