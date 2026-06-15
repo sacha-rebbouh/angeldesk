@@ -80,7 +80,7 @@ export function AnalysisV2PageShell(props: Props) {
             {props.vm.decisionStrip.coverage.incompleteAgents.length} agent
             {props.vm.decisionStrip.coverage.incompleteAgents.length > 1 ? "s n'ont" : " n'a"} pas abouti sur cette
             analyse : {props.vm.decisionStrip.coverage.incompleteAgents.map((a) => a.label).join(", ")}. Les signaux et
-            le score consolidé ci-dessous sont donc partiels.
+            l&apos;orientation consolidée ci-dessous sont donc partiels.
           </PartialBanner>
         ) : null}
         <DecisionStrip model={props.vm.decisionStrip} />
