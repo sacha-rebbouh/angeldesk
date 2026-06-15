@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P6.1 — source-guard structurel anti-régression (schema + types agents)
+
+### Fichiers
+- `src/agents/__tests__/p5-descoring-structural.guard.test.ts` (NOUVEAU) : guard de contenu source (pattern a7b3).
+
+### Description
+**Chantier dé-scorisation, P6.1 (gaté Codex APPROVE après 1 REQUEST_CHANGES) — test-only.** Verrouille les acquis STRUCTURELS de P5 contre régression : (1) `prisma/schema.prisma` ne re-déclare aucune des 13 colonnes de note droppées en P5-c (match de DÉCLARATION nom + Int/Float, pas une simple mention en commentaire) ; (2) les 3 défs `SynthesisDealScorerData` + les 2 défs `ConditionsAnalystData` ne re-déclarent aucun champ de note purgé en P5-b. Mécanique : `extractInterfaceBody` (comptage de braces, exclut le compat `SynthesisDealScorerDataV2`) + `stripComments` (les commentaires P5 CITENT les noms purgés → faux positif corrigé) + regex de déclaration de champ. **Ne bannit QUE les patterns de note** (qualityScore / confidenceScore par-item / similarityScore autorisés). **REQUEST_CHANGES Codex (correct, appliqué)** : le guard `confidence` ne couvrait que `confidence?:` (pas `confidence:` requis) et le guard conditions que `score?: AgentScore` (pas `score:` ni autre forme) → `confidence` versé dans `BANNED_FIELDS`, regex conditions élargie à `\bscore\??\s*:`. Teeth check vérifié sur les 2 trous fermés. tsc 0 ; suite unit complète 4531 passed / 9 skipped / 0 failed (4502 + 29).
+
+---
 ## 2026-06-15 — Dé-scorisation — P5-c — MIGRATION DROP des 13 colonnes de note de deal mortes
 
 ### Fichiers
@@ -327,15 +336,5 @@ Le cluster analysis-panel ne restitue plus aucune note de deal (delta de note + 
 
 ### Description
 L'onglet Suivi DD ne restitue plus aucune note de deal. **Gate Codex APPROVE** (aucun nit) : cascade de props correcte, `resolutionMap` préservé, métriques restantes (progression, %, compteurs sévérité, réponses) toutes observables. `AdjustedScoreBadge` n'a plus aucun consumer (tier3-results l'a retiré cette session) → composant préexistant laissé sur disque (Karpathy), signalé. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests deals 521 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 4/N — analysis-investor-view.tsx (Vue investisseur) scoreless
-
-### Fichiers
-- `src/components/deals/analysis-investor-view.tsx` : surface « Vue investisseur » partagée (legacy panel + preview-tabs) rendue entièrement scoreless. (1) badge de recommandation dont `getRecommendation` dérivait l'orientation d'un score (seuil `currentScore >= 70` = anti-pattern score caché, garde-fou P3 n°1) → remplacé par l'atome `BadgePair` (orientation × solidité) alimenté par `aggregateOrientation`/`aggregateSolidity` (sélecteurs v2 score-indépendants, mêmes que decision-strip + tier3-results) ; `getRecommendation` supprimé. (2) bandeau de tuiles de note supprimé (`Score final /100`, `Cohérence du dossier /100`, `Finance /100`). (3) dimensions (Marché/Clients/Finance/Équipe/Technique) verbalisées via `signalIntensity` (`resolveTier1SignalIntensity` + `TIER1_SIGNAL_INTENSITY_LABELS`/`BADGE_CLASS`), `DimensionBar` → `DimensionRow` (chip d'intensité, plus de barre/nombre). (4) ligne « Contradictions » de la santé d'analyse (note d'agent) → compte OBSERVABLE de contradictions détectées (`findings.contradictions.length`). (5) prop `currentScore` retirée de `AnalysisInvestorView` + `AnalysisPreviewTabs` ; consumer dev-only `avekapeti/page.tsx` perd `extractDealScore` + var ; `analysis-panel.tsx` ne passe plus `currentScore` à `AnalysisInvestorView`. Helpers morts retirés (`extractScore`, `toneFromScore`, `toneClasses`, `recordAt`, `MetricTile`, `DimensionBar`).
-- `src/components/deals/analysis-preview-tabs.tsx`, `src/app/(dashboard)/deals/analysis-preview/avekapeti/page.tsx`, `src/components/deals/analysis-panel.tsx` : retrait du plumbing `currentScore` vers la Vue investisseur.
-
-### Description
-La Vue investisseur ne restitue plus aucune note de deal ni orientation dérivée d'un score. **Gate Codex APPROVE** (aucun nit). Conservé (allowlist) : `thesis.confidence` (% sur un fait précis), badges qualitatifs par item/question, compte de contradictions (observable). `analysis-panel.tsx` garde encore `currentScore` pour `DeltaIndicator` + `SuiviDDTab` (étapes suivantes). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; suite unit complète 4509 passed / 9 skipped / 0 failed.
 
 ---
