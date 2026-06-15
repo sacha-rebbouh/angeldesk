@@ -1,6 +1,21 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P5-a.3 — bascule des readers du cluster TERMS/CONDITIONS off conditionsScore
+
+### Fichiers
+- `src/services/terms-normalization.ts` : `buildTermsResponse` perd le param positionnel `conditionsScore` + le champ `conditionsScore` du retour (`conditionsBreakdown`/`dimensionAssessment` verbal conservé).
+- `src/app/api/deals/[dealId]/terms/route.ts` : 3 callers mis à jour ; `select` Deal.{globalScore (mort), conditionsScore} retiré (GET) ; write `conditionsScore` du `dealTermsVersion.create` retiré ; write neutralisé `conditionsScore: null` du `Deal.update` retiré.
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` : lecture `deal.conditionsScore` retirée + `conditionsScore` ajouté à l'`omit` `getDeal`.
+- `src/app/api/deals/[dealId]/terms/versions/route.ts` : `select` + sortie `DealTermsVersion.conditionsScore` retirés.
+- `src/agents/orchestrator/persistence.ts` : write neutralisé `conditionsScore: null` (case `conditions-analyst`) retiré.
+- `src/components/deals/conditions/types.ts` : `conditionsScore` retiré de `TermsResponse` + `TermsVersionData` (0 consumer client).
+- 5 `omit` (deals/route, deals/[dealId]/route, deals/page, deals/[dealId]/page, dashboard) : `conditionsScore` ajouté (note Codex a.2 — couvre aussi les `include` + spread sans lecture explicite).
+
+### Description
+**Chantier dé-scorisation, P5-a.3 (gaté Codex APPROVE, sans REQUEST_CHANGES).** 3e micro-step de P5 : le cluster terms/conditions ne lit/écrit plus `conditionsScore` (Deal.conditionsScore + DealTermsVersion.conditionsScore). UI déjà scoreless depuis G4 (carry mort) ; le verbal `conditionsBreakdown`/`dimensionAssessment` reste. **Scope P5-c confirmé par Codex** : DROP aussi `DealTermsVersion.conditionsScore` (snapshot de note mort, comme `Deal.conditionsScore` + `AnalysisSignalSummary.*Score`). Conservé : guard `user/export` (asserte l'absence). **Différé à P5-b** : mock full-Deal `base-agent-date-rendering.test.ts` (porte les 7 scores). Colonnes encore en schema ; drop = P5-c → `omit` retirés à ce moment. **Pas de bump `STEPWISE_GRAPH_VERSION`**. tsc 0 (lu directement) ; suite unit complète 4506 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-15 — Dé-scorisation — P5-a.2 — bascule des readers du cluster CANONICAL DEAL-FIELDS off Deal.*Score
 
 ### Fichiers
@@ -314,13 +329,4 @@ Micro-étape 1 (keystone) de la dé-scorisation du legacy panel encore rendu LIV
 
 ### Description
 Clôture du sous-chantier PDF. `ScoreCircle`/`recLabel`/`fmtWeight` rendus morts par mes changements (PDF-1/2/5) ; `ScoreBar`/`scoreBgColor` étaient préexistant-morts — supprimés malgré la règle Karpathy « signal-only » car ce sont des primitives de RENDU DE SCORE (`/100`) que le chantier de-scorisation autorise à retirer et que les source-guards P6 banniraient (gate Codex : arbitrage APPROVE explicite). `scoreColor` devient mort une fois ScoreCircle+ScoreBar retirés. Conservés signal-only : `RecommendationBadge` (badge VERBAL d'orientation, pas une primitive de score) + `improvedDealScore` (type `NegotiationData` jamais rendu → producteur = P4). Conservés allowlist : `confidenceScore` (red-flags, % par flag), `w.confidence` (early-warnings, % par alerte) = confiances PAR ITEM. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (PDF) étape 5/N — tier1-agents scoreless (retrait scores par agent + sous-scores)
-
-### Fichiers
-- `src/lib/pdf/pdf-sections/tier1-agents.tsx` : 6 sites — (1) `AgentBlock` générique : retrait complet du bloc « Score: X/100 (grade) » + rationale + table breakdown (colonne `Score`) ; déclaration `score` supprimée, import `fmtWeight` retiré (devenu inutilisé). Le signal par agent reste rendu VERBALEMENT par le bloc existant `signalIntensity` (`resolveTier1SignalIntensity` + `TIER1_SIGNAL_INTENSITY_LABELS`). (2) `TeamFindings` : colonnes table « Exp. entrepreneuriale »/« Score » (/100) retirées (table = Fondateur + Expertise) ; `complementarityScore` /100 retiré. (3) `DeckForensics` : `storyCoherence` /100 + `deckQuality.{professionalism,completeness,transparency}` /100 retirés (issues + credibilityAssessment conservés). (4) `TechStack` : `modernityScore` + `scalability.score` /100 retirés. (5) `TechOps` : `stabilityScore` + `securityScore` + `ipScore` + `capabilityScore` /100 retirés. (6) `CustomerFindings` : `pmf.score` /100 retiré (`pmf.verdict` conservé). Champs de type inline correspondants trimés.
-
-### Description
-« Le restitué Tier1 devient signalIntensity » (doctrine) — déjà câblé, donc aucun nouveau label dérivé d'un score (Codex : ne PAS inventer un signal verbal depuis l'ancien score). Conservés (allowlist) : métriques OBSERVABLES (NRR/churn/grossRetention/top10Percent %, benchmarks rétention), confiances/probabilités PAR ITEM (techRisks severity/probability), et `meta.confidenceLevel` par agent (confiance d'un agent sur sa propre analyse, hors `AGENT_DEAL_NOTE_KEYS` du scrubber). Producteurs intacts = P4. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
 
