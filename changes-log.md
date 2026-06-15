@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Synthèse SDS — étape A — fallback déterministe sur échec LLM (synthèse de signaux propre, scoreless)
+
+### Fichiers
+- `src/agents/tier3/synthesis-deal-scorer.ts` : `execute()` enveloppe le seul appel LLM dans un try/catch (transformResponse reste HORS du try) ; nouvelles méthodes `buildFallbackSynthesis` (repli déterministe) + `composeFallbackNarrative` (narratif scoreless anti-prescriptif) ; import `DOCTRINE_ORIENTATION_CONFIG`.
+- `src/agents/tier3/__tests__/synthesis-deal-scorer-transform.test.ts` : +8 tests builder (alert correct, plafond contrasted conservateur, keyStrengths/Weaknesses vides, contrat signalProfile, narratif propre sans langage d'échec, anti-prescriptif + sans note, criticalRisks consolidés, not_exploitable) + 1 test wiring (llmCompleteJSON rejette → execute renvoie le repli sans throw).
+
+### Description
+**Fix synthèse SDS, étape A (gaté Codex APPROVE, sans REQUEST_CHANGES).** Le test E2E preview a montré que l'appel LLM de synthèse timeout systématiquement (cap délibéré 100s `SYNTHESIS_LLM_CALL_OPTIONS` + GEMINI_PRO lent sur prompt bourré de scores legacy + gros contexte) → orientation non rendue → analyse « partielle ». Désormais, sur échec de l'appel LLM, `execute()` ne propage plus `success:false` mais restitue une **synthèse de signaux déterministe** : orientation scoreless dérivée 100% du contexte (red flags consolidés + couverture par dimension + solidité), `favorableSignalCount=0` conservateur (plafond `contrasted` côté positif, branche défavorable pleinement pilotée par les signaux), narratif **propre** anti-prescriptif **sans formulation d'échec côté user** (décision produit Sacha A1 — la carte reste riche, l'analyse se termine 22/22). `transformResponse` strictement INCHANGÉ (byte-équiv durable, chemin nominal replayé en stepwise) → repli en méthode SÉPARÉE. `console.warn` pour surveiller le taux de fallback. Catch large (tout échec `llmCompleteJSON`, pas que timeout) validé par Codex (dégrader proprement plutôt qu'échouer l'analyse). PAS de bump `STEPWISE_GRAPH_VERSION` (forme de payload nominale). tsc 0 ; suite unit complète 4547 passed / 9 skipped / 0 failed (4538 + 9).
+
+---
 ## 2026-06-15 — Dé-scorisation — fix scoreless miss bannière « Analyse incomplète » (trouvé par test E2E preview)
 
 ### Fichiers
@@ -323,14 +333,5 @@ Décision produit Sacha (AskUserQuestion, Q2 listes) : remplacer la note de deal
 
 ### Description
 Étape 1/4 du gros fichier tier1-results.tsx (3885 l) : retrait des notes /100 par carte d'agent, remplacées par le signal verbal Tier 1 (mêmes libellés/classes que `Tier1AlertSignalDisplay`). Dérivation **score-indépendante** (aucune lecture de `score.value`). Le `ScoreBadge` agrégé du résumé (`avgScore`) + l'import restent volontairement (étapes C3/C4). **Gate Codex APPROVE** : chip scoreless confirmé, doublon chip-en-tête / bloc-corps sur 5 cartes acceptable (scan rapide en tête + justification dans le corps = densité duale de l'ancien, à traiter en polish UX éventuel, pas un problème doctrine). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 77 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 7/N — suppression du reader mort score-utils.ts
-
-### Fichiers
-- `src/lib/score-utils.ts` : **supprimé**. Exportait `extractDealScore` (lisait `overallScore`/`score.value` de synthesis-deal-scorer = note de deal) et `extractDealRecommendation`. Après les étapes 4 et 6, ses derniers consumers (`analysis-panel.tsx` + page dev-only avekapeti) ne l'importent plus.
-
-### Description
-Reader de note de deal entièrement orphelin (grep `score-utils` / `extractDealScore` / `extractDealRecommendation` = 0 hors fichier) → retiré, conforme au plan PLAN-DESCORING (« retirer le reader quand tous les consumers sont basculés »). **Gate Codex APPROVE** : suppression sans danger, aucun chemin durable/LLM ne dépend du reader, surfaces runtime migrées lisent orientation/verdict via chemins scoreless. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; suite unit complète 4509 passed / 9 skipped / 0 failed.
 
 ---
