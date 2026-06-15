@@ -1,9 +1,9 @@
 /**
  * AnalysisSignalSummary — denormalized read-model (Phase H2).
  *
- * The canonical scores (extractAnalysisScores) and extracted-info
- * (extractCanonicalExtractedInfo) are PURE, deterministic functions of an
- * analysis' `results`, which is immutable once the analysis is COMPLETED.
+ * The canonical extracted-info (extractCanonicalExtractedInfo) is a PURE,
+ * deterministic function of an analysis' `results`, which is immutable once
+ * the analysis is COMPLETED.
  * So caching them per analysisId is staleness-free: the read path recomputes
  * the canonical analysis selection cheaply (no blob) and looks the signals up
  * here instead of calling loadResults(blob) per deal on the hot SSR pages.
@@ -16,16 +16,13 @@
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import {
-  extractAnalysisScores,
   extractCanonicalExtractedInfo,
-  type AnalysisScores,
   type CanonicalExtractedInfo,
 } from "@/services/analysis-results/score-extraction";
 
 export const CURRENT_SIGNAL_SUMMARY_SCHEMA_VERSION = 1;
 
 export interface AnalysisSignalSummaryData {
-  scores: AnalysisScores;
   extractedInfo: CanonicalExtractedInfo | null;
 }
 
@@ -34,17 +31,11 @@ export function computeAnalysisSignalSummary(
   results: unknown
 ): AnalysisSignalSummaryData {
   return {
-    scores: extractAnalysisScores(results),
     extractedInfo: extractCanonicalExtractedInfo(results),
   };
 }
 
 type SummaryRow = {
-  globalScore: number | null;
-  teamScore: number | null;
-  marketScore: number | null;
-  productScore: number | null;
-  financialsScore: number | null;
   sector: string | null;
   stage: string | null;
   instrument: string | null;
@@ -53,13 +44,6 @@ type SummaryRow = {
 };
 
 function rowToData(row: SummaryRow): AnalysisSignalSummaryData {
-  const scores: AnalysisScores = {
-    globalScore: row.globalScore,
-    teamScore: row.teamScore,
-    marketScore: row.marketScore,
-    productScore: row.productScore,
-    financialsScore: row.financialsScore,
-  };
   // Mirror extractCanonicalExtractedInfo's contract: null when every field is null.
   const extractedInfo: CanonicalExtractedInfo | null =
     row.sector ?? row.stage ?? row.instrument ?? row.geography ?? row.description
@@ -71,7 +55,7 @@ function rowToData(row: SummaryRow): AnalysisSignalSummaryData {
           description: row.description,
         }
       : null;
-  return { scores, extractedInfo };
+  return { extractedInfo };
 }
 
 /**
@@ -99,11 +83,6 @@ export async function readAnalysisSignalSummaries(
       },
       select: {
         analysisId: true,
-        globalScore: true,
-        teamScore: true,
-        marketScore: true,
-        productScore: true,
-        financialsScore: true,
         sector: true,
         stage: true,
         instrument: true,
@@ -133,14 +112,9 @@ export async function upsertAnalysisSignalSummary(
   results: unknown
 ): Promise<void> {
   try {
-    const { scores, extractedInfo } = computeAnalysisSignalSummary(results);
+    const { extractedInfo } = computeAnalysisSignalSummary(results);
     const data = {
       dealId,
-      globalScore: scores.globalScore,
-      teamScore: scores.teamScore,
-      marketScore: scores.marketScore,
-      productScore: scores.productScore,
-      financialsScore: scores.financialsScore,
       sector: extractedInfo?.sector ?? null,
       stage: extractedInfo?.stage ?? null,
       instrument: extractedInfo?.instrument ?? null,

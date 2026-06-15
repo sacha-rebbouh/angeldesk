@@ -1340,15 +1340,6 @@ vi.mock("@/agents/orchestration/utils/financial-calculations", () => ({
   calculateCumulativeDilution: vi.fn().mockReturnValue({ value: 50, calculation: "50% dilution", steps: [] }),
 }));
 
-vi.mock("@/services/funding-db/percentile-calculator", () => ({
-  calculateDealPercentile: vi.fn().mockResolvedValue({
-    percentileOverall: 55,
-    percentileSector: 60,
-    percentileStage: 50,
-    totalDealsCompared: 100,
-  }),
-}));
-
 // Mock context-engine geography coverage
 vi.mock("@/services/context-engine/geography-coverage", () => ({
   formatGeographyCoverageForPrompt: vi.fn().mockReturnValue("Europe coverage: Good"),
