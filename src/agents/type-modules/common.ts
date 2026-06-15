@@ -386,45 +386,6 @@ export interface RedFlagResult extends AgentResult {
   };
 }
 
-// Scoring Agent types
-export interface DealScores {
-  global: number;
-  team: number;
-  market: number;
-  product: number;
-  financials: number;
-  timing: number;
-}
-
-export interface ScoreBreakdown {
-  dimension: string;
-  score: number;
-  maxScore: number;
-  factors: {
-    name: string;
-    score: number;
-    maxScore: number;
-    rationale: string;
-  }[];
-}
-
-export interface ScoringResult extends AgentResult {
-  agentName: "deal-scorer";
-  data: {
-    scores: DealScores;
-    breakdown: ScoreBreakdown[];
-    percentileRanking?: {
-      overall: number;
-      bySector: number;
-      byStage: number;
-    };
-    comparableDeals?: {
-      name: string;
-      score: number;
-      outcome?: string;
-    }[];
-  };
-}
 
 // ============================================================================
 // UNIVERSAL AGENT TYPES (v2.0) - Shared across all refactored agents

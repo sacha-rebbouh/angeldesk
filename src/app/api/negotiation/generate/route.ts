@@ -428,7 +428,6 @@ export async function POST(req: NextRequest) {
       const data = results["financial-auditor"].data;
       const findings = data.findings as Record<string, unknown> | undefined;
       analysisResults.financialAuditor = {
-        score: data.score as { value?: number } | undefined,
         findings: findings ? {
           valuationAnalysis: findings.valuationAnalysis as {
             currentValuation?: number;
@@ -473,8 +472,6 @@ export async function POST(req: NextRequest) {
     if (results["synthesis-deal-scorer"]?.success && results["synthesis-deal-scorer"]?.data) {
       const data = results["synthesis-deal-scorer"].data;
       analysisResults.synthesisDealScorer = {
-        score: data.score as { value?: number } | undefined,
-        overallScore: data.overallScore as number | undefined,
         verdict: data.verdict as string | undefined,
         keyStrengths: data.keyStrengths as string[] | undefined,
         keyWeaknesses: data.keyWeaknesses as string[] | undefined,

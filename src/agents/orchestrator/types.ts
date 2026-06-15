@@ -2,7 +2,7 @@ import type { AgentResult } from "../types";
 import type { StepRunner } from "./step-runner";
 
 // Base agents registry type
-export type BaseAgentName = "red-flag-detector" | "document-extractor" | "deal-scorer";
+export type BaseAgentName = "red-flag-detector" | "document-extractor";
 
 // Analysis types with their required agents
 export const ANALYSIS_CONFIGS = {
@@ -12,8 +12,12 @@ export const ANALYSIS_CONFIGS = {
     parallel: false,
   },
   full_dd: {
-    agents: ["document-extractor", "deal-scorer", "red-flag-detector"] as BaseAgentName[],
-    description: "Legacy alias retired from public API; kept only for historical compatibility",
+    // Chantier P4 — deal-scorer (Tier 0) retiré. Cet alias legacy est remappé
+    // vers full_analysis par la route (LEGACY_TYPE_REPLACEMENTS) : il n'exécute
+    // plus aucun agent de base. Clé conservée pour la stabilité de AnalysisType
+    // (keyof) et les compteurs/labels historiques.
+    agents: [] as BaseAgentName[],
+    description: "Legacy alias remapped to full_analysis; no base execution",
     parallel: false,
   },
   tier1_complete: {

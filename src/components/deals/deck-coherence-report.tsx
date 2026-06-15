@@ -21,14 +21,6 @@ interface DeckCoherenceReportProps {
 // Module-level Config Constants (prevents recreation on each render)
 // =============================================================================
 
-const GRADE_CONFIG = {
-  A: { color: "bg-green-100 text-green-800 border-green-200", label: "Excellent" },
-  B: { color: "bg-blue-100 text-blue-800 border-blue-200", label: "Bon" },
-  C: { color: "bg-yellow-100 text-yellow-800 border-yellow-200", label: "Acceptable" },
-  D: { color: "bg-orange-100 text-orange-800 border-orange-200", label: "Faible" },
-  F: { color: "bg-red-100 text-red-800 border-red-200", label: "Insuffisant" },
-} as const;
-
 const SEVERITY_CONFIG = {
   critical: { color: "bg-red-100 text-red-800", label: "Critique" },
   warning: { color: "bg-orange-100 text-orange-800", label: "Attention" },
@@ -76,20 +68,6 @@ const RECOMMENDATION_CONFIG = {
 // =============================================================================
 // Memoized Helper Components
 // =============================================================================
-
-const GradeBadge = memo(function GradeBadge({
-  grade
-}: {
-  grade: DeckCoherenceReportType["reliabilityGrade"]
-}) {
-  const { color, label } = GRADE_CONFIG[grade] || GRADE_CONFIG.F;
-
-  return (
-    <Badge variant="outline" className={cn("text-sm font-bold", color)}>
-      {grade} - {label}
-    </Badge>
-  );
-});
 
 const SeverityIcon = memo(function SeverityIcon({
   severity
@@ -305,10 +283,6 @@ export const DeckCoherenceReport = memo(function DeckCoherenceReport({
             <CardTitle className="text-lg">Cohérence du Deck</CardTitle>
           </div>
           <div className="flex items-center gap-2">
-            <GradeBadge grade={report.reliabilityGrade} />
-            <Badge variant="outline" className="text-xs">
-              {report.coherenceScore}/100
-            </Badge>
             <ChevronDown className={headerChevronClassName} />
           </div>
         </button>

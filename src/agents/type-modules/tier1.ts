@@ -268,7 +268,6 @@ export interface TeamInvestigatorFindings {
     name: string; role: string; linkedinUrl?: string; linkedinVerified: boolean; linkedinScrapedAt?: string;
     background: { yearsExperience: number; headline?: string; currentTitle?: string; educationHighlight?: string; topPreviousCompanies: string[]; domainExpertiseYears: number; relevantRoles: string[]; keySkills: string[] };
     entrepreneurialTrack: { isFirstTimeFounder: boolean; previousVentures: { name: string; role: string; outcome: "big_success" | "success" | "acquihire" | "pivot" | "failure" | "ongoing" | "unknown"; exitValue?: number; duration?: string; relevance: string; source: string }[]; totalVentures: number; successfulExits: number };
-    scores: { domainExpertise: number; entrepreneurialExperience: number; executionCapability: number; networkStrength: number; overallFounderScore: number };
     redFlags: { type: string; severity: "CRITICAL" | "HIGH" | "MEDIUM"; description: string; evidence: string }[];
     strengths: string[]; concerns: string[];
   }[];

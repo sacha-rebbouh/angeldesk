@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, memo, useEffect, useRef } from "react";
+import { useCallback, useState, memo, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ClipboardCopy, Loader2 } from "lucide-react";
@@ -108,25 +108,32 @@ export const DocumentUploadDialog = memo(function DocumentUploadDialog({
     isSubmitting: false,
     attachmentCount: 0,
   });
-  // Phase B0 — one instrumentation log per modal open. Created lazily on
-  // first open, reset (with a fresh sessionId) on subsequent opens so
+  // Phase B0 — one instrumentation log per modal open. Stable instance per
+  // mount (useState lazy init — l'accès ref au render est interdit par
+  // react-hooks/refs), reset (with a fresh sessionId) on subsequent opens so
   // diagnostics never cross-contaminate between sessions.
-  const instrumentationRef = useRef<InstrumentationLog | null>(null);
-  if (instrumentationRef.current === null) {
-    instrumentationRef.current = createInstrumentationLog(createUploadSessionId());
+  const [instrumentation] = useState<InstrumentationLog>(() =>
+    createInstrumentationLog(createUploadSessionId())
+  );
+
+  // B4 — reset the local UI counters on re-open (pattern « adjust state during
+  // render », même déclencheur que l'ancien effect sur le front montant de
+  // `open` ; au mount les compteurs sont déjà à leur valeur initiale).
+  // queueSummary est re-émis par FileUpload dès son mount, pas besoin ici.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (prevOpen !== open) {
+    setPrevOpen(open);
+    if (open) {
+      setUploadedCount(0);
+      setHasUploaded(false);
+      setDiagnosticCopied(false);
+    }
   }
-  const instrumentation = instrumentationRef.current;
 
   useEffect(() => {
     if (!open) return;
     instrumentation.reset(createUploadSessionId());
     instrumentation.record({ event: "modal_opened" });
-    // B4 — reset the local UI counters on re-open. queueSummary is
-    // re-emitted by FileUpload as soon as it mounts so we don't have to
-    // do it here.
-    setUploadedCount(0);
-    setHasUploaded(false);
-    setDiagnosticCopied(false);
   }, [open, instrumentation]);
 
   const handleUploadComplete = useCallback((document: UploadedDocumentSummary) => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock prisma + deps avant import (hoisted).
 const prismaMocks = vi.hoisted(() => ({
@@ -52,6 +52,10 @@ describe("sendAnalysisReadyNotification — claim atomique idempotent", () => {
     prismaMocks.analysisUpdate.mockResolvedValue({});
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("claim gagnant (count=1) + email configuré → envoie une fois (avec clé d'idempotence) et pose sentAt", async () => {
     prismaMocks.analysisUpdateMany.mockResolvedValueOnce({ count: 1 }); // claim
     await sendAnalysisReadyNotification(BASE);
@@ -100,7 +104,8 @@ describe("sendAnalysisReadyNotification — claim atomique idempotent", () => {
     expect(prismaMocks.analysisUpdate).not.toHaveBeenCalled();
   });
 
-  it("email non configuré → consomme le claim (sentAt) sans appeler Resend", async () => {
+  it("email non configuré HORS PROD → consomme le claim (sentAt) sans appeler Resend", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview");
     prismaMocks.analysisUpdateMany.mockResolvedValueOnce({ count: 1 });
     emailMocks.isEmailConfigured.mockReturnValue(false);
     await sendAnalysisReadyNotification(BASE);
@@ -110,6 +115,26 @@ describe("sendAnalysisReadyNotification — claim atomique idempotent", () => {
         data: expect.objectContaining({ analysisReadyEmailSentAt: expect.any(Date) }),
       })
     );
+  });
+
+  it("email non configuré EN PRODUCTION → fail-loud : relâche le claim (claimedAt=null), throw, PAS de sentAt", async () => {
+    vi.stubEnv("VERCEL_ENV", "production");
+    prismaMocks.analysisUpdateMany
+      .mockResolvedValueOnce({ count: 1 }) // claim gagnant
+      .mockResolvedValueOnce({ count: 1 }); // release
+    emailMocks.isEmailConfigured.mockReturnValue(false);
+
+    await expect(sendAnalysisReadyNotification(BASE)).rejects.toThrow(/non configuré en production/i);
+
+    expect(emailMocks.sendAnalysisReadyEmail).not.toHaveBeenCalled();
+    expect(prismaMocks.analysisUpdateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "a1", analysisReadyEmailSentAt: null }),
+        data: { analysisReadyEmailClaimedAt: null },
+      })
+    );
+    // sentAt JAMAIS posé : pas de preuve d'envoi mensongère en prod.
+    expect(prismaMocks.analysisUpdate).not.toHaveBeenCalled();
   });
 
   it("destinataire introuvable → consomme le claim sans envoyer", async () => {

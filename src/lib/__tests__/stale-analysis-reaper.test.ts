@@ -33,10 +33,31 @@ vi.mock("@/lib/logger", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// Salvage : reapIfStale importe dynamiquement le snapshot stepwise, le générateur de
+// summary et la fonction de flip persistence. Mocks explicites (défaut : pas de
+// snapshot → tous les tests legacy restent sur le chemin FAILED+refund).
+const readLatestStepwiseSnapshot = vi.fn(async (..._args: unknown[]): Promise<unknown> => null);
+vi.mock("@/agents/orchestrator/full-analysis-snapshot", () => ({
+  readLatestStepwiseSnapshot: (...args: unknown[]) => readLatestStepwiseSnapshot(...args),
+}));
+const salvageAnalysisFromSnapshot = vi.fn(
+  async (..._args: unknown[]): Promise<{ salvaged: boolean; dealId: string | null }> => ({
+    salvaged: true,
+    dealId: "d1",
+  })
+);
+vi.mock("@/agents/orchestrator/persistence", () => ({
+  salvageAnalysisFromSnapshot: (...args: unknown[]) => salvageAnalysisFromSnapshot(...args),
+}));
+vi.mock("@/agents/orchestrator/summary", () => ({
+  generateFullAnalysisSummary: vi.fn(() => "RÉSUMÉ AGRÉGÉ"),
+}));
+
 import {
   reapStaleAnalyses,
   reapStaleAnalysisById,
   reapStaleAnalysisByDispatchEventId,
+  SALVAGE_THRESHOLD_AGENT,
   STALE_ANALYSIS_REAP_MS,
 } from "@/lib/analysis-compensation";
 
@@ -283,5 +304,154 @@ describe("reapStaleAnalysisByDispatchEventId — watchdog par-analyse (résolu p
     mockedPrisma.analysis.findFirst.mockResolvedValue({ ...runningRow(), status: "COMPLETED" });
     const res = await reapStaleAnalysisByDispatchEventId("disp-done", NOW);
     expect(res.status).toBe("terminal");
+  });
+});
+
+// ===== Salvage « livrable dégradé » (décision produit 2026-06-12) =====
+// Une analyse figée dont le snapshot stepwise contient une synthèse aboutie
+// (SALVAGE_THRESHOLD_AGENT en succès) est livrée COMPLETED dégradée SANS refund,
+// au lieu d'être jetée + remboursée. Tout échec du salvage retombe sur le reap
+// FAILED+refund (fail-open vers le remboursement, jamais de blocage du watchdog).
+describe("salvage avant reap — analyse figée mais livrable", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedPrisma.analysis.update.mockResolvedValue({});
+    mockedPrisma.deal.update.mockResolvedValue({});
+    mockedPrisma.analysis.findFirst.mockResolvedValue(null); // pas d'autre RUNNING → deal reset
+    readLatestStepwiseSnapshot.mockImplementation(async () => null);
+    salvageAnalysisFromSnapshot.mockImplementation(async () => ({ salvaged: true, dealId: "d1" }));
+  });
+
+  function snapshotFixture(allResultsOver: Record<string, unknown> = {}) {
+    return {
+      analysisId: "a1",
+      totalCost: 1.23,
+      startTimeMs: NOW - 10 * 60_000,
+      allResults: {
+        "financial-auditor": { agentName: "financial-auditor", success: true },
+        [SALVAGE_THRESHOLD_AGENT]: { agentName: SALVAGE_THRESHOLD_AGENT, success: true },
+        ...allResultsOver,
+      },
+    };
+  }
+
+  it("synthèse aboutie dans le snapshot → salvage : COMPLETED dégradé, AUCUN refund, deal IN_DD", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([runningRow()]);
+    readLatestStepwiseSnapshot.mockResolvedValueOnce(snapshotFixture());
+
+    const res = await reapStaleAnalyses(NOW);
+
+    expect(res.salvaged).toBe(1);
+    expect(res.salvagedIds).toEqual(["a1"]);
+    expect(res.reaped).toBe(0);
+    // PAS de flip FAILED (l'updateMany de compensation est le flip FAILED ; celui du
+    // salvage vit dans persistence, mocké) et PAS de refund.
+    expect(mockedPrisma.analysis.updateMany).not.toHaveBeenCalled();
+    expect(refundCredits).not.toHaveBeenCalled();
+    expect(refundCreditAmount).not.toHaveBeenCalled();
+    // deal remis en IN_DD comme après une complétion normale
+    expect(mockedPrisma.deal.update).toHaveBeenCalledWith({
+      where: { id: "d1" },
+      data: { status: "IN_DD" },
+    });
+    // Payload du flip : placeholder memo-generator EXPLICITE en échec + résumé dégradé.
+    const args = salvageAnalysisFromSnapshot.mock.calls[0][0] as {
+      analysisId: string;
+      results: Record<string, { success?: boolean }>;
+      summary: string;
+      totalCost: number;
+      totalTimeMs: number;
+    };
+    expect(args.analysisId).toBe("a1");
+    expect(args.results["memo-generator"]).toMatchObject({ success: false });
+    expect(args.results[SALVAGE_THRESHOLD_AGENT]).toMatchObject({ success: true });
+    expect(args.summary).toContain("interruption");
+    expect(args.totalCost).toBe(1.23);
+    expect(args.totalTimeMs).toBe(10 * 60_000);
+  });
+
+  it("memo-generator déjà présent dans le snapshot → conservé tel quel (pas de placeholder)", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([runningRow()]);
+    readLatestStepwiseSnapshot.mockResolvedValueOnce(
+      snapshotFixture({ "memo-generator": { agentName: "memo-generator", success: true } })
+    );
+
+    await reapStaleAnalyses(NOW);
+
+    const args = salvageAnalysisFromSnapshot.mock.calls[0][0] as {
+      results: Record<string, { success?: boolean }>;
+    };
+    expect(args.results["memo-generator"]).toMatchObject({ success: true });
+  });
+
+  it("synthèse échouée dans le snapshot → PAS de salvage → reap FAILED + refund", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([runningRow()]);
+    mockedPrisma.analysis.updateMany.mockResolvedValue({ count: 1 });
+    readLatestStepwiseSnapshot.mockResolvedValueOnce(
+      snapshotFixture({ [SALVAGE_THRESHOLD_AGENT]: { agentName: SALVAGE_THRESHOLD_AGENT, success: false } })
+    );
+
+    const res = await reapStaleAnalyses(NOW);
+
+    expect(salvageAnalysisFromSnapshot).not.toHaveBeenCalled();
+    expect(res.salvaged).toBe(0);
+    expect(res.reaped).toBe(1);
+    expect(refundCredits).toHaveBeenCalledTimes(1);
+  });
+
+  it("pas de snapshot stepwise (run legacy) → reap FAILED + refund inchangé", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([runningRow()]);
+    mockedPrisma.analysis.updateMany.mockResolvedValue({ count: 1 });
+    // défaut du mock : null
+
+    const res = await reapStaleAnalyses(NOW);
+
+    expect(res.reaped).toBe(1);
+    expect(refundCredits).toHaveBeenCalledTimes(1);
+  });
+
+  it("lecture snapshot THROW (parse/version) → fall-through reap FAILED + refund, jamais de blocage", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([runningRow()]);
+    mockedPrisma.analysis.updateMany.mockResolvedValue({ count: 1 });
+    readLatestStepwiseSnapshot.mockRejectedValueOnce(new Error("[StepState] version non supportée"));
+
+    const res = await reapStaleAnalyses(NOW);
+
+    expect(res.reaped).toBe(1);
+    expect(refundCredits).toHaveBeenCalledTimes(1);
+  });
+
+  it("course perdue au flip salvage (plus RUNNING) → aucun effet : ni refund, ni reset deal", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([runningRow()]);
+    mockedPrisma.analysis.updateMany.mockResolvedValue({ count: 0 }); // flip FAILED perd aussi
+    readLatestStepwiseSnapshot.mockResolvedValueOnce(snapshotFixture());
+    salvageAnalysisFromSnapshot.mockResolvedValueOnce({ salvaged: false, dealId: "d1" });
+
+    const res = await reapStaleAnalyses(NOW);
+
+    expect(res.salvaged).toBe(0);
+    expect(res.reaped).toBe(0);
+    expect(refundCredits).not.toHaveBeenCalled();
+    expect(mockedPrisma.deal.update).not.toHaveBeenCalled();
+  });
+
+  it("run frais → le salvage n'est même pas tenté (pas de lecture snapshot)", async () => {
+    mockedPrisma.analysis.findMany.mockResolvedValue([
+      runningRow({ checkpoints: [{ createdAt: FRESH_AT }] }),
+    ]);
+
+    await reapStaleAnalyses(NOW);
+
+    expect(readLatestStepwiseSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("watchdog par-analyse : figée + snapshot livrable → status 'salvaged' (sort de la boucle)", async () => {
+    mockedPrisma.analysis.findUnique.mockResolvedValue({ ...runningRow(), status: "RUNNING" });
+    readLatestStepwiseSnapshot.mockResolvedValueOnce(snapshotFixture());
+
+    const res = await reapStaleAnalysisById("a1", NOW);
+
+    expect(res.status).toBe("salvaged");
+    expect(refundCredits).not.toHaveBeenCalled();
   });
 });

@@ -92,13 +92,6 @@ interface LLMTeamInvestigatorResponse {
         totalVentures: number;
         successfulExits: number;
       };
-      scores: {
-        domainExpertise: number;
-        entrepreneurialExperience: number;
-        executionCapability: number;
-        networkStrength: number;
-        overallFounderScore: number;
-      };
       redFlags: {
         type: string;
         severity: "CRITICAL" | "HIGH" | "MEDIUM";
@@ -356,11 +349,11 @@ Pour CHAQUE fondateur et membre clé, évalue la pertinence de son parcours par 
 4. **Réseau dans le secteur** — A-t-il un réseau de clients/partenaires potentiels dans le secteur cible ?
 5. **Compréhension du client** — A-t-il déjà été client ou utilisateur du type de produit qu'il construit ?
 
-Score domainExpertise :
-- 80-100: Expert reconnu du secteur (plusieurs années dans le domaine exact)
-- 60-79: Expérience pertinente dans un secteur adjacent ou compétences techniques directement applicables
-- 40-59: Compétences transférables mais pas d'expérience secteur
-- 0-39: Aucune connexion avec le secteur, first-time dans le domaine
+Évalue l'expertise domaine de façon qualitative (à refléter dans strengths/concerns, jamais en note chiffrée) :
+- Expert reconnu du secteur (plusieurs années dans le domaine exact) = signal fort
+- Expérience pertinente dans un secteur adjacent ou compétences techniques directement applicables = signal positif
+- Compétences transférables mais pas d'expérience secteur = à nuancer
+- Aucune connexion avec le secteur, first-time dans le domaine = faiblesse à noter
 
 ### ANALYSE DE LA FORMATION / EDUCATION (OBLIGATOIRE)
 Pour CHAQUE fondateur, évalue la formation EN CONTEXTE avec son expérience pro et son rôle dans la startup :
@@ -388,9 +381,9 @@ La pertinence de la formation dépend du poste occupé :
    - Rôle R&D/scientifique : formation avancée (PhD, ingénieur spécialisé) est un réel atout pour CE rôle
    - Rôle opérationnel (COO, Dir. Production, etc.) : la formation est secondaire, l'exécution prime
 
-5. **Impact sur les scores**
-La formation influence domainExpertise et overallFounderScore EN COMBINAISON avec l'expérience pro :
-   - Formation pertinente + expérience pertinente = boost
+5. **Impact sur l'évaluation**
+La formation influence l'expertise domaine EN COMBINAISON avec l'expérience pro (à refléter dans strengths/concerns, jamais en note chiffrée) :
+   - Formation pertinente + expérience pertinente = signal fort
    - Formation pertinente sans expérience = signal à nuancer (théorique vs pratique)
    - Pas de formation pertinente + forte expérience pro = l'expérience compense
    - Ni formation ni expérience pertinente = faiblesse à noter
@@ -538,13 +531,6 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
     "totalVentures": 1,
     "successfulExits": 1
   },
-  "scores": {
-    "domainExpertise": 85,
-    "entrepreneurialExperience": 70,
-    "executionCapability": 80,
-    "networkStrength": 75,
-    "overallFounderScore": 78
-  },
   "redFlags": [],
   "strengths": [
     "Track record vérifié: 4 ans chez Google en tant que PM",
@@ -591,10 +577,9 @@ Produis un JSON avec cette structure exacte. Chaque champ est OBLIGATOIRE.
   "role": "CEO",
   "backgroundVerified": true,
   "keyExperience": ["Google", "McKinsey"],
-  "domainExpertise": 85,
   "redFlags": ["RAS"]
 }
-→ Pas de LinkedIn, pas de scores détaillés, pas de source, pas de calcul, "RAS" n'est pas un red flag.
+→ Pas de LinkedIn, pas de profil structuré, pas de source, "RAS" n'est pas un red flag.
 
 ## Exemple de BON red flag (MEME entreprise, titre gonflé → CRITICAL):
 {
@@ -894,13 +879,6 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
           "totalVentures": number,
           "successfulExits": number
         },
-        "scores": {
-          "domainExpertise": 0-100,
-          "entrepreneurialExperience": 0-100,
-          "executionCapability": 0-100,
-          "networkStrength": 0-100,
-          "overallFounderScore": 0-100
-        },
         "redFlags": [
           {
             "type": "cv_embellishment|job_hopping|gap|conflict|etc",
@@ -1069,23 +1047,12 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
 
     const { data } = await this.llmCompleteJSON<LLMTeamInvestigatorResponse>(prompt);
 
-    // F03: DETERMINISTIC SCORING - Extract sub-scores from LLM, aggregate in code
+    // F03: DETERMINISTIC SCORING - Aggregate observable team metrics in code
     try {
       const founderProfiles = data.findings?.founderProfiles ?? [];
       const extractedMetrics: ExtractedMetric[] = [];
 
-      // Average founder sub-scores across all profiles
       if (founderProfiles.length > 0) {
-        const avg = (key: keyof typeof founderProfiles[0]["scores"]) =>
-          founderProfiles.reduce((sum, f) => sum + (f.scores?.[key] ?? 0), 0) / founderProfiles.length;
-
-        extractedMetrics.push(
-          { name: "domain_expertise", value: avg("domainExpertise"), unit: "score", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team" },
-          { name: "entrepreneurial_experience", value: avg("entrepreneurialExperience"), unit: "score", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team" },
-          { name: "execution_capability", value: avg("executionCapability"), unit: "score", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team" },
-          { name: "network_strength", value: avg("networkStrength"), unit: "score", source: "LLM founder analysis", dataReliability: "DECLARED", category: "team" },
-        );
-
         // LinkedIn verified ratio — factual, not LLM-estimated
         const verifiedCount = founderProfiles.filter(f => f.linkedinVerified).length;
         extractedMetrics.push({
@@ -1488,21 +1455,6 @@ MONTRE tes calculs (années d'expérience, tenure moyenne, etc.).
             totalVentures: f.entrepreneurialTrack?.totalVentures ?? 0,
             successfulExits: f.entrepreneurialTrack?.successfulExits ?? 0,
           },
-          scores: (() => {
-            const linkedinVerified = f.linkedinVerified ?? false;
-            // Cap scores when LinkedIn is not verified (deck-only analysis)
-            const capScore = (val: number | undefined | null, cap?: number) => {
-              const clamped = val != null ? Math.min(100, Math.max(0, val)) : 0;
-              return cap !== undefined && !linkedinVerified ? Math.min(clamped, cap) : clamped;
-            };
-            return {
-              domainExpertise: capScore(f.scores?.domainExpertise),
-              entrepreneurialExperience: capScore(f.scores?.entrepreneurialExperience, 60),
-              executionCapability: capScore(f.scores?.executionCapability, 70),
-              networkStrength: capScore(f.scores?.networkStrength, 30),
-              overallFounderScore: capScore(f.scores?.overallFounderScore, 65),
-            };
-          })(),
           redFlags: Array.isArray(f.redFlags)
             ? f.redFlags.map(rf => ({
                 type: rf.type ?? "unknown",

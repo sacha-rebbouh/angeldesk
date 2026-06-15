@@ -30,17 +30,13 @@ function formatDate(iso: string): string {
   });
 }
 
-interface VersionWithDelta extends TermsVersionData {
-  deltaScore: number | null;
-}
-
-const EMPTY_VERSIONS: VersionWithDelta[] = [];
+const EMPTY_VERSIONS: TermsVersionData[] = [];
 
 export const VersionTimeline = React.memo(function VersionTimeline({ dealId }: VersionTimelineProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
-  const { data, isLoading } = useQuery<{ versions: VersionWithDelta[] }>({
+  const { data, isLoading } = useQuery<{ versions: TermsVersionData[] }>({
     queryKey: queryKeys.dealTerms.versions(dealId),
     queryFn: async () => {
       const res = await fetch(`/api/deals/${dealId}/terms/versions`);
@@ -132,22 +128,6 @@ export const VersionTimeline = React.memo(function VersionTimeline({ dealId }: V
                         <Badge variant="outline" className="text-xs">
                           {SOURCE_LABELS[v.source] ?? v.source}
                         </Badge>
-                        {v.conditionsScore != null && (
-                          <Badge variant="secondary" className="text-xs">
-                            Score: {v.conditionsScore}/100
-                          </Badge>
-                        )}
-                        {v.deltaScore != null && v.deltaScore !== 0 && (
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-xs",
-                              v.deltaScore > 0 ? "text-green-600 border-green-200" : "text-red-600 border-red-200"
-                            )}
-                          >
-                            {v.deltaScore > 0 ? "+" : ""}{v.deltaScore} pts
-                          </Badge>
-                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">

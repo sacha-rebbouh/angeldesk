@@ -1,11 +1,15 @@
 import { prisma } from "@/lib/prisma";
 import { loadResults } from "@/services/analysis-results/load-results";
+import { type CanonicalExtractedInfo } from "@/services/analysis-results/score-extraction";
 import {
-  extractAnalysisScores,
-  type AnalysisScores,
-} from "@/services/analysis-results/score-extraction";
+  computeAnalysisSignalSummary,
+  readAnalysisSignalSummaries,
+  upsertAnalysisSignalSummary,
+} from "@/services/deals/analysis-signal-summary";
 import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
 import type { CurrentFact } from "@/services/fact-store/types";
+
+export type { CanonicalExtractedInfo };
 
 export interface CanonicalLatestThesis {
   id: string;
@@ -24,18 +28,9 @@ export interface CanonicalCompletedAnalysis {
   createdAt: Date;
 }
 
-export interface CanonicalExtractedInfo {
-  sector: string | null;
-  stage: string | null;
-  instrument: string | null;
-  geography: string | null;
-  description: string | null;
-}
-
 export interface CanonicalDealSignals {
   latestThesisByDealId: Map<string, CanonicalLatestThesis>;
   selectedAnalysisByDealId: Map<string, CanonicalCompletedAnalysis | null>;
-  analysisScoresByDealId: Map<string, AnalysisScores | null>;
   extractedInfoByDealId: Map<string, CanonicalExtractedInfo | null>;
   factMapByDealId: Map<string, Map<string, CurrentFact>>;
 }
@@ -52,11 +47,6 @@ interface CanonicalFieldFallbacks {
   instrument: string | null;
   geography: string | null;
   description: string | null;
-  globalScore: number | null;
-  teamScore: number | null;
-  marketScore: number | null;
-  productScore: number | null;
-  financialsScore: number | null;
 }
 
 export type CanonicalDealFields = CanonicalFieldFallbacks;
@@ -140,44 +130,6 @@ export function pickCanonicalAnalysis(
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
-}
-
-function extractCanonicalExtractedInfo(results: unknown): CanonicalExtractedInfo | null {
-  if (!isRecord(results)) {
-    return null;
-  }
-
-  const extractor = results["document-extractor"];
-  if (!isRecord(extractor) || extractor.success !== true || !isRecord(extractor.data)) {
-    return null;
-  }
-
-  const extractedInfo = extractor.data.extractedInfo;
-  if (!isRecord(extractedInfo)) {
-    return null;
-  }
-
-  const canonicalInfo: CanonicalExtractedInfo = {
-    sector: readString(extractedInfo.sector),
-    stage: readString(extractedInfo.stage),
-    instrument: readString(extractedInfo.instrument),
-    geography: readString(extractedInfo.geography),
-    description:
-      readString(extractedInfo.tagline) ??
-      readString(extractedInfo.productDescription),
-  };
-
-  return Object.values(canonicalInfo).some((value) => value != null)
-    ? canonicalInfo
-    : null;
-}
-
 export async function loadCanonicalDealSignals(
   dealIds: string[]
 ): Promise<CanonicalDealSignals> {
@@ -185,7 +137,6 @@ export async function loadCanonicalDealSignals(
     return {
       latestThesisByDealId: new Map(),
       selectedAnalysisByDealId: new Map(),
-      analysisScoresByDealId: new Map(),
       extractedInfoByDealId: new Map(),
       factMapByDealId: new Map(),
     };
@@ -259,34 +210,44 @@ export async function loadCanonicalDealSignals(
     ),
   ];
 
-  const resultsEntries = await Promise.all(
-    selectedAnalysisIds.map(async (analysisId) => [
-      analysisId,
-      await loadResults(analysisId),
-    ] as const)
-  );
+  // Read the pre-computed canonical signals from the denormalized read-model
+  // (AnalysisSignalSummary) — the hot path does ZERO blob loads.
+  const summaryByAnalysisId = await readAnalysisSignalSummaries(selectedAnalysisIds);
 
-  const resultsByAnalysisId = new Map(resultsEntries);
-  const analysisScoresByDealId = new Map(
-    dealIds.map((dealId) => {
-      const selectedAnalysis = selectedAnalysisByDealId.get(dealId) ?? null;
-      return [
-        dealId,
-        selectedAnalysis
-          ? extractAnalysisScores(resultsByAnalysisId.get(selectedAnalysis.id))
-          : null,
-      ] as const;
-    })
+  // Self-correcting: any canonical analysis missing from the cache (cold deal,
+  // schemaVersion bump, or a completion path that didn't warm the cache) falls
+  // back to loadResults + extract, then re-upserts so the next read hits. Misses
+  // are transient (write path + backfill keep the cache warm), so this degrades
+  // gracefully to the previous behavior instead of ever showing stale data.
+  const missingAnalysisIds = selectedAnalysisIds.filter(
+    (analysisId) => !summaryByAnalysisId.has(analysisId)
   );
+  if (missingAnalysisIds.length > 0) {
+    const dealIdByAnalysisId = new Map<string, string>();
+    for (const [dealId, analysis] of selectedAnalysisByDealId) {
+      if (analysis?.id) {
+        dealIdByAnalysisId.set(analysis.id, dealId);
+      }
+    }
+    await Promise.all(
+      missingAnalysisIds.map(async (analysisId) => {
+        const results = await loadResults(analysisId);
+        summaryByAnalysisId.set(analysisId, computeAnalysisSignalSummary(results));
+        const dealId = dealIdByAnalysisId.get(analysisId);
+        if (dealId) {
+          await upsertAnalysisSignalSummary(analysisId, dealId, results);
+        }
+      })
+    );
+  }
+
   const extractedInfoByDealId = new Map(
     dealIds.map((dealId) => {
       const selectedAnalysis = selectedAnalysisByDealId.get(dealId) ?? null;
-      return [
-        dealId,
-        selectedAnalysis
-          ? extractCanonicalExtractedInfo(resultsByAnalysisId.get(selectedAnalysis.id))
-          : null,
-      ] as const;
+      const summary = selectedAnalysis
+        ? summaryByAnalysisId.get(selectedAnalysis.id) ?? null
+        : null;
+      return [dealId, summary ? summary.extractedInfo : null] as const;
     })
   );
 
@@ -300,34 +261,8 @@ export async function loadCanonicalDealSignals(
   return {
     latestThesisByDealId,
     selectedAnalysisByDealId,
-    analysisScoresByDealId,
     extractedInfoByDealId,
     factMapByDealId,
-  };
-}
-
-export function resolveCanonicalAnalysisScores(
-  dealId: string,
-  signals: CanonicalDealSignals,
-  fallback: AnalysisScores
-): AnalysisScores {
-  const latestThesis = signals.latestThesisByDealId.get(dealId) ?? null;
-  const selectedAnalysis = signals.selectedAnalysisByDealId.get(dealId) ?? null;
-  const canonicalScores = signals.analysisScoresByDealId.get(dealId) ?? null;
-  const allowFallback = !latestThesis || !!selectedAnalysis;
-
-  return {
-    globalScore:
-      canonicalScores?.globalScore ?? (allowFallback ? fallback.globalScore : null),
-    teamScore:
-      canonicalScores?.teamScore ?? (allowFallback ? fallback.teamScore : null),
-    marketScore:
-      canonicalScores?.marketScore ?? (allowFallback ? fallback.marketScore : null),
-    productScore:
-      canonicalScores?.productScore ?? (allowFallback ? fallback.productScore : null),
-    financialsScore:
-      canonicalScores?.financialsScore ??
-      (allowFallback ? fallback.financialsScore : null),
   };
 }
 
@@ -338,7 +273,6 @@ export function resolveCanonicalDealFields(
 ): CanonicalDealFields {
   const factMap = signals.factMapByDealId.get(dealId) ?? new Map();
   const extractedInfo = signals.extractedInfoByDealId.get(dealId) ?? null;
-  const scores = resolveCanonicalAnalysisScores(dealId, signals, fallback);
 
   return {
     companyName:
@@ -371,10 +305,5 @@ export function resolveCanonicalDealFields(
       getCurrentFactString(factMap, "product.tagline") ??
       extractedInfo?.description ??
       fallback.description,
-    globalScore: scores.globalScore,
-    teamScore: scores.teamScore,
-    marketScore: scores.marketScore,
-    productScore: scores.productScore,
-    financialsScore: scores.financialsScore,
   };
 }

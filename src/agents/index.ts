@@ -4,7 +4,6 @@ export * from "./types";
 // Base Agents
 export { redFlagDetector } from "./red-flag-detector";
 export { documentExtractor } from "./document-extractor";
-export { dealScorer } from "./deal-scorer";
 
 // Tier 1 Agents (Investigation)
 export {

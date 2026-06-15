@@ -514,46 +514,6 @@ export interface RedFlagResult extends AgentResult {
   };
 }
 
-// Scoring Agent types
-export interface DealScores {
-  global: number;
-  team: number;
-  market: number;
-  product: number;
-  financials: number;
-  timing: number;
-}
-
-export interface ScoreBreakdown {
-  dimension: string;
-  score: number;
-  maxScore: number;
-  factors: {
-    name: string;
-    score: number;
-    maxScore: number;
-    rationale: string;
-  }[];
-}
-
-export interface ScoringResult extends AgentResult {
-  agentName: "deal-scorer";
-  data: {
-    scores: DealScores;
-    breakdown: ScoreBreakdown[];
-    percentileRanking?: {
-      overall: number;
-      bySector: number;
-      byStage: number;
-    };
-    comparableDeals?: {
-      name: string;
-      score: number;
-      outcome?: string;
-    }[];
-  };
-}
-
 // ============================================================================
 // UNIVERSAL AGENT TYPES (v2.0) - Shared across all refactored agents
 // ============================================================================
@@ -1211,15 +1171,6 @@ export interface TeamInvestigatorFindings {
       }[];
       totalVentures: number;
       successfulExits: number;
-    };
-
-    // Scores individuels (0-100)
-    scores: {
-      domainExpertise: number;
-      entrepreneurialExperience: number;
-      executionCapability: number;
-      networkStrength: number;
-      overallFounderScore: number;
     };
 
     // Red flags spécifiques au fondateur
@@ -3142,6 +3093,11 @@ export type Tier3SignalIntensity = "low" | "elevated" | "high" | "critical";
 export interface ConditionsAnalystFindings {
   termsSource: "form" | "term_sheet" | "deck" | "none";
 
+  // Chantier P4 — conditions-analyst SCORELESS : évaluation qualitative par
+  // critère (Valorisation/Instrument/Protections/Gouvernance + justification
+  // verbale). Remplace l'ancien score.breakdown. AUCUNE note chiffrée.
+  dimensionAssessment: { criterion: string; justification: string }[];
+
   valuation: {
     assessedValue: number | null;
     percentileVsDB: number | null;
@@ -3210,7 +3166,9 @@ export interface ConditionsAnalystFindings {
 
 export interface ConditionsAnalystData {
   meta: AgentMeta;
-  score: AgentScore;
+  // Chantier P5-b — note de deal (score?: AgentScore) PURGÉE du type. Les snapshots
+  // historiques pré-P4 la portent encore mais sont lus défensivement (cast Record)
+  // dans terms-normalization (libellés qualitatifs seulement), jamais via ce type.
   findings: ConditionsAnalystFindings;
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];
@@ -3257,32 +3215,11 @@ export interface ContradictionDetectorResult extends AgentResult {
 
 // Synthesis Deal Scorer Agent
 export interface SynthesisDealScorerData {
-  overallScore: number; // 0-100
+  // Chantier P5-b — note de deal PURGÉE du type (overallScore / confidence /
+  // dimensionScores / scoreBreakdown / comparativeRanking retirés). Production
+  // retirée en P4, restitution scoreless en P3 ; les snapshots historiques qui
+  // les portent encore sont lus défensivement (cast Record), jamais via ce type.
   verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
-  confidence: number; // 0-100
-  dimensionScores: {
-    dimension: string;
-    score: number;
-    weight: number;
-    weightedScore: number;
-    sourceAgents: string[];
-    keyFactors: string[];
-  }[];
-  scoreBreakdown: {
-    strengthsContribution: number;
-    weaknessesDeduction: number;
-    riskAdjustment: number;
-    opportunityBonus: number;
-  };
-  comparativeRanking: {
-    percentileOverall: number;
-    percentileSector: number;
-    percentileStage: number;
-    similarDealsAnalyzed: number;
-    method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE";
-    insufficientData?: boolean;
-    calculationDetail?: string;
-  };
   investmentRecommendation: {
     action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     rationale: string;
@@ -3612,7 +3549,6 @@ export interface MemoGeneratorResult extends AgentResult {
 export type AnalysisAgentResult =
   | ExtractionResult
   | RedFlagResult
-  | ScoringResult
   | DeckForensicsResult
   | FinancialAuditResult
   | MarketIntelResult

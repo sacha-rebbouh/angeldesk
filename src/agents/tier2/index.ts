@@ -160,6 +160,7 @@ Do not present unsourced or inferred claims as if they were sourced.
         }
 
         // Transform SectorExpertOutput to SectorExpertData (output large : annotations .map inline)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const output: any = sectorResult.data;
         const llmCost = sectorResult.cost;
         const sectorData: SectorExpertData = {

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { AGENT_TECHNICAL_NAMES, isLegalRegistryUnavailableSignal, sanitizeSourceLabel } from "../lib/presentation";
-import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
+import { thesisAlertCategoryLabel, DECK_COHERENCE_LABELS, DECK_COHERENCE_VALUES } from "@/lib/ui-configs";
 import { inferRedFlagTopic } from "@/services/red-flag-dedup/dedup";
 import {
   buildAnalysisV2ViewModel,
   buildDecisionSectionModel,
+  buildDecisionStripModel,
   buildEvidenceSectionModel,
   buildMemoSectionModel,
   buildSignalsSectionModel,
@@ -97,6 +98,8 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
         expectNoAgentName(s);
         expect(s, `"${s}" expose un score /100`).not.toMatch(/\/\s*100/); // #16 : pas de score chiffré dans le texte
       }
+      // P3-c : plus aucun champ de note de deal latent dans le modèle de carte.
+      expect(c).not.toHaveProperty("scoreValue");
     }
   });
 
@@ -299,5 +302,24 @@ describe("doctrine runtime guard — helpers neutralisent les fuites du fixture 
         }
       }
     }
+  });
+
+  // Dé-scorisation P3-b : la cohérence du deck est restituée en BANDE VERBALE,
+  // jamais en note /100. Le modèle n'expose plus de `coherenceScore` numérique ;
+  // le libellé restitué est verbal (aucun chiffre).
+  it("buildDecisionStripModel : cohérence du deck verbale, aucune note /100", () => {
+    const model = buildDecisionStripModel({ id: "d1" }, { results: HOSTILE_RESULTS }, null);
+    expect(model).not.toHaveProperty("coherenceScore");
+    // hostile fixture : coherenceScore 29 → bande la plus basse, dérivée sans nombre rendu
+    expect(model.coherenceBand).toBe("incoherent");
+    expect(DECK_COHERENCE_VALUES).toContain(model.coherenceBand);
+    const label = model.coherenceBand ? DECK_COHERENCE_LABELS[model.coherenceBand] : "";
+    expect(label).not.toMatch(/\/\s*100/);
+    expect(label).not.toMatch(/\d/);
+  });
+
+  it("buildDecisionStripModel : aucune cohérence inventée quand le score est absent", () => {
+    const model = buildDecisionStripModel({ id: "d1" }, { results: {} }, null);
+    expect(model.coherenceBand).toBeNull();
   });
 });

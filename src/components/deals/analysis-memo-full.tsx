@@ -623,12 +623,6 @@ export const AnalysisMemoFull = memo(function AnalysisMemoFull({
                 {memoData.executiveSummary.oneLiner}
               </p>
             </div>
-            {memoData.signalProfile?.score != null && (
-              <div className="rounded-lg border bg-background p-4 text-center lg:min-w-[160px]">
-                <p className="text-xs text-muted-foreground">Score mémo</p>
-                <p className="mt-1 text-3xl font-semibold tracking-normal">{memoData.signalProfile.score}/100</p>
-              </div>
-            )}
           </div>
         </div>
 

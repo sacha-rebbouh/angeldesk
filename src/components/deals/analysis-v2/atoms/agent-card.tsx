@@ -8,8 +8,6 @@ export type AgentCardSignal = {
   oneLiner: string | null;
   orientation: Orientation | null;
   solidity: EvidenceSolidity | null;
-  /** Score interne /100 — conservé mais MASQUÉ par défaut (#16 : biais de lecture). */
-  scoreValue: number | null;
   /** Ce qui étaye la thèse (insights non négatifs). */
   supports: string[];
   /** Ce qui alerte (red flags structurés). */

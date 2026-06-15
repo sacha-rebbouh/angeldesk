@@ -5,6 +5,7 @@
  */
 
 import { createHash } from 'crypto'
+import { NonRetriableError } from 'inngest'
 import { runCleaner } from '@/agents/maintenance/db-cleaner'
 import {
   LEGACY_SOURCES,
@@ -28,6 +29,8 @@ import { completionActionForStatus } from '@/lib/analysis-completion-policy'
 import type { SourceStats } from '@/agents/maintenance/types'
 import { inngest } from '@/lib/inngest-client'
 import { compensateFailedAnalysis, reapStaleAnalyses, reapStaleAnalysisById, reapStaleAnalysisByDispatchEventId } from '@/lib/analysis-compensation'
+import { cleanupOldLLMLogs } from '@/services/llm-logger'
+import { cleanupExpiredSnapshots } from '@/services/context-engine/persistence'
 
 export { inngest }
 
@@ -300,11 +303,32 @@ export const completerFunction = inngest.createFunction(
  *  - Le refund credit est gere par le handler cote route API en cas d'echec persistant
  *    (Inngest ne sait pas rembourser le user, c'est une concern metier)
  */
+/**
+ * Retries des fonctions d'analyse (attempt 0-indexé → tentatives 0..N). Partagé entre
+ * la config Inngest et le gate « refund à la DERNIÈRE tentative seulement » des catch
+ * de compensation (les deux doivent rester synchronisés).
+ */
+const ANALYSIS_FN_RETRIES = 1;
+
+/**
+ * true si ce throw ne sera PAS retenté par Inngest → la compensation doit partir
+ * MAINTENANT. Aligné sur la sémantique INTERNE du SDK (`attempt + 1 >= maxAttempts`,
+ * inngest/components/execution/v2.js) quand le runtime fournit maxAttempts ;
+ * fallback sur la config locale sinon. attempt non-numérique (back-compat
+ * runtime) = traité comme final (défaut sûr : on rembourse plutôt que jamais).
+ */
+function isFinalAnalysisAttempt(attempt: unknown, maxAttempts: unknown, error: unknown): boolean {
+  if (error instanceof NonRetriableError) return true; // pas de retry → compenser maintenant
+  if (typeof attempt !== 'number') return true;
+  if (typeof maxAttempts === 'number') return attempt + 1 >= maxAttempts;
+  return attempt >= ANALYSIS_FN_RETRIES;
+}
+
 export const dealAnalysisFunction = inngest.createFunction(
   {
     id: 'deal-analysis',
     name: 'Deal Analysis',
-    retries: 1,
+    retries: ANALYSIS_FN_RETRIES,
     // Concurrency: max 3 analyses simultanees par user (evite l'epuisement du pool Neon et d'OpenRouter)
     concurrency: [{
       key: "event.data.userId",
@@ -312,7 +336,7 @@ export const dealAnalysisFunction = inngest.createFunction(
     }],
   },
   { event: 'analysis/deal.analyze' },
-  async ({ event, step }) => {
+  async ({ event, step, attempt, maxAttempts }) => {
     const { dealId, type, enableTrace, userId, dispatchRefundKey, dispatchEventId, stepwise: stepwiseFromDispatch, stepwiseGraphVersion } = event.data as {
       dealId: string;
       type: string;
@@ -380,14 +404,42 @@ export const dealAnalysisFunction = inngest.createFunction(
         });
       }
     } catch (error) {
-      await step.run('compensate-analysis-throw', async () => {
-        await compensateFailedAnalysis({
-          userId,
-          dealId,
-          type,
-          refundIdempotencyKey: dispatchRefundKey,
+      // REFUND À LA DERNIÈRE TENTATIVE SEULEMENT (gate Codex salvage, sens inverse) :
+      // compenser à une tentative non-finale puis voir le retry Inngest LIVRER
+      // (createAnalysis get-or-create par dispatchEventId réutilise la même ligne)
+      // donnerait refund+COMPLETED. Tentative non-finale → on laisse le retry jouer.
+      // Gap résiduel assumé : throw sans ligne Analysis à la tentative 0 + hard-kill
+      // (sans catch) à la tentative finale = pas de refund par CE chemin — même
+      // profil que le double hard-kill préexistant ; le watchdog couvre dès qu'une
+      // ligne RUNNING existe.
+      if (isFinalAnalysisAttempt(attempt, maxAttempts, error)) {
+        await step.run('compensate-analysis-throw', async () => {
+          // TERMINAL-SAFE (gate Codex salvage) : un retry Inngest tardif peut THROW alors
+          // que l'analyse de CE dispatch a déjà été LIVRÉE (complétion commitée par une
+          // invocation antérieure, ou salvage watchdog COMPLETED dégradé). Relire le statut
+          // persisté AVANT de rembourser : COMPLETED = livrée + facturée → AUCUN refund.
+          // Sans dispatchEventId (events legacy), comportement inchangé.
+          if (dispatchEventId) {
+            const delivered = await prisma.analysis.findFirst({
+              where: { dispatchEventId, status: 'COMPLETED' },
+              select: { id: true },
+            });
+            if (delivered) {
+              logger.warn(
+                { dispatchEventId, analysisId: delivered.id, dealId },
+                '[deal-analysis] throw tardif après livraison — compensation/refund sautés'
+              );
+              return;
+            }
+          }
+          await compensateFailedAnalysis({
+            userId,
+            dealId,
+            type,
+            refundIdempotencyKey: dispatchRefundKey,
+          });
         });
-      });
+      }
       throw error;
     }
 
@@ -450,7 +502,27 @@ export const dealAnalysisFunction = inngest.createFunction(
 export const staleAnalysisReaperFunction = inngest.createFunction(
   { id: 'stale-analysis-reaper', name: 'Stale Analysis Reaper (backstop)', retries: 1 },
   { cron: '0 */12 * * *' },
-  async () => reapStaleAnalyses()
+  // Filet de maintenance 12 h : analyses figées + purge des logs LLM > 30 j
+  // (RGPD/bloat) + snapshots Context Engine expirés. Chaque tâche en step
+  // ISOLÉ (échec d'une n'empêche pas les autres ; chacune garde son try/catch
+  // interne). NB : si le reaper est PAUSÉ en prod (anti-drain Neon), ce câblage
+  // reste correct mais DORMANT jusqu'à réactivation du cron.
+  async ({ step }) => {
+    // reapStaleAnalyses ne catch PAS son findMany top-level : on l'enveloppe ici
+    // pour qu'un échec Prisma du reaper n'empêche PAS les cleanups suivants
+    // (best-effort maintenance ; les 2 cleanups catchent déjà en interne).
+    const reaped = await step.run('reap-stale-analyses', async () => {
+      try {
+        return await reapStaleAnalyses();
+      } catch (err) {
+        logger.error({ err }, '[maintenance] stale analysis reaper failed');
+        return { scanned: 0, reaped: 0, reapedIds: [], salvaged: 0, salvagedIds: [], error: true };
+      }
+    });
+    const llmLogsDeleted = await step.run('cleanup-old-llm-logs', () => cleanupOldLLMLogs());
+    const snapshotsDeleted = await step.run('cleanup-expired-snapshots', () => cleanupExpiredSnapshots());
+    return { reaped, llmLogsDeleted, snapshotsDeleted };
+  }
 );
 
 /**
@@ -507,14 +579,14 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
   {
     id: 'deal-analysis-resume',
     name: 'Deal Analysis Resume',
-    retries: 1,
+    retries: ANALYSIS_FN_RETRIES,
     concurrency: [{
       key: "event.data.userId",
       limit: 3,
     }],
   },
   { event: 'analysis/deal.resume' },
-  async ({ event, step }) => {
+  async ({ event, step, attempt, maxAttempts }) => {
     const { orchestrator } = await import("@/agents");
     const { analysisId, dealId, userId, resumeRefundKey, resumeRefundAmount } = event.data as {
       analysisId: string;
@@ -528,8 +600,19 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
       await step.run(stepId, async () => {
         const analysis = await prisma.analysis.findUnique({
           where: { id: analysisId },
-          select: { type: true },
+          select: { type: true, status: true },
         });
+        // TERMINAL-SAFE (gate Codex salvage) : resumeAnalysis peut avoir LIVRÉ
+        // (completeAnalysis COMPLETED) puis throw sur un effet post-complétion ;
+        // ou le salvage watchdog peut avoir livré pendant le resume. Livré =
+        // facturé → AUCUN refund.
+        if (analysis?.status === "COMPLETED") {
+          logger.warn(
+            { analysisId, dealId, stepId },
+            '[deal-analysis-resume] échec tardif après livraison — compensation/refund sautés'
+          );
+          return;
+        }
         await compensateFailedAnalysis({
           analysisId,
           userId,
@@ -575,7 +658,12 @@ export const dealAnalysisResumeFunction = inngest.createFunction(
 
       return result;
     } catch (error) {
-      await compensateResumeFailure('compensate-resume-throw');
+      // REFUND À LA DERNIÈRE TENTATIVE SEULEMENT — même invariant que le catch de
+      // dealAnalysisFunction : un refund à la tentative 0 suivi d'un retry resume
+      // qui LIVRE (même analysisId) donnerait refund+COMPLETED.
+      if (isFinalAnalysisAttempt(attempt, maxAttempts, error)) {
+        await compensateResumeFailure('compensate-resume-throw');
+      }
       throw error;
     }
   }

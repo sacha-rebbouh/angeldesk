@@ -188,8 +188,8 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage: 
 
   // AI Analysis section (memoized)
   const analysisSection = useMemo(() => {
-    const conditionsScore = data?.conditionsScore;
-    if (conditionsScore == null) return null;
+    const analysis = data?.conditionsAnalysis;
+    if (analysis == null) return null;
 
     const breakdown = data?.conditionsBreakdown ?? null;
     const negotiationAdvice = data?.negotiationAdvice ?? data?.conditionsAnalysis?.negotiationAdvice ?? [];
@@ -202,9 +202,8 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage: 
 
     return (
       <div className="space-y-4">
-        {/* Hero — verdict at a glance (replaces VerdictSummary + ScoreCard) */}
+        {/* Hero — verdict at a glance (scoreless) */}
         <ConditionsHeroCard
-          score={conditionsScore}
           breakdown={breakdown}
           narrative={narrative}
           valuation={valuation}
@@ -240,7 +239,7 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage: 
   }, [data, resolutionMap, resolveAlert, unresolveAlert, isResolving]);
 
   // Empty state
-  const isEmpty = !data?.terms && !data?.conditionsScore && (data?.tranches ?? []).length === 0;
+  const isEmpty = !data?.terms && !data?.conditionsAnalysis && (data?.tranches ?? []).length === 0;
 
   if (isLoading) {
     return (
@@ -260,7 +259,7 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage: 
             <h3 className="text-lg font-semibold">Conditions du deal</h3>
             <p className="text-sm text-muted-foreground mt-1 max-w-md">
               Renseignez les conditions d&apos;investissement (valorisation, instrument, protections)
-              pour obtenir une analyse IA complete avec score, red flags et conseils de negociation.
+              pour obtenir une analyse IA des conditions (red flags, conseils de negociation, questions).
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2 max-w-lg">
@@ -374,7 +373,7 @@ export const ConditionsTab = React.memo(function ConditionsTab({ dealId, stage: 
                 <Brain className="mx-auto h-8 w-8 text-primary/30" />
                 <p className="text-sm font-medium">Analyse IA non disponible</p>
                 <p className="text-xs text-muted-foreground">
-                  Cliquez &quot;Sauvegarder et analyser&quot; pour obtenir le score, les red flags et les conseils de negociation.
+                  Cliquez &quot;Sauvegarder et analyser&quot; pour obtenir l&apos;analyse des conditions (red flags, conseils de negociation).
                 </p>
               </div>
             )}

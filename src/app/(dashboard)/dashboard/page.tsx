@@ -30,6 +30,10 @@ import {
   resolveCanonicalDealFields,
 } from "@/services/deals/canonical-read-model";
 
+// Bound the portfolio-metrics scan so a power user with thousands of deals
+// can't blow up SSR.
+const PORTFOLIO_METRICS_DEAL_CAP = 200;
+
 const PIPELINE_STATUSES = [
   { value: "SCREENING", label: "Screening", color: "bg-blue-500" },
   { value: "ANALYZING", label: "Analyse", color: "bg-yellow-500" },
@@ -91,14 +95,19 @@ async function getDashboardStats(userId: string) {
         where: { deal: { userId }, status: "COMPLETED" },
         orderBy: { completedAt: "desc" },
         take: 5,
-        include: {
+        select: {
+          id: true,
+          type: true,
+          completedAt: true,
           deal: { select: { id: true, name: true } },
         },
       }),
-      // Deals with scores for portfolio metrics (F87)
+      // Deals for portfolio metrics (F87) — dé-scorisation : métriques observables uniquement
       prisma.deal.findMany({
         where: { userId },
-        select: { id: true, globalScore: true, sector: true },
+        orderBy: { updatedAt: "desc" },
+        take: PORTFOLIO_METRICS_DEAL_CAP,
+        select: { id: true, sector: true },
       }),
       // Credit balance
       getCreditBalance(userId),
@@ -110,7 +119,6 @@ async function getDashboardStats(userId: string) {
     pipelineCounts[s.status] = s._count.id;
   }
 
-  const signals = await loadCanonicalDealSignals(metricDeals.map((deal) => deal.id));
   const recentDealSignals = await loadCanonicalDealSignals(
     recentDealsRaw.map((deal) => deal.id)
   );
@@ -129,84 +137,13 @@ async function getDashboardStats(userId: string) {
       instrument: deal.instrument,
       geography: deal.geography,
       description: deal.description,
-      globalScore: deal.globalScore,
-      teamScore: deal.teamScore,
-      marketScore: deal.marketScore,
-      productScore: deal.productScore,
-      financialsScore: deal.financialsScore,
     }),
   }));
 
-  // Portfolio metrics
-  const scores = metricDeals
-    .map((deal) =>
-      resolveCanonicalDealFields(deal.id, signals, {
-        companyName: null,
-        website: null,
-        arr: null,
-        growthRate: null,
-        amountRequested: null,
-        valuationPre: null,
-        sector: deal.sector,
-        stage: null,
-        instrument: null,
-        geography: null,
-        description: null,
-        globalScore: deal.globalScore,
-        teamScore: null,
-        marketScore: null,
-        productScore: null,
-        financialsScore: null,
-      }).globalScore
-    )
-    .filter((score): score is number => typeof score === "number");
-  const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+  // Portfolio metrics — dé-scorisation : plus de note de deal restituée, uniquement
+  // des métriques OBSERVABLES (secteurs couverts, nombre de deals suivis).
   const sectorDistribution = [
-    ...new Set(
-      metricDeals
-        .filter((deal) => {
-          const score = resolveCanonicalDealFields(deal.id, signals, {
-            companyName: null,
-            website: null,
-            arr: null,
-            growthRate: null,
-            amountRequested: null,
-            valuationPre: null,
-            sector: deal.sector,
-            stage: null,
-            instrument: null,
-            geography: null,
-            description: null,
-            globalScore: deal.globalScore,
-            teamScore: null,
-            marketScore: null,
-            productScore: null,
-            financialsScore: null,
-          }).globalScore;
-          return typeof score === "number";
-        })
-        .map((deal) =>
-          resolveCanonicalDealFields(deal.id, signals, {
-            companyName: null,
-            website: null,
-            arr: null,
-            growthRate: null,
-            amountRequested: null,
-            valuationPre: null,
-            sector: deal.sector,
-            stage: null,
-            instrument: null,
-            geography: null,
-            description: null,
-            globalScore: deal.globalScore,
-            teamScore: null,
-            marketScore: null,
-            productScore: null,
-            financialsScore: null,
-          }).sector
-        )
-        .filter(Boolean)
-    ),
+    ...new Set(metricDeals.map((deal) => deal.sector).filter(Boolean)),
   ];
 
   return {
@@ -217,9 +154,9 @@ async function getDashboardStats(userId: string) {
     topRedFlags,
     pipelineCounts,
     recentAnalyses,
-    avgScore,
     sectorDistribution,
-    dealsWithScoresCount: scores.length,
+    portfolioDealsCount: metricDeals.length,
+    portfolioMetricsTruncated: totalDeals > PORTFOLIO_METRICS_DEAL_CAP,
     creditBalance,
   };
 }
@@ -234,9 +171,9 @@ export default async function DashboardPage() {
     topRedFlags,
     pipelineCounts,
     recentAnalyses,
-    avgScore,
     sectorDistribution,
-    dealsWithScoresCount,
+    portfolioDealsCount,
+    portfolioMetricsTruncated,
     creditBalance,
   } = await getDashboardStats(user.id);
 
@@ -291,18 +228,6 @@ export default async function DashboardPage() {
             <Link href="/pricing" className="text-xs text-muted-foreground hover:underline">
               Recharger
             </Link>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Score moyen</CardTitle>
-            <Brain className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{avgScore !== null ? `${avgScore}/100` : "-"}</div>
-            <p className="text-xs text-muted-foreground">
-              {dealsWithScoresCount} deal{dealsWithScoresCount !== 1 ? "s" : ""} scoré{dealsWithScoresCount !== 1 ? "s" : ""}
-            </p>
           </CardContent>
         </Card>
       </div>
@@ -422,10 +347,15 @@ export default async function DashboardPage() {
       </div>
 
       {/* Portfolio Metrics (F87) */}
-      {avgScore !== null && (
+      {sectorDistribution.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Métriques Portfolio</CardTitle>
+            {portfolioMetricsTruncated && (
+              <CardDescription>
+                Calculées sur les {PORTFOLIO_METRICS_DEAL_CAP} deals les plus récents
+              </CardDescription>
+            )}
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -434,8 +364,8 @@ export default async function DashboardPage() {
                 <p className="text-xs text-muted-foreground">Secteurs couverts</p>
               </div>
               <div className="text-center p-3 rounded-lg bg-muted/50">
-                <div className="text-2xl font-bold">{dealsWithScoresCount}</div>
-                <p className="text-xs text-muted-foreground">Deals scorés</p>
+                <div className="text-2xl font-bold">{portfolioDealsCount}</div>
+                <p className="text-xs text-muted-foreground">Deals suivis</p>
               </div>
             </div>
           </CardContent>

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
+import { Prisma } from '@prisma/client';
 import type { CreditAction } from '@prisma/client';
 import {
   CREDIT_COSTS,
@@ -258,16 +259,35 @@ export async function deductCreditAmount(
  * Add credits from a pack purchase.
  * On auto-refill, enforces rollover cap: balance cannot exceed 2x the pack size.
  * Manual purchases have no cap.
+ *
+ * `idempotencyKey` est OBLIGATOIRE : il réutilise la contrainte UNIQUE
+ * `CreditTransaction.idempotencyKey` pour empêcher tout double-crédit sur retry
+ * (webhook Stripe rejoué, double soumission). Indispensable AVANT tout câblage
+ * Stripe. Un appel avec une clé déjà vue est un no-op idempotent
+ * (`alreadyAdded: true`, balance inchangée).
  */
 export async function addCredits(
   userId: string,
   packName: string,
   credits: number,
+  idempotencyKey: string,
   stripePaymentId?: string,
   isAutoRefill = false
-): Promise<{ success: boolean; newBalance: number }> {
+): Promise<{ success: boolean; newBalance: number; alreadyAdded?: boolean }> {
   try {
     const result = await prisma.$transaction(async (tx) => {
+      // Idempotence : une clé déjà enregistrée = crédit déjà appliqué → no-op.
+      // La contrainte UNIQUE sur idempotencyKey reste le backstop contre la
+      // course concurrente (le perdant throw P2002 → catch externe, jamais de
+      // double-crédit).
+      const existing = await tx.creditTransaction.findUnique({
+        where: { idempotencyKey },
+        select: { balanceAfter: true },
+      });
+      if (existing) {
+        return { success: true, newBalance: existing.balanceAfter, alreadyAdded: true };
+      }
+
       let effectiveCredits = credits;
 
       // Enforce rollover cap only on auto-refill
@@ -313,6 +333,7 @@ export async function addCredits(
           description: `Achat pack ${packName}`,
           packName,
           stripePaymentId: stripePaymentId ?? null,
+          idempotencyKey,
         },
       });
 
@@ -321,6 +342,19 @@ export async function addCredits(
 
     return result;
   } catch (error) {
+    // Course concurrente même clé : le perdant prend un P2002 sur la contrainte
+    // UNIQUE idempotencyKey (le gagnant a déjà crédité). On renvoie un succès
+    // idempotent (re-lecture de la transaction du gagnant), pas une erreur
+    // transitoire — cohérent avec le contrat « clé déjà vue = no-op ».
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const existing = await prisma.creditTransaction.findUnique({
+        where: { idempotencyKey },
+        select: { balanceAfter: true },
+      });
+      if (existing) {
+        return { success: true, newBalance: existing.balanceAfter, alreadyAdded: true };
+      }
+    }
     logger.error({ err: error, userId }, 'addCredits failed');
     return { success: false, newBalance: 0 };
   }

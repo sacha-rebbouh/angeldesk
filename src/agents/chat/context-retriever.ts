@@ -11,7 +11,6 @@ import type { Prisma } from "@prisma/client";
 import type { CurrentFact } from "@/services/fact-store/types";
 import { getCurrentFacts } from "@/services/fact-store/current-facts";
 import { loadResults } from "@/services/analysis-results/load-results";
-import { extractAnalysisScores } from "@/services/analysis-results/score-extraction";
 import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
 import { safeDecrypt } from "@/lib/encryption";
 
@@ -148,11 +147,6 @@ interface DealInfo {
   growthRate: number | null;
   valuationPre: number | null;
   amountRequested: number | null;
-  globalScore: number | null;
-  teamScore: number | null;
-  marketScore: number | null;
-  productScore: number | null;
-  financialsScore: number | null;
 }
 
 // Topic to agent mapping for deep dives
@@ -255,11 +249,6 @@ export async function retrieveContext(
       select: {
         sector: true,
         stage: true,
-        globalScore: true,
-        teamScore: true,
-        marketScore: true,
-        productScore: true,
-        financialsScore: true,
       },
     }),
     includeScores ? getScoredFindings(dealId, analysisId) : Promise.resolve([]),
@@ -277,12 +266,6 @@ export async function retrieveContext(
         growthRate: getCurrentFactNumber(facts, "financial.revenue_growth_yoy"),
         valuationPre: getCurrentFactNumber(facts, "financial.valuation_pre"),
         amountRequested: getCurrentFactNumber(facts, "financial.amount_raising"),
-        globalScore: latestAnalysisMeta?.scores.globalScore ?? dealInfo.globalScore,
-        teamScore: latestAnalysisMeta?.scores.teamScore ?? dealInfo.teamScore,
-        marketScore: latestAnalysisMeta?.scores.marketScore ?? dealInfo.marketScore,
-        productScore: latestAnalysisMeta?.scores.productScore ?? dealInfo.productScore,
-        financialsScore:
-          latestAnalysisMeta?.scores.financialsScore ?? dealInfo.financialsScore,
       }
     : null;
 
@@ -1126,13 +1109,6 @@ async function getLatestAnalysisMeta(
 ): Promise<{
   summary: string | null;
   negotiationStrategy: unknown;
-  scores: {
-    globalScore: number | null;
-    teamScore: number | null;
-    marketScore: number | null;
-    productScore: number | null;
-    financialsScore: number | null;
-  };
 } | null> {
   const analysis = await getResolvedAnalysis(
     dealId,
@@ -1142,12 +1118,9 @@ async function getLatestAnalysisMeta(
 
   if (!analysis) return null;
 
-  const results = await loadResults(analysis.id);
-
   return {
     summary: analysis.summary,
     negotiationStrategy: analysis.negotiationStrategy,
-    scores: extractAnalysisScores(results),
   };
 }
 

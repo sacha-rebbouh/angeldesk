@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/card";
 import { AnalysisPreviewTabs } from "@/components/deals/analysis-preview-tabs";
 import { prisma } from "@/lib/prisma";
-import { extractDealScore } from "@/lib/score-utils";
 
 const AVEKAPETI_DEAL_ID = "cmp9q8o690001l804fx5rd5mc";
 
@@ -77,7 +76,6 @@ export default async function AvekapetiAnalysisPreviewPage() {
   }
 
   const results = analysis.results as unknown as Parameters<typeof AnalysisPreviewTabs>[0]["results"];
-  const currentScore = extractDealScore(results);
 
   return (
     <div className="space-y-6">
@@ -113,7 +111,6 @@ export default async function AvekapetiAnalysisPreviewPage() {
             thesis={thesis}
             totalTimeMs={analysis.totalTimeMs}
             totalCost={analysis.totalCost ? Number(analysis.totalCost) : null}
-            currentScore={currentScore ?? null}
           />
         </CardContent>
       </Card>

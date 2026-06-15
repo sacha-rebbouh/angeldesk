@@ -77,31 +77,9 @@ export function fmtEur(v: number | null): string {
   return `${v}€`;
 }
 
-/** Format weight, auto-detecting 0-1 vs 0-100 scale */
-export function fmtWeight(val: unknown): string {
-  if (val === null || val === undefined) return "N/A";
-  const num = typeof val === "number" ? val : Number(val);
-  if (isNaN(num)) return "N/A";
-  return `${num <= 1 ? Math.round(num * 100) : Math.round(num)}%`;
-}
-
 // ---------------------------------------------------------------------------
 // Color helpers
 // ---------------------------------------------------------------------------
-
-/** Get color for a score (0-100) */
-export function scoreColor(score: number): string {
-  if (score >= 70) return colors.success;
-  if (score >= 50) return colors.warning;
-  return colors.danger;
-}
-
-/** Get light background color for a score (0-100) */
-export function scoreBgColor(score: number): string {
-  if (score >= 70) return colors.successLight;
-  if (score >= 50) return colors.warningLight;
-  return colors.dangerLight;
-}
 
 /** Get color for severity */
 export function severityColor(severity: string): string {
@@ -121,23 +99,12 @@ export function severityBgColor(severity: string): string {
   return colors.primaryLight;
 }
 
-/** Recommendation label in French — analytical framing */
-export function recLabel(rec: string): string {
-  if (rec === "very_favorable") return "SIGNAUX TRÈS FAVORABLES";
-  if (rec === "favorable") return "SIGNAUX FAVORABLES";
-  if (rec === "contrasted") return "SIGNAUX CONTRASTÉS";
-  if (rec === "vigilance") return "VIGILANCE REQUISE";
-  if (rec === "alert_dominant") return "SIGNAUX D'ALERTE DOMINANTS";
-  return "INVESTIGATION COMPLÉMENTAIRE";
-}
-
 /**
  * Solidité des preuves — label PDF uppercase.
  *
- * Asymétrie volontaire par rapport à `recLabel()` : l'orientation est toujours
- * présente dans les données de scoring, mais la solidité peut être absente.
- * Retourne `null` quand la valeur n'est pas qualifiée — la surface PDF doit
- * décider explicitement d'afficher le fallback `"SOLIDITÉ À QUALIFIER"` via
+ * La solidité peut être absente (contrairement à l'orientation). Retourne
+ * `null` quand la valeur n'est pas qualifiée — la surface PDF doit décider
+ * explicitement d'afficher le fallback `"SOLIDITÉ À QUALIFIER"` via
  * `{ showUnqualified: true }`. Évite qu'une section PDF imprime une
  * pseudo-mesure quand le backend ne fournit rien.
  */

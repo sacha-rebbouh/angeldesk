@@ -1,5 +1,6 @@
-import type { EvidenceSolidity, Orientation } from "@/lib/ui-configs";
+import type { EvidenceSolidity, Orientation, DeckCoherenceBand } from "@/lib/ui-configs";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
+import { resolveAnalysisDurationMs } from "@/lib/analysis-duration";
 
 import {
   agentData,
@@ -114,8 +115,11 @@ function severityLabel(severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"
 const POSITIVE_KEYWORDS = /(force|atout|opportun|conviction|avantage|étay|sécuris|valid|aligné|cohérent|preuve|favorable|robuste)/i;
 const NEGATIVE_KEYWORDS = /(risque|alerte|contradictoire|carence|opaque|fragile|incomplet|absent|manqu|incohér|exagér|trompeur|projection|spéculat|hypothè|doute)/i;
 
-function extractDealHeader(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }) {
+function extractDealHeader(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { startedAt?: Date | null; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }) {
   const name = deal.companyName ?? deal.name ?? "Dossier sans nom";
+  // Durée WALL-CLOCK (cf. resolveAnalysisDurationMs) : `totalTimeMs` est faux en
+  // stepwise (ne capture qu'une invocation Inngest → ~5 s pour une analyse de 41 min).
+  const durationMs = resolveAnalysisDurationMs(analysis.startedAt, analysis.completedAt, analysis.totalTimeMs);
   return {
     name,
     status: deal.status ?? null,
@@ -123,7 +127,7 @@ function extractDealHeader(deal: { id: string; name?: string | null; companyName
     stage: deal.stage ?? null,
     completedAt: analysis.completedAt ? new Date(analysis.completedAt) : null,
     totalCostUsd: typeof analysis.totalCost === "number" ? analysis.totalCost : null,
-    totalDurationMin: typeof analysis.totalTimeMs === "number" ? Math.round(analysis.totalTimeMs / 60000) : null,
+    totalDurationMin: durationMs != null ? Math.round(durationMs / 60000) : null,
     totalAgents: analysis.totalAgents ?? null,
     completedAgents: analysis.completedAgents ?? null,
     mode: analysis.mode ?? null,
@@ -275,7 +279,20 @@ function extractVigilanceSignals(results: ResultsMap | null | undefined, limit: 
   return out;
 }
 
-export function buildDecisionStripModel(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { results: ResultsMap | null | undefined; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }, thesis: { verdict?: string | null; reformulated?: string | null } | null) {
+/**
+ * Bande verbale de cohérence du deck — dérive le score interne (deck-coherence-
+ * checker) en bande qualitative. Le NOMBRE n'est jamais restitué (doctrine
+ * dé-scorisation) ; seule la bande alimente le libellé verbal et le ton.
+ */
+function deckCoherenceBand(score: number | null): DeckCoherenceBand | null {
+  if (score == null) return null;
+  if (score >= 80) return "strong";
+  if (score >= 60) return "moderate";
+  if (score >= 40) return "weak";
+  return "incoherent";
+}
+
+export function buildDecisionStripModel(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { results: ResultsMap | null | undefined; startedAt?: Date | null; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }, thesis: { verdict?: string | null; reformulated?: string | null } | null) {
   const header = extractDealHeader(deal, analysis);
   const orientation = aggregateOrientation(analysis.results) as Orientation | null;
   const solidity = aggregateSolidity(analysis.results) as EvidenceSolidity | null;
@@ -301,7 +318,7 @@ export function buildDecisionStripModel(deal: { id: string; name?: string | null
     .filter((s) => s.status !== "ok")
     .map((s) => ({ label: s.label, status: s.status as "failed" | "missing" }));
   const TIER3_EXPECTED: Array<{ key: string; label: string }> = [
-    { key: "synthesis-deal-scorer", label: "Score de synthèse" },
+    { key: "synthesis-deal-scorer", label: "Synthèse du signal" },
     { key: "contradiction-detector", label: "Détection de contradictions" },
     { key: "conditions-analyst", label: "Conditions critiques" },
     { key: "devils-advocate", label: "Avocat du diable" },
@@ -325,7 +342,7 @@ export function buildDecisionStripModel(deal: { id: string; name?: string | null
     orientation,
     solidity,
     alertDistribution,
-    coherenceScore: coherenceScore != null ? Math.round(coherenceScore) : null,
+    coherenceBand: deckCoherenceBand(coherenceScore != null ? Math.round(coherenceScore) : null),
     contradictionsCritical,
     totalContradictions,
     thesisVerdict,
@@ -517,14 +534,12 @@ export function buildSignalsSectionModel(results: ResultsMap | null | undefined)
       const oneLiner = rawOneLiner ? cleanRenderedText(rawOneLiner) || null : null;
       const redFlags = arrayAt(snap.data, ["redFlags"]).length;
       const questions = arrayAt(snap.data, ["questions"]).length;
-      const score = numberAt(snap.data, ["score", "value"]);
       cards.push({
         agentLabel: snap.label,
         agentRole: snap.role,
         oneLiner,
         orientation,
         solidity,
-        scoreValue: score != null ? Math.round(score) : null,
         supports,
         concerns,
         redFlagCount: redFlags,
@@ -903,7 +918,7 @@ export type AnalysisV2ViewModel = {
 
 export function buildAnalysisV2ViewModel(input: {
   deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null };
-  analysis: { results: ResultsMap | null | undefined; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null };
+  analysis: { results: ResultsMap | null | undefined; startedAt?: Date | null; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null };
   thesis: Record<string, unknown> | null;
 }): AnalysisV2ViewModel {
   const { deal, analysis, thesis } = input;

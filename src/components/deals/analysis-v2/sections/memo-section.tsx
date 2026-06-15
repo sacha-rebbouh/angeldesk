@@ -271,7 +271,7 @@ export function MemoSection({ model }: { model: MemoSectionModel }) {
         <span className="av-eyebrow">Section 5</span>
         <h2 className="av-h2">Mémo synthétique</h2>
         <p className="av-note">
-          Synthèse factuelle des signaux, preuves et zones d'incertitude.
+          Synthèse factuelle des signaux, preuves et zones d&apos;incertitude.
         </p>
       </header>
 

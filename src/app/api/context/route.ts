@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/sanitize";
+import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { enrichDeal, getFounderContext, getConfiguredConnectors } from "@/services/context-engine";
 import type { ConnectorQuery } from "@/services/context-engine/types";
 import { handleApiError } from "@/lib/api-error";
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
 
     // P1 — Context engine declenche un cout externe (Perplexity, LinkedIn, Pappers).
     // 3/min protege du spam sans bloquer le flux normal d'analyse.
-    const rateLimit = checkRateLimit(`context:${user.id}`, { maxRequests: 3, windowMs: 60000 });
+    const rateLimit = await checkRateLimitDistributed(`context:${user.id}`, { maxRequests: 3, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
     }

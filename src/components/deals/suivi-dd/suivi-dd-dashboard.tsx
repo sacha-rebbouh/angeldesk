@@ -4,38 +4,25 @@ import { memo } from "react";
 import { ShieldCheck, MessageSquare } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { AdjustedScoreBadge } from "@/components/deals/adjusted-score-badge";
-import type { AlertResolution } from "@/hooks/use-resolutions";
 import type { AlertCounts } from "./unified-alert";
 import { severityBgColor, severityLabel } from "./unified-alert";
 
 interface SuiviDDDashboardProps {
   counts: AlertCounts;
   progressPct: number;
-  currentScore: number;
-  resolutions: AlertResolution[];
 }
 
 export const SuiviDDDashboard = memo(function SuiviDDDashboard({
   counts,
   progressPct,
-  currentScore,
-  resolutions,
 }: SuiviDDDashboardProps) {
   return (
     <Card>
       <CardContent className="py-4 space-y-3">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="h-5 w-5 text-primary" />
-            <span className="font-semibold text-sm">Progression Due Diligence</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {typeof currentScore === "number" && resolutions.length > 0 && (
-              <AdjustedScoreBadge originalScore={currentScore} resolutions={resolutions} />
-            )}
-          </div>
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-primary" />
+          <span className="font-semibold text-sm">Progression Due Diligence</span>
         </div>
 
         {/* Progress bar */}

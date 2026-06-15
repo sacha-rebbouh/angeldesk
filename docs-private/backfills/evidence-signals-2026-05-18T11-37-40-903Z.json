@@ -1,0 +1,145 @@
+{
+  "startedAt": "2026-05-18T11:37:40.904Z",
+  "finishedAt": "2026-05-18T11:37:56.964Z",
+  "durationMs": 16060,
+  "args": {
+    "dealId": "cmp9q8o690001l804fx5rd5mc",
+    "all": false,
+    "limit": null,
+    "maxCandidates": null,
+    "dryRun": false,
+    "onlyCompleted": true,
+    "since": null,
+    "force": false,
+    "summaryOut": "/Users/sacharebbouh/Desktop/angeldesk/docs-private/backfills/evidence-signals-2026-05-18T11-37-40-903Z.json"
+  },
+  "totals": {
+    "candidates": 6,
+    "skipped": 0,
+    "processed": 6,
+    "wouldProcess": 0,
+    "failed": 0,
+    "limitReached": false,
+    "signalsPersisted": 6,
+    "signalsDeduplicated": 0,
+    "claimsPersisted": 2,
+    "claimsDeduplicated": 0,
+    "attachmentsLinked": 3
+  },
+  "perDoc": [
+    {
+      "documentId": "cmp9r3hih0001jq043pyupk7y",
+      "documentName": "Deck_Avekapeti VF.pdf",
+      "dealId": "cmp9q8o690001l804fx5rd5mc",
+      "processingStatus": "COMPLETED",
+      "decision": "processed",
+      "latestRunId": "cmp9r3ka10005jq04sx16qckg",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ],
+      "signalsPersisted": 1,
+      "signalsDeduplicated": 0,
+      "claimsPersisted": 0,
+      "claimsDeduplicated": 0,
+      "attachmentsLinked": 0,
+      "promoted": false,
+      "runResultStatus": "ran"
+    },
+    {
+      "documentId": "cmp9r5zpl0001l204t1nfigny",
+      "documentName": "Table de capi Septembre 2024 signeģe.png",
+      "dealId": "cmp9q8o690001l804fx5rd5mc",
+      "processingStatus": "COMPLETED",
+      "decision": "processed",
+      "latestRunId": "cmp9r6cic0005l204krrng379",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ],
+      "signalsPersisted": 2,
+      "signalsDeduplicated": 0,
+      "claimsPersisted": 0,
+      "claimsDeduplicated": 0,
+      "attachmentsLinked": 0,
+      "promoted": true,
+      "runResultStatus": "ran"
+    },
+    {
+      "documentId": "cmp9rdbjx000el204tj1obt7a",
+      "documentName": "BP Avekapeti 2026 VF.xlsx",
+      "dealId": "cmp9q8o690001l804fx5rd5mc",
+      "processingStatus": "COMPLETED",
+      "decision": "processed",
+      "latestRunId": "cmp9re44e000hl2048e2bbeq9",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ],
+      "signalsPersisted": 0,
+      "signalsDeduplicated": 0,
+      "claimsPersisted": 0,
+      "claimsDeduplicated": 0,
+      "attachmentsLinked": 0,
+      "promoted": false,
+      "runResultStatus": "ran"
+    },
+    {
+      "documentId": "cmp9v668f0001jm04dvi6f8bx",
+      "documentName": "Mail.pdf",
+      "dealId": "cmp9q8o690001l804fx5rd5mc",
+      "processingStatus": "COMPLETED",
+      "decision": "processed",
+      "latestRunId": "cmp9v68yf0005jm040c9crs9t",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ],
+      "signalsPersisted": 1,
+      "signalsDeduplicated": 0,
+      "claimsPersisted": 0,
+      "claimsDeduplicated": 0,
+      "attachmentsLinked": 1,
+      "promoted": false,
+      "runResultStatus": "ran"
+    },
+    {
+      "documentId": "cmp9v6k90000djm0403a0n3oe",
+      "documentName": "Mail 3.pdf",
+      "dealId": "cmp9q8o690001l804fx5rd5mc",
+      "processingStatus": "COMPLETED",
+      "decision": "processed",
+      "latestRunId": "cmp9v6mow000hjm04cq9hkozq",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ],
+      "signalsPersisted": 1,
+      "signalsDeduplicated": 0,
+      "claimsPersisted": 2,
+      "claimsDeduplicated": 0,
+      "attachmentsLinked": 0,
+      "promoted": false,
+      "runResultStatus": "ran"
+    },
+    {
+      "documentId": "cmp9vh3e90001jy04fyf03tit",
+      "documentName": "Mail 2.pdf",
+      "dealId": "cmp9q8o690001l804fx5rd5mc",
+      "processingStatus": "COMPLETED",
+      "decision": "processed",
+      "latestRunId": "cmp9vh65z0005jy04nqsahu1v",
+      "missingExtractorVersions": [
+        "temporal-extractor@2026-05-18-001",
+        "claims-extractor@2026-05-18-001"
+      ],
+      "signalsPersisted": 1,
+      "signalsDeduplicated": 0,
+      "claimsPersisted": 0,
+      "claimsDeduplicated": 0,
+      "attachmentsLinked": 2,
+      "promoted": false,
+      "runResultStatus": "ran"
+    }
+  ]
+}

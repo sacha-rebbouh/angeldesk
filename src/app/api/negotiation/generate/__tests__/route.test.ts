@@ -262,10 +262,9 @@ describe("/api/negotiation/generate cache + thesis alignment", () => {
       "Deal",
       expect.objectContaining({
         financialAuditor: expect.objectContaining({
-          score: { value: 72 },
+          redFlags: [{ severity: "medium", title: "Burn", description: "High burn" }],
         }),
         synthesisDealScorer: expect.objectContaining({
-          overallScore: 81,
           verdict: "invest",
         }),
         thesis: expect.objectContaining({
@@ -274,6 +273,13 @@ describe("/api/negotiation/generate cache + thesis alignment", () => {
         }),
       }),
     );
+    // Dé-scorisation (doctrine § 4) : la note de deal n'est plus extraite vers le
+    // contexte LLM de négociation (agents produisent encore le score, on ne le
+    // propage plus). Verdict/orientation catégoriel conservés.
+    const passedResults = mocks.generateNegotiationStrategy.mock.calls[0][1];
+    expect(passedResults.financialAuditor).not.toHaveProperty("score");
+    expect(passedResults.synthesisDealScorer).not.toHaveProperty("score");
+    expect(passedResults.synthesisDealScorer).not.toHaveProperty("overallScore");
     expect(mocks.analysisUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "ck12345678901234567890124" },

@@ -624,16 +624,6 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
         elements.push(`Valorisation: ${val.verdict} (P${val.percentile ?? "?"})`);
       }
 
-      // Team investigator specifics
-      if (agentName === "team-investigator" && findings.founderProfiles) {
-        const profiles = findings.founderProfiles as { name?: string; scores?: { overallFounderScore?: number } }[];
-        for (const p of profiles) {
-          if (p.scores?.overallFounderScore !== undefined) {
-            elements.push(`${p.name}: Score ${p.scores.overallFounderScore}/100`);
-          }
-        }
-      }
-
       // Competitive intel specifics
       if (agentName === "competitive-intel" && findings.moatAnalysis) {
         const moat = findings.moatAnalysis as { overallMoatStrength?: number; moatVerdict?: string };

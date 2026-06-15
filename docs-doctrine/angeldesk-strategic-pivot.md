@@ -1,7 +1,7 @@
 # Angel Desk — Doctrine canonique
 
 > Source de vérité versionnée et partagée (Claude + Codex + Sacha).
-> **Pivot 2026-05-20** · Dernière mise à jour 2026-05-21.
+> **Pivot 2026-05-20** · Dernière mise à jour 2026-06-14 (dé-scorisation : plus aucune note de deal restituée — cf. § 4).
 > Appliquée dans `CLAUDE.md` projet et `docs-private/reference.yaml` §§ 3-11 + § 19 + § 20 + § 21 + § 22 + § 26 + § 27 + § 28 + § 29 + § 30 + § 31 + § 32 + § 33 + § 34.
 > Cascade doctrinale TERMINÉE pour le périmètre repéré.
 > Formulation prudente : *"terminée pour le périmètre repéré"*, PAS *"tout le fichier est parfait"*. Toute section non listée ci-dessus n'a PAS été auditée dans le cadre de la cascade 2026-05-20 et peut contenir des vestiges doctrinaux.
@@ -44,19 +44,45 @@ La positive guide, la négative protège. Les deux coexistent.
 
 ---
 
-## 4. Scoring à 2 axes
+## 4. Restitution analytique — aucune note de deal, modèle à 2 axes verbal
+
+**Décision verrouillée (2026-06-12, Sacha)** : Angel Desk ne restitue **plus jamais de note de deal** — ni score 0-100, ni grade A-F, ni percentile de score, ni « Deal Score ». Même geste doctrinal que le retrait des agents exit-strategist / scenario-modeler : *« on ne vient pas scorer un deal, on vient l'analyser »*. Cela **remplace** l'ancien framing *« score subordonné »* (le score restait affiché, plus petit) par *« aucune note restituée »*. L'orientation n'est plus dérivée d'un score caché (anti-pattern `synthesis-deal-scorer` historique : `if score>=85 → very_favorable`) mais de l'intensité des signaux, de la couverture par dimension et de la solidité des preuves.
+
+La restitution se fait sur **2 axes indépendants, tous deux VERBAUX** (aucun nombre de note rendu) :
 
 | Axe | Valeurs | Source |
 |---|---|---|
-| **Orientation du signal** | favorable / contrasté / alerte / non exploitable | Synthèse des findings agents, justification sourcée |
+| **Orientation du signal** | favorable / contrasté / alerte / non exploitable | Synthèse des findings agents, justification sourcée — dérivée de l'intensité des signaux + couverture par dimension + solidité, **jamais d'un score numérique caché** |
 | **Solidité des preuves** | solide / partielle / contradictoire / insuffisante | Formule TypeScript déterministe sur signaux evidence-first (provenance, fraîcheur, contradiction, couverture, fiabilité source) |
 
 L'axe 2 s'appelle **"Solidité des preuves"**, **PAS "Confiance"** (anti-pattern auto-évaluation LLM).
+
+**`non exploitable`** = décision de COUVERTURE explicite (cap table manquante, extraction faible, sources contradictoires, agents critiques échoués), jamais un fallback flou vers `contrasté`.
 
 Cas distincts :
 - *Mauvais dossier bien documenté* = Alerte × Solides → signaux d'alerte fortement étayés
 - *Bon dossier mal sourcé* = Favorables × Insuffisantes → tendance positive avec caveat majeur
 - *Pas exploitable* = Non exploitable × Insuffisante → pas même de signal à interpréter
+
+### 4.1 Numérique interne autorisé vs note de deal bannie (allowlist / banned-list)
+
+L'interdit porte sur la **note de deal restituée**, PAS sur tout nombre (Option B : numérique toléré en mécanique INTERNE non restituée).
+
+**Banni — toute note de deal, partout où elle est restituée** (UI, PDF, chat, exports, contextes LLM réinjectés via `previousResults`) :
+- `overallScore`, « score global », « Deal Score », « note du deal »
+- grade A-F / A+ / lettres de notation d'un deal
+- percentile **de score** (« meilleur que 78 % des deals »)
+- tout `x/100`, `x/10`, `x sur 100` à proximité de score / verdict / recommendation / orientation
+- sous-scores numériques par dimension restitués (`dimensionScores[].score`)
+
+**Autorisé — numérique de mécanique interne (jamais restitué comme note) OU métrique observable du deal** :
+- tri / classement interne, budgets de coût, seuils de qualité d'extraction
+- `signalIntensity` (comptes de red flags par sévérité) — interne, sert à dériver l'orientation
+- métriques **OBSERVABLES** restituées telles quelles : ARR, MRR, croissance, valorisation, runway, montant levé, taille de marché
+- percentile d'une **métrique observable** (« valo dans le P75 du secteur ») = benchmark de marché, pas une note de deal
+- niveau de confiance d'un agent sur un **fait précis** (pas une note globale du deal)
+
+Règle d'arbitrage : un nombre est **banni** s'il agrège une appréciation du deal en une note ; **autorisé** s'il décrit une grandeur observable du deal ou une mécanique interne non rendue. Contrat appliqué par les source-guards (P6) : bannir les PATTERNS de note, pas tous les nombres.
 
 ---
 
@@ -76,7 +102,7 @@ Cas distincts :
 | *"Intelligence collective émergente"*, *"wisdom of crowds"*, *"vérité émergente"* | Registre magique |
 | *"IA imparfaites"* en surface publique | Brutal — utiliser *"raisonnement sous incertitude"* |
 | Persona Marie au centre stratégique | Devient porte d'entrée acquisition secondaire |
-| Score global mono-axe trônant en haut de l'UI | Remplacé par modèle 2 axes |
+| Toute **note de deal** restituée — score 0-100, grade A-F, percentile de score, « Deal Score » | *« on analyse, on ne score pas »* — remplacée par le modèle 2 axes verbal (cf. § 4) |
 | *"Confiance"* comme nom d'axe scoring | Recrée l'auto-évaluation LLM |
 
 **Test règle d'or** : chaque phrase RESTITUÉE À L'UTILISATEUR ou utilisée en communication (UI, PDF, chat, com publique) doit pouvoir se terminer par *"…à vous de décider"* sans absurdité. Ne s'applique pas aux prompts internes pris isolément. Sinon : trop directive.
@@ -104,7 +130,7 @@ La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitc
 | **Live Coaching** | *"IA temps réel — quoi répondre"* | *"Vérification des preuves en temps réel pendant l'appel — fait remonter contradictions présentation/déclarations, benchmarks dépassés, infos nouvelles."* |
 | **22 experts sectoriels** | *"Aucun analyste expert en 22 secteurs"* | *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)."* |
 | **44 agents** | Accroche principale | *"Architecture en 4 couches — 44 agents sous le capot."* |
-| **Scoring** | Score global en hero UI | Score subordonné. Dimensions + solidité des preuves + sources + contradictions + questions en premier. |
+| **Scoring** | Score global en hero UI / « score subordonné » | **Aucune note de deal restituée, jamais** (cf. § 4). Orientation × solidité des preuves (verbal) + dimensions + sources + contradictions + questions. |
 
 ---
 

@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Deal" ALTER COLUMN "growthRate" SET DATA TYPE DECIMAL(7,2);

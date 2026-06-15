@@ -1,6 +1,6 @@
 # Live Coaching — Spécification Complète
 
-> **Statut** : Implémentée — V2.1 (audio + visual + intelligence cumulative) (2026-02-25)
+> **Statut** : Implémentée — V2.1 (audio + visual + intelligence cumulative) (2026-02-25) — **ARCHIVÉE** (flag `LIVE_COACHING_ENABLED` off par défaut ; réactivable)
 > **Auteur** : Discussion produit/tech — spec exhaustive
 > **Objectif** : Permettre aux BA d'être coachés en temps réel pendant leurs calls avec les fondateurs, grâce à l'analyse IA existante d'AngelDesk + analyse visuelle du screen share.
 

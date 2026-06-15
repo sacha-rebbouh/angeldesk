@@ -579,18 +579,30 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
         maxTokens: DECK_FORENSICS_MAX_TOKENS,
       }));
     } catch (error) {
-      if (!this.isTimeoutError(error)) {
+      // Opt 1 (robustesse) : Gemini Pro peut renvoyer un timeout OU une réponse vide
+      // (empty_response). Comme deck-forensics est `maxRetries:0` ET seul agent
+      // critique de Phase A, un tel hoquet infra avortait TOUT le Deep Dive. On
+      // retente UNE fois sur Gemini 3 Flash (borné). Une vraie erreur (schéma, bug)
+      // n'est PAS rattrapée → elle remonte (pas de masquage d'un vrai problème).
+      const fallbackReason = this.isTimeoutError(error)
+        ? "timeout"
+        : this.isEmptyResponseError(error)
+          ? "empty_response"
+          : null;
+      if (!fallbackReason) {
         throw error;
       }
 
       console.warn(
-        `[deck-forensics] Gemini Pro timed out after ${DECK_FORENSICS_PRO_TIMEOUT_MS}ms; ` +
+        `[deck-forensics] Gemini Pro ${fallbackReason}; ` +
         `falling back to Gemini 3 Flash with bounded output.`
       );
       ({ data } = await this.llmCompleteJSON<LLMDeckForensicsResponse>(
         `${prompt}\n\n` +
           `CONTRAINTE DE SECOURS: reponds en JSON strict, plus concis. ` +
-          `Priorise les claims, red flags et questions qui changent vraiment la lecture investisseur.`,
+          `Priorise les claims, red flags et questions qui changent vraiment la lecture investisseur. ` +
+          `Si le deck contient peu de contenu exploitable, produis une analyse MINIMALE et honnête ` +
+          `(findings reduits, confidenceLevel bas) — n'invente AUCUN claim, chiffre ou red flag absent du deck.`,
         {
           model: "GEMINI_3_FLASH",
           timeoutMs: DECK_FORENSICS_FLASH_FALLBACK_TIMEOUT_MS,
@@ -696,6 +708,11 @@ RAPPEL: Standard Big4/VC Partner. TOUS les findings, pas de minimum/maximum arti
   private isTimeoutError(error: unknown): boolean {
     const message = error instanceof Error ? error.message : String(error);
     return /timeout|timed out|abort/i.test(message);
+  }
+
+  private isEmptyResponseError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /empty_response/i.test(message);
   }
 
   private compactExtractedInfoForPrompt(extractedInfo: Record<string, unknown>): Record<string, unknown> {

@@ -30,38 +30,31 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 
-const TIER2_FILES = [
-  "src/agents/tier2/base-sector-expert.ts",
-  "src/agents/tier2/index.ts",
-  // 22 experts sectoriels (ordre alphabétique)
-  "src/agents/tier2/ai-expert.ts",
-  "src/agents/tier2/biotech-expert.ts",
-  "src/agents/tier2/blockchain-expert.ts",
-  "src/agents/tier2/climate-expert.ts",
-  "src/agents/tier2/consumer-expert.ts",
-  "src/agents/tier2/creator-expert.ts",
-  "src/agents/tier2/cybersecurity-expert.ts",
-  "src/agents/tier2/deeptech-expert.ts",
-  "src/agents/tier2/edtech-expert.ts",
-  "src/agents/tier2/fintech-expert.ts",
-  "src/agents/tier2/foodtech-expert.ts",
-  "src/agents/tier2/gaming-expert.ts",
-  "src/agents/tier2/general-expert.ts",
-  "src/agents/tier2/hardware-expert.ts",
-  "src/agents/tier2/healthtech-expert.ts",
-  "src/agents/tier2/hrtech-expert.ts",
-  "src/agents/tier2/legaltech-expert.ts",
-  "src/agents/tier2/marketplace-expert.ts",
-  "src/agents/tier2/mobility-expert.ts",
-  "src/agents/tier2/proptech-expert.ts",
-  "src/agents/tier2/saas-expert.ts",
-  "src/agents/tier2/spacetech-expert.ts",
-] as const;
-
 const REPO_ROOT = resolve(__dirname, "../../../..");
+
+// Glob the Tier 2 directory so a NEW sector expert is guarded BY DEFAULT.
+// Exclusions = support files with NO anti-hallucination directives (their
+// business thresholds are legitimate, cf. scope note above). base-sector-expert
+// + index + every *-expert.ts stay in scope; a new expert is auto-included.
+const TIER2_DIR = "src/agents/tier2";
+const TIER2_EXCLUDED = new Set([
+  "sector-standards.ts",
+  "sector-benchmarks.ts",
+  "output-mapper.ts",
+  "benchmark-injector.ts",
+  "complete-sector-json.ts",
+  "types.ts",
+]);
+const TIER2_FILES = readdirSync(resolve(REPO_ROOT, TIER2_DIR))
+  .filter(
+    (file) =>
+      file.endsWith(".ts") && !file.endsWith(".d.ts") && !TIER2_EXCLUDED.has(file)
+  )
+  .sort()
+  .map((file) => `${TIER2_DIR}/${file}`);
 
 function loadFile(relPath: string): string {
   return readFileSync(resolve(REPO_ROOT, relPath), "utf-8");
@@ -96,6 +89,10 @@ function findContextualViolations(
 }
 
 describe("Phase A A8a — Source guard global Tier 2 (anti-hallucination cleanup)", () => {
+  it("globs at least the 24 known Tier 2 sources (no vacuous pass)", () => {
+    expect(TIER2_FILES.length).toBeGreaterThanOrEqual(24);
+  });
+
   for (const relPath of TIER2_FILES) {
     describe(relPath, () => {
       const source = loadFile(relPath);

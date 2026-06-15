@@ -563,6 +563,7 @@ export const creatorExpert = {
 
       // output large (any) : creator lit des champs hors schema (subSector,
       // platformDependencyAnalysis, creatorEconomicsAnalysis) absents de SectorExpertOutput.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const output: any = sectorResult.data;
       const llmCost = sectorResult.cost;
 

@@ -11,7 +11,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatPercentileShort } from "@/lib/format-utils";
-import { ScoreBadge } from "@/components/shared/score-badge";
 import { ExpandableSection } from "@/components/shared/expandable-section";
 import {
   AlertTriangle,
@@ -32,7 +31,6 @@ import {
   Database,
   Zap,
   Shield,
-  Building2,
   Users,
   ArrowRight,
   Clock,
@@ -161,10 +159,8 @@ const SeverityBadge = memo(function SeverityBadge({ severity }: { severity: "cri
 
 const VerdictHero = memo(function VerdictHero({
   verdict,
-  sectorScore,
 }: {
   verdict?: ExtendedSectorData["verdict"];
-  sectorScore: number;
 }) {
   if (!verdict) return null;
 
@@ -210,79 +206,7 @@ const VerdictHero = memo(function VerdictHero({
           </div>
         </div>
 
-        {/* Score */}
-        <div className="text-center">
-          <div className="text-4xl font-bold text-slate-800">{sectorScore}</div>
-          <div className="text-xs text-slate-500 uppercase tracking-wide">Score Secteur</div>
-        </div>
       </div>
-    </div>
-  );
-});
-
-// =============================================================================
-// NEW: Score Breakdown Visual
-// =============================================================================
-
-const ScoreBreakdownSection = memo(function ScoreBreakdownSection({
-  breakdown,
-}: {
-  breakdown: ExtendedSectorData["scoreBreakdown"];
-}) {
-  if (!breakdown) return null;
-
-  // Determine which scoring model is used (SaaS vs Fintech)
-  const isSaaS = breakdown.unitEconomics !== undefined;
-  const isFintech = breakdown.metricsScore !== undefined;
-
-  const dimensions = isSaaS
-    ? [
-        { name: "Unit Economics", score: breakdown.unitEconomics ?? 0, max: 25, icon: Calculator, color: "bg-blue-500" },
-        { name: "Growth", score: breakdown.growth ?? 0, max: 25, icon: TrendingUp, color: "bg-green-500" },
-        { name: "Retention", score: breakdown.retention ?? 0, max: 25, icon: Users, color: "bg-purple-500" },
-        { name: "GTM Efficiency", score: breakdown.gtmEfficiency ?? 0, max: 25, icon: Zap, color: "bg-orange-500" },
-      ]
-    : isFintech
-    ? [
-        { name: "Metrics", score: breakdown.metricsScore ?? 0, max: 25, icon: BarChart3, color: "bg-blue-500" },
-        { name: "Regulatory", score: breakdown.regulatoryScore ?? 0, max: 25, icon: Shield, color: "bg-green-500" },
-        { name: "Business Model", score: breakdown.businessModelScore ?? 0, max: 25, icon: Building2, color: "bg-purple-500" },
-        { name: "Market Position", score: breakdown.marketPositionScore ?? 0, max: 25, icon: Target, color: "bg-orange-500" },
-      ]
-    : [];
-
-  if (dimensions.length === 0) return null;
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        {dimensions.map((dim) => {
-          const Icon = dim.icon;
-          const percentage = (dim.score / dim.max) * 100;
-
-          return (
-            <div key={dim.name} className="p-4 rounded-lg bg-slate-50 border border-slate-100">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <Icon className="h-4 w-4 text-slate-600" />
-                  <span className="text-sm font-medium text-slate-700">{dim.name}</span>
-                </div>
-                <span className="text-lg font-bold text-slate-800">{dim.score}/{dim.max}</span>
-              </div>
-              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                <div
-                  className={cn("h-full rounded-full transition-all duration-500", dim.color)}
-                  style={{ width: `${percentage}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {breakdown.justification && (
-        <p className="text-sm text-slate-600 italic">{breakdown.justification}</p>
-      )}
     </div>
   );
 });
@@ -917,11 +841,6 @@ const SectorQuestionsSection = memo(function SectorQuestionsSection({ questions 
 const SectorFitSection = memo(function SectorFitSection({ fit }: { fit: SectorExpertData["sectorFit"] }) {
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">Sector Fit Score</span>
-        <ScoreBadge score={fit.score} size="lg" />
-      </div>
-
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">Timing:</span>
         <Badge variant="outline" className={cn("text-xs capitalize", TIMING_COLORS[fit.sectorTiming])}>
@@ -1028,10 +947,6 @@ export const Tier2Results = memo(function Tier2Results({ results }: Tier2Results
               <p className="text-sm opacity-90">Analyse {data.sectorName}</p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-sm opacity-75">Score Secteur</p>
-            <p className="text-4xl font-bold">{data.sectorScore}</p>
-          </div>
         </div>
         <div className="flex items-center gap-4 mt-4">
           <MaturityBadge maturity={data.sectorMaturity} />
@@ -1044,24 +959,13 @@ export const Tier2Results = memo(function Tier2Results({ results }: Tier2Results
       <CardContent className="p-6 space-y-6">
         {/* NEW: Verdict Hero (if extended data available) */}
         {extended?.verdict && (
-          <VerdictHero verdict={extended.verdict} sectorScore={data.sectorScore} />
+          <VerdictHero verdict={extended.verdict} />
         )}
 
         {/* Executive Summary */}
         <div className="p-4 bg-muted/30 rounded-lg">
           <p className="text-sm leading-relaxed">{data.executiveSummary}</p>
         </div>
-
-        {/* NEW: Score Breakdown (if extended data available) */}
-        {extended?.scoreBreakdown && (
-          <ExpandableSection
-            title="Score Breakdown"
-            icon={<BarChart3 className="h-4 w-4" />}
-            defaultOpen={true}
-          >
-            <ScoreBreakdownSection breakdown={extended.scoreBreakdown} />
-          </ExpandableSection>
-        )}
 
         {/* NEW: Unit Economics (if extended data available) */}
         {extended?.unitEconomics && (

@@ -5,7 +5,11 @@
 import { prisma } from "@/lib/prisma";
 import type { DealContext, CondensedTranscriptIntel } from "@/lib/live/types";
 import { loadResults } from "@/services/analysis-results/load-results";
-import { extractAnalysisScores } from "@/services/analysis-results/score-extraction";
+import {
+  readDoctrineOrientation,
+  DOCTRINE_ORIENTATION_CONFIG,
+  type DoctrineOrientation,
+} from "@/services/signal-profile";
 import { getCorpusSnapshotDocumentIds } from "@/services/corpus";
 import {
   pickCanonicalAnalysis,
@@ -75,16 +79,18 @@ export function clearContextCache(dealId: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Signal profile mapping (mirrors CLAUDE.md rule #1 grille)
+// Signal profile label (orientation VERBALE — aucune note de deal)
+//
+// Dé-scorisation (doctrine § 4) : l'orientation est lue via le bi-reader
+// `readDoctrineOrientation` (profil scoreless P2+ ou verdict legacy 5 valeurs),
+// JAMAIS dérivée d'un score (= score caché interdit, garde-fou #1). `null` =
+// orientation non disponible (analyse legacy score-only / absente).
 // ---------------------------------------------------------------------------
 
-function getSignalProfile(score: number | null): string {
-  if (score == null) return "Aucune analyse disponible";
-  if (score >= 85) return "Signaux très favorables";
-  if (score >= 70) return "Signaux favorables";
-  if (score >= 55) return "Signaux contrastés";
-  if (score >= 40) return "Vigilance requise";
-  return "Signaux d'alerte dominants";
+function signalProfileLabel(orientation: DoctrineOrientation | null): string {
+  return orientation
+    ? DOCTRINE_ORIENTATION_CONFIG[orientation].label
+    : "Aucune analyse disponible";
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +260,12 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     ? (await loadResults(selectedAnalysisDetails.id)) as AgentResults | null
     : null;
   const factMap = buildCurrentFactMap(currentFacts);
-  const analysisScores = extractAnalysisScores(agentResults);
+  // Orientation doctrine (4 valeurs) lue sans score via le bi-reader. `loadResults`
+  // renvoie `unknown` (cast structurel local `AgentResults`) → cast vers le type
+  // attendu par le bi-reader, qui ne lit que `success`/`data`.
+  const orientationRead = readDoctrineOrientation(
+    agentResults as unknown as Parameters<typeof readDoctrineOrientation>[0]
+  );
 
   // --- Financial summary ---
   const financialData = getAgentData(agentResults, "financial-auditor");
@@ -498,10 +509,8 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
         }
       }
 
-      const score = typeof data.score === "number" ? data.score : undefined;
-
       if (summary || keyFindings.length > 0) {
-        allAgentFindings[agentName] = { summary, keyFindings, score };
+        allAgentFindings[agentName] = { summary, keyFindings };
       }
     }
   }
@@ -624,13 +633,6 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
       description: deal.description,
       website: getCurrentFactString(factMap, "other.website") ?? deal.website,
     },
-    scores: {
-      global: analysisScores.globalScore ?? deal.globalScore,
-      team: analysisScores.teamScore ?? deal.teamScore,
-      market: analysisScores.marketScore ?? deal.marketScore,
-      product: analysisScores.productScore ?? deal.productScore,
-      financials: analysisScores.financialsScore ?? deal.financialsScore,
-    },
     financialSummary,
     teamSummary,
     founderDetails,
@@ -639,8 +641,7 @@ export async function compileDealContext(dealId: string): Promise<DealContext> {
     redFlags,
     questionsToAsk,
     benchmarks,
-    overallScore: analysisScores.globalScore ?? deal.globalScore,
-    signalProfile: getSignalProfile(analysisScores.globalScore ?? deal.globalScore),
+    signalProfile: signalProfileLabel(orientationRead.orientation),
     keyContradictions,
     allAgentFindings,
     negotiationStrategy,
@@ -660,7 +661,6 @@ export function compileContextForColdMode(): DealContext {
     sector: null,
     stage: null,
     dealBasics: { arr: null, growthRate: null, amountRequested: null, valuationPre: null, geography: null, description: null, website: null },
-    scores: { global: null, team: null, market: null, product: null, financials: null },
     financialSummary: { keyMetrics: {}, benchmarkPosition: "", redFlags: [] },
     teamSummary: { founders: [], keyStrengths: [], concerns: [] },
     founderDetails: [],
@@ -669,7 +669,6 @@ export function compileContextForColdMode(): DealContext {
     redFlags: [],
     questionsToAsk: [],
     benchmarks: { valuationRange: null, comparableDeals: [] },
-    overallScore: null,
     signalProfile: "Aucune analyse disponible",
     keyContradictions: [],
     allAgentFindings: {},
@@ -703,13 +702,9 @@ export function serializeContext(context: DealContext): string {
   }
   lines.push("");
 
-  // Scores (all dimensions)
-  lines.push("## Scores d'analyse");
-  lines.push(`- Score global : ${context.scores.global ?? "N/A"}/100 — ${context.signalProfile}`);
-  if (context.scores.team != null) lines.push(`- Équipe : ${context.scores.team}/100`);
-  if (context.scores.market != null) lines.push(`- Marché : ${context.scores.market}/100`);
-  if (context.scores.product != null) lines.push(`- Produit : ${context.scores.product}/100`);
-  if (context.scores.financials != null) lines.push(`- Financials : ${context.scores.financials}/100`);
+  // Orientation du signal (verbale — aucune note de deal, doctrine § 4)
+  lines.push("## Orientation du signal");
+  lines.push(`- ${context.signalProfile}`);
   lines.push("");
 
   // Deal basics (raw financial numbers)
@@ -875,8 +870,7 @@ export function serializeContext(context: DealContext): string {
   if (agentEntries.length > 0) {
     lines.push("## Résultats d'analyse par agent");
     for (const [agentName, finding] of agentEntries) {
-      const scoreStr = finding.score != null ? ` (${finding.score}/100)` : "";
-      lines.push(`### ${agentName}${scoreStr}`);
+      lines.push(`### ${agentName}`);
       if (finding.summary) lines.push(finding.summary);
       for (const f of finding.keyFindings) {
         lines.push(`- ${f}`);

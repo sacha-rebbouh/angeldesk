@@ -3,6 +3,7 @@ import { openrouter, MODELS, type ModelKey } from "./client";
 import { getCircuitBreakerDistributed, syncCircuitBreakerState, CircuitOpenError } from "./circuit-breaker";
 import { costMonitor } from "@/services/cost-monitor";
 import { logLLMCallAsync } from "@/services/llm-logger";
+import { logger } from "@/lib/logger";
 import {
   StreamingJSONParser,
   buildContinuationPrompt,
@@ -47,7 +48,7 @@ export function setAgentContext(agentName: string | null): void {
   if (store) {
     store.agentName = agentName;
   } else if (process.env.NODE_ENV === 'development') {
-    console.warn(
+    logger.warn(
       `[LLM Router] setAgentContext("${agentName}") called outside of runWithLLMContext. ` +
       `Agent context will not be tracked. Wrap the calling code in runWithLLMContext().`
     );
@@ -70,7 +71,7 @@ export function setAnalysisContext(analysisId: string | null): void {
   if (store) {
     store.analysisId = analysisId;
   } else if (process.env.NODE_ENV === 'development') {
-    console.warn(
+    logger.warn(
       `[LLM Router] setAnalysisContext called outside of runWithLLMContext.`
     );
   }
@@ -333,7 +334,7 @@ export async function complete(
     timeoutMs = 120_000,
   } = options;
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[complete] maxTokens=${maxTokens}`);
+    logger.debug(`[complete] maxTokens=${maxTokens}`);
   }
 
   const selectedModelKey = modelKey ?? selectModel(complexity, getAgentContext() ?? undefined);
@@ -477,6 +478,7 @@ export async function complete(
 
       // Record cost for monitoring (total including retries)
       costMonitor.recordCall({
+        analysisId: getAnalysisContext() ?? undefined,
         model: model.id,
         agent: getAgentContext() ?? "unknown",
         inputTokens: usage.prompt_tokens,
@@ -505,7 +507,7 @@ export async function complete(
 
       const finishReason = response.choices[0]?.finish_reason;
       if (process.env.NODE_ENV === 'development') {
-        console.log(`[complete] Response: ${usage.completion_tokens} output tokens, finishReason=${finishReason}, contentLen=${content.length}`);
+        logger.debug(`[complete] Response: ${usage.completion_tokens} output tokens, finishReason=${finishReason}, contentLen=${content.length}`);
       }
 
       return {
@@ -558,6 +560,7 @@ export async function complete(
         // Record the accumulated retry cost even on final failure
         if (accumulatedRetryCost > 0) {
           costMonitor.recordCall({
+            analysisId: getAnalysisContext() ?? undefined,
             model: model.id,
             agent: getAgentContext() ?? "unknown",
             inputTokens: estimatedInputTokens * (attempt + 1),
@@ -571,7 +574,7 @@ export async function complete(
       // Calculate backoff and retry
       const delay = calculateBackoff(attempt);
       if (process.env.NODE_ENV === 'development') {
-        console.log(
+        logger.debug(
           `[OpenRouter] Retryable error on attempt ${attempt + 1}/${effectiveMaxRetries + 1}. Waiting ${delay}ms... (est. cost so far: $${accumulatedRetryCost.toFixed(4)})`
         );
       }
@@ -599,29 +602,29 @@ export function extractFirstJSON(content: string): string {
   // Check if content contains backticks at all
   const backtickIndex = normalizedContent.indexOf('`');
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[extractFirstJSON] Backtick char found at index: ${backtickIndex}`);
+    logger.debug(`[extractFirstJSON] Backtick char found at index: ${backtickIndex}`);
     if (backtickIndex >= 0) {
       const surroundingChars = normalizedContent.substring(Math.max(0, backtickIndex - 5), backtickIndex + 10);
-      console.log(`[extractFirstJSON] Chars around backtick: "${surroundingChars}" (charCodes: ${[...surroundingChars].map(c => c.charCodeAt(0)).join(',')})`);
+      logger.debug(`[extractFirstJSON] Chars around backtick: "${surroundingChars}" (charCodes: ${[...surroundingChars].map(c => c.charCodeAt(0)).join(',')})`);
     }
   }
 
   for (const pattern of codeBlockPatterns) {
     const match = normalizedContent.match(pattern);
     if (process.env.NODE_ENV === 'development') {
-      console.log(`[extractFirstJSON] Pattern ${pattern}: match=${!!match}`);
+      logger.debug(`[extractFirstJSON] Pattern ${pattern}: match=${!!match}`);
     }
     if (match && match[1]) {
       const extracted = match[1].trim();
       if (process.env.NODE_ENV === 'development') {
-        console.log(`[extractFirstJSON] Code block found, extracted starts with: "${extracted.substring(0, 50)}..."`);
+        logger.debug(`[extractFirstJSON] Code block found, extracted starts with: "${extracted.substring(0, 50)}..."`);
       }
       // Verify it starts with { (is actual JSON)
       if (extracted.startsWith("{")) {
         const json = extractBracedJSON(extracted);
         if (json) {
           if (process.env.NODE_ENV === 'development') {
-            console.log(`[extractFirstJSON] Successfully extracted JSON (${json.length} chars)`);
+            logger.debug(`[extractFirstJSON] Successfully extracted JSON (${json.length} chars)`);
           }
           return json;
         }
@@ -634,12 +637,12 @@ export function extractFirstJSON(content: string): string {
   if (unclosedCodeBlockMatch) {
     const strippedContent = normalizedContent.substring(unclosedCodeBlockMatch[0].length);
     if (process.env.NODE_ENV === 'development') {
-      console.log(`[extractFirstJSON] Unclosed code block detected, stripped header (${unclosedCodeBlockMatch[0].length} chars)`);
+      logger.debug(`[extractFirstJSON] Unclosed code block detected, stripped header (${unclosedCodeBlockMatch[0].length} chars)`);
     }
     const jsonFromStripped = extractBracedJSON(strippedContent);
     if (jsonFromStripped) {
       if (process.env.NODE_ENV === 'development') {
-        console.log(`[extractFirstJSON] Extracted JSON from stripped code block (${jsonFromStripped.length} chars)`);
+        logger.debug(`[extractFirstJSON] Extracted JSON from stripped code block (${jsonFromStripped.length} chars)`);
       }
       return jsonFromStripped;
     }
@@ -647,19 +650,19 @@ export function extractFirstJSON(content: string): string {
 
   // Approach 3: Find JSON object directly in content (skip preceding text)
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[extractFirstJSON] No code block match, trying direct extraction from content (${normalizedContent.length} chars)`);
+    logger.debug(`[extractFirstJSON] No code block match, trying direct extraction from content (${normalizedContent.length} chars)`);
   }
   const json = extractBracedJSON(normalizedContent);
   if (json) {
     if (process.env.NODE_ENV === 'development') {
-      console.log(`[extractFirstJSON] Direct extraction succeeded (${json.length} chars)`);
+      logger.debug(`[extractFirstJSON] Direct extraction succeeded (${json.length} chars)`);
     }
     return json;
   }
 
   // Fallback: return trimmed content
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[extractFirstJSON] FALLBACK - returning trimmed content`);
+    logger.debug(`[extractFirstJSON] FALLBACK - returning trimmed content`);
   }
   return normalizedContent.trim();
 }
@@ -700,7 +703,7 @@ function extractBracedJSON(text: string): string | null {
       braceCount--;
       if (braceCount === 0 && startIndex !== -1) {
         if (process.env.NODE_ENV === 'development') {
-          console.log(`[extractBracedJSON] Found complete JSON from ${startIndex} to ${i+1}, maxDepth=${maxBraceCount}`);
+          logger.debug(`[extractBracedJSON] Found complete JSON from ${startIndex} to ${i+1}, maxDepth=${maxBraceCount}`);
         }
         return text.substring(startIndex, i + 1);
       }
@@ -709,7 +712,7 @@ function extractBracedJSON(text: string): string | null {
 
   // Truncated JSON detected — log warning and attempt repair WITH truncation flag (F54)
   if (startIndex !== -1 && braceCount > 0 && maxBraceCount >= 2) {
-    console.warn(
+    logger.warn(
       `[extractBracedJSON] ⚠️ TRUNCATED JSON DETECTED: ${braceCount} unclosed braces, ` +
       `${text.length - startIndex} chars of partial JSON. ` +
       `This may result in incomplete data.`
@@ -752,17 +755,17 @@ function extractBracedJSON(text: string): string | null {
         };
       }
 
-      console.warn(
+      logger.warn(
         `[extractBracedJSON] Repair succeeded but data may be INCOMPLETE (${partial.length}/${text.length} chars)`
       );
       return JSON.stringify(parsed);
     } catch {
-      console.error(`[extractBracedJSON] Repair failed — JSON is unrecoverable`);
+      logger.error(`[extractBracedJSON] Repair failed — JSON is unrecoverable`);
     }
   }
 
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[extractBracedJSON] Failed: startIndex=${startIndex}, finalBraceCount=${braceCount}, maxBraceCount=${maxBraceCount}`);
+    logger.debug(`[extractBracedJSON] Failed: startIndex=${startIndex}, finalBraceCount=${braceCount}, maxBraceCount=${maxBraceCount}`);
   }
   return null;
 }
@@ -779,7 +782,7 @@ export async function completeJSON<T>(
   usage?: { inputTokens: number; outputTokens: number };
 }> {
   if (process.env.NODE_ENV === 'development') {
-    console.log(`[completeJSON] Calling complete with maxTokens=${options.maxTokens ?? 'default'}, responseFormat=json_object`);
+    logger.debug(`[completeJSON] Calling complete with maxTokens=${options.maxTokens ?? 'default'}, responseFormat=json_object`);
   }
   let jsonString = "";
   try {
@@ -818,7 +821,7 @@ export async function completeJSON<T>(
     // Check for truncation marker injected by extractBracedJSON (F54)
     const dataObj = data as Record<string, unknown>;
     if (dataObj.__truncated === true) {
-      console.warn(
+      logger.warn(
         `[completeJSON] ⚠️ Response was TRUNCATED and auto-repaired. ` +
         `Data may be incomplete. Info: ${JSON.stringify(dataObj.__truncationInfo)}`
       );
@@ -854,7 +857,7 @@ export async function completeJSON<T>(
       const primaryKey = options.model ?? selectModel(options.complexity ?? "medium", getAgentContext() ?? undefined);
       const fallbackKey = JSON_FALLBACK_MODEL[primaryKey];
       if (fallbackKey && fallbackKey !== primaryKey) {
-        console.warn(
+        logger.warn(
           `[completeJSON] modèle ${primaryKey} en échec (${(err instanceof Error ? err.message : String(err)).slice(0, 80)}), fallback → ${fallbackKey}`
         );
         return completeJSON<T>(prompt, { ...options, model: fallbackKey, _fallbackAttempted: true });
@@ -891,7 +894,7 @@ export async function completeJSONWithFallback<T>(
   // First try: Gemini 3 Flash (default model)
   try {
     if (process.env.NODE_ENV === 'development') {
-      console.log(`[completeJSONWithFallback] Trying Gemini 3 Flash...`);
+      logger.debug(`[completeJSONWithFallback] Trying Gemini 3 Flash...`);
     }
     const result = await completeJSON<T>(prompt, {
       ...options,
@@ -900,7 +903,7 @@ export async function completeJSONWithFallback<T>(
     return result;
   } catch {
     if (process.env.NODE_ENV === 'development') {
-      console.log(`[completeJSONWithFallback] Gemini 3 Flash failed, falling back to Haiku 4.5...`);
+      logger.debug(`[completeJSONWithFallback] Gemini 3 Flash failed, falling back to Haiku 4.5...`);
     }
 
     // Fallback: Haiku 4.5
@@ -1020,6 +1023,7 @@ export async function completeVisionJSON<T>(
       const totalCost = successCost + accumulatedRetryCost;
 
       costMonitor.recordCall({
+        analysisId: getAnalysisContext() ?? undefined,
         model: model.id,
         agent: getAgentContext() ?? "visual-processor",
         inputTokens: usage.prompt_tokens,
@@ -1200,6 +1204,7 @@ export async function stream(
 
     // Record cost for monitoring
     costMonitor.recordCall({
+      analysisId: getAnalysisContext() ?? undefined,
       model: model.id,
       agent: getAgentContext() ?? "unknown",
       inputTokens,
@@ -1479,6 +1484,7 @@ export async function completeJSONStreaming<T>(
       if (result.data && !result.wasTruncated) {
         // Success! Complete JSON parsed
         costMonitor.recordCall({
+          analysisId: getAnalysisContext() ?? undefined,
           model: model.id,
           agent: getAgentContext() ?? "unknown",
           inputTokens: totalInputTokens,
@@ -1504,7 +1510,7 @@ export async function completeJSONStreaming<T>(
       // Truncated - prepare for continuation
       if (finishReason === "length" || result.wasTruncated) {
         if (process.env.NODE_ENV === 'development') {
-          console.log(`[completeJSONStreaming] Response truncated (finishReason=${finishReason}), attempt ${continuationAttempts + 1}/${maxContinuations + 1}`);
+          logger.debug(`[completeJSONStreaming] Response truncated (finishReason=${finishReason}), attempt ${continuationAttempts + 1}/${maxContinuations + 1}`);
         }
 
         partialResponses.push(result.partialContent || parser.getContent());
@@ -1531,6 +1537,7 @@ export async function completeJSONStreaming<T>(
         const merged = mergePartialResponses<T>(partialResponses);
         if (merged) {
           costMonitor.recordCall({
+            analysisId: getAnalysisContext() ?? undefined,
             model: model.id,
             agent: getAgentContext() ?? "unknown",
             inputTokens: totalInputTokens,
@@ -1556,6 +1563,7 @@ export async function completeJSONStreaming<T>(
 
       // Return whatever we have
       costMonitor.recordCall({
+        analysisId: getAnalysisContext() ?? undefined,
         model: model.id,
         agent: getAgentContext() ?? "unknown",
         inputTokens: totalInputTokens,

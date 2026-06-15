@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,11 +19,6 @@ interface DealComparisonData {
   name: string;
   sector: string | null;
   stage: string | null;
-  globalScore: number | null;
-  teamScore: number | null;
-  marketScore: number | null;
-  productScore: number | null;
-  financialsScore: number | null;
   valuationPre: number | null;
   arr: number | null;
   growthRate: number | null;
@@ -43,14 +38,6 @@ async function fetchComparisonData(
   return response.json();
 }
 
-const DIMENSION_LABELS: Record<string, string> = {
-  globalScore: "Score Global",
-  teamScore: "Équipe",
-  marketScore: "Marché",
-  productScore: "Produit",
-  financialsScore: "Financier",
-};
-
 export const DealComparison = memo(function DealComparison({
   dealIds,
   onClose,
@@ -63,27 +50,6 @@ export const DealComparison = memo(function DealComparison({
   });
 
   const deals = data?.data ?? EMPTY_DEALS;
-
-  // Find best scores for highlighting
-  const bestScores = useMemo(() => {
-    const best: Record<string, number> = {};
-    const dimensions = [
-      "globalScore",
-      "teamScore",
-      "marketScore",
-      "productScore",
-      "financialsScore",
-    ];
-    for (const dim of dimensions) {
-      let max = -1;
-      for (const deal of deals) {
-        const val = (deal as unknown as Record<string, unknown>)[dim] as number | null;
-        if (val != null && val > max) max = val;
-      }
-      best[dim] = max;
-    }
-    return best;
-  }, [deals]);
 
   if (isLoading) {
     return (
@@ -130,38 +96,6 @@ export const DealComparison = memo(function DealComparison({
               </tr>
             </thead>
             <tbody>
-              {Object.entries(DIMENSION_LABELS).map(([key, label]) => (
-                <tr key={key} className="border-b">
-                  <td className="py-2 pr-4 text-muted-foreground">{label}</td>
-                  {deals.map((deal) => {
-                    const val = (deal as unknown as Record<string, unknown>)[key] as
-                      | number
-                      | null;
-                    const isBest =
-                      val != null &&
-                      val === bestScores[key] &&
-                      deals.length > 1;
-                    return (
-                      <td key={deal.id} className="text-center py-2 px-4">
-                        {val != null ? (
-                          <span
-                            className={cn(
-                              "font-medium",
-                              isBest && "text-green-600 font-bold",
-                              val < 40 && !isBest && "text-red-600"
-                            )}
-                          >
-                            {val}/100
-                            {isBest && deals.length > 1 && " *"}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">--</span>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
               {/* Red Flags row */}
               <tr className="border-b">
                 <td className="py-2 pr-4 text-muted-foreground">Red Flags</td>
@@ -219,9 +153,6 @@ export const DealComparison = memo(function DealComparison({
             </tbody>
           </table>
         </div>
-        <p className="text-xs text-muted-foreground mt-3 text-center">
-          * Meilleur score dans la dimension
-        </p>
       </CardContent>
     </Card>
   );

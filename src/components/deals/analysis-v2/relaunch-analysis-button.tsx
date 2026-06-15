@@ -46,7 +46,7 @@ export function RelaunchAnalysisButton({ onRelaunch, isRelaunching }: RelaunchAn
         >
           <div className="flex items-center gap-2 font-medium">
             <RotateCw className="h-4 w-4 text-blue-600" />
-            Relancer l'analyse complète
+            Relancer l&apos;analyse complète
           </div>
           <span className="text-xs text-muted-foreground ml-6">
             Consomme des crédits · lance une nouvelle analyse en arrière-plan

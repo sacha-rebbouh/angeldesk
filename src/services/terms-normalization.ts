@@ -54,7 +54,6 @@ export function normalizeTerms(rawTerms: Record<string, unknown> | null): DealTe
 export function buildTermsResponse(
   terms: Record<string, unknown> | null,
   cached: ConditionsAnalystData | null,
-  conditionsScore: number | null,
   mode: DealMode = "SIMPLE",
   tranches: TrancheData[] | null = null,
 ) {
@@ -78,8 +77,17 @@ export function buildTermsResponse(
     terms: normalizedTerms,
     mode,
     tranches,
-    conditionsScore,
-    conditionsBreakdown: cached?.score?.breakdown ?? null,
+    // Chantier P4 — évaluation qualitative par critère (scoreless) : champ
+    // findings.dimensionAssessment. Compat lecture legacy depuis score.breakdown
+    // (criterion + justification) pour les snapshots historiques pré-P4.
+    // Chantier P5-b — `ConditionsAnalystData.score` purgé du type ; ce fallback
+    // legacy est lu via un cast Record étroit (jamais les nombres value/grade/score,
+    // uniquement les libellés qualitatifs), runtime inchangé pour ces snapshots.
+    conditionsBreakdown:
+      cached?.findings?.dimensionAssessment ??
+      (cached as { score?: { breakdown?: { criterion: string; justification: string }[] } } | null)
+        ?.score?.breakdown?.map(b => ({ criterion: b.criterion, justification: b.justification })) ??
+      null,
     conditionsAnalysis: (cached?.findings ?? null) as ConditionsFindings | null,
     negotiationAdvice: advice.length > 0 ? advice : null,
     redFlags: flags.length > 0 ? flags : null,

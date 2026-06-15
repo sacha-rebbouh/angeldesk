@@ -71,6 +71,8 @@ export interface AnalysisCostReport {
 
 interface EndAnalysisOptions {
   persistAnalysisSummary?: boolean;
+  /** Quelle analyse clôturer (isolation par-analyse). Fallback : l'unique active. */
+  analysisId?: string;
 }
 
 export interface DealCostSummary {
@@ -198,7 +200,12 @@ const DEFAULT_THRESHOLDS: CostThresholds = {
 };
 
 class CostMonitor {
-  private currentAnalysis: AnalysisAccumulator | null = null;
+  // Par-analyse (isolation de concurrence — cf. Phase E). Le slot unique
+  // `currentAnalysis` corrompait l'attribution quand deux analyses tournaient
+  // en parallèle sur le même runtime serverless réutilisé (la 2e startAnalysis
+  // écrasait la 1re). Map indexée par analysisId : chaque appel est rattaché à
+  // SON analyse via l'analysisId résolu par l'ALS du router au point d'appel.
+  private analyses = new Map<string, AnalysisAccumulator>();
   private static instance: CostMonitor;
   private thresholds: CostThresholds = DEFAULT_THRESHOLDS;
 
@@ -212,6 +219,35 @@ class CostMonitor {
   }
 
   /**
+   * Résout l'accumulateur cible. Priorité : analysisId explicite (résolu par
+   * l'ALS du router au point d'appel). Fallback : si UNE seule analyse est
+   * active, on la retient — préserve exactement le comportement mono-analyse
+   * historique (tests, et appels sans analysisId hors-scope). Sous concurrence
+   * (≥2 analyses), l'ambiguïté sans analysisId n'est PAS devinée (retourne
+   * null → drop explicite plutôt que mauvaise attribution).
+   */
+  private resolveAccumulator(
+    analysisId: string | undefined,
+    opts: { allowMonoAnalysisFallback: boolean }
+  ): AnalysisAccumulator | null {
+    // Explicitement identifié : attribution EXACTE ou rien. On ne devine jamais
+    // vers une autre analyse (sinon mis-attribution money — ex. un appel tagué
+    // pour B, non encore enregistré, irait sur A). null → drop explicite.
+    if (analysisId) {
+      return this.analyses.get(analysisId) ?? null;
+    }
+    // Pas d'analysisId. Le fallback mono-analyse n'est autorisé QUE pour les
+    // appelants legacy qui OMETTENT le champ (tests, appels hors-scope). Un
+    // appel router qui passe explicitement `analysisId: undefined` (hors scope
+    // ALS — ex. board / appel orphelin) NE doit PAS être attribué à l'unique
+    // analyse active : on droppe plutôt que mal attribuer.
+    if (opts.allowMonoAnalysisFallback && this.analyses.size === 1) {
+      return this.analyses.values().next().value ?? null;
+    }
+    return null;
+  }
+
+  /**
    * Start tracking a new analysis
    */
   startAnalysis(params: {
@@ -221,11 +257,11 @@ class CostMonitor {
     type: string;
     boardSessionId?: string;
   }): void {
-    this.currentAnalysis = {
+    this.analyses.set(params.analysisId, {
       ...params,
       startTime: Date.now(),
       calls: [],
-    };
+    });
   }
 
   /**
@@ -239,15 +275,26 @@ class CostMonitor {
     cost: number;
     operation?: string;
     durationMs?: number;
+    /** Résolu par l'ALS du router (getAnalysisContext) au point d'appel. */
+    analysisId?: string;
   }): void {
-    if (!this.currentAnalysis) {
-      console.warn("[CostMonitor] No active analysis to record call");
+    // Le router passe TOUJOURS le champ analysisId (= ALS, undefined hors scope
+    // analyse). On distingue "champ omis" (legacy/test → fallback toléré) de
+    // "champ présent mais undefined" (router sans contexte → drop, pas de devinette).
+    const callerProvidedAnalysisId = Object.prototype.hasOwnProperty.call(params, "analysisId");
+    const analysis = this.resolveAccumulator(params.analysisId, {
+      allowMonoAnalysisFallback: !callerProvidedAnalysisId,
+    });
+    if (!analysis) {
+      console.warn(
+        `[CostMonitor] No active analysis to record call (analysisId=${params.analysisId ?? "none"}, active=${this.analyses.size})`
+      );
       return;
     }
 
-    const operation = params.operation ?? this.currentAnalysis.type;
+    const operation = params.operation ?? analysis.type;
 
-    this.currentAnalysis.calls.push({
+    analysis.calls.push({
       model: params.model,
       agent: params.agent,
       operation,
@@ -260,10 +307,10 @@ class CostMonitor {
 
     // Persist to CostEvent table asynchronously (fire and forget)
     this.persistCostEvent({
-      userId: this.currentAnalysis.userId,
-      dealId: this.currentAnalysis.dealId,
-      analysisId: this.currentAnalysis.analysisId,
-      boardSessionId: this.currentAnalysis.boardSessionId,
+      userId: analysis.userId,
+      dealId: analysis.dealId,
+      analysisId: analysis.analysisId,
+      boardSessionId: analysis.boardSessionId,
       model: params.model,
       agent: params.agent,
       operation,
@@ -415,11 +462,17 @@ class CostMonitor {
    * End tracking and persist the cost report
    */
   async endAnalysis(options: EndAnalysisOptions = {}): Promise<AnalysisCostReport | null> {
-    if (!this.currentAnalysis) {
+    // Même distinction qu'en recordCall : champ omis (tests → fallback mono)
+    // vs présent-mais-undefined (drop). L'orchestrateur passe analysis.id.
+    const callerProvidedAnalysisId = Object.prototype.hasOwnProperty.call(options, "analysisId");
+    const current = this.resolveAccumulator(options.analysisId, {
+      allowMonoAnalysisFallback: !callerProvidedAnalysisId,
+    });
+    if (!current) {
       return null;
     }
 
-    const { analysisId, dealId, type, startTime, calls } = this.currentAnalysis;
+    const { analysisId, dealId, type, startTime, calls } = current;
     const duration = Date.now() - startTime;
 
     // Aggregate by model
@@ -484,8 +537,8 @@ class CostMonitor {
     // Check thresholds and create alerts if needed
     await this.checkThresholds(report);
 
-    // Reset
-    this.currentAnalysis = null;
+    // Retire CETTE analyse de la Map (les autres analyses concurrentes restent).
+    this.analyses.delete(analysisId);
 
     return report;
   }

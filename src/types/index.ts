@@ -114,15 +114,6 @@ export interface DetectedRedFlag {
   questionsToAsk: string[];
 }
 
-// Score types
-export interface DealScores {
-  global: number;
-  team: number;
-  market: number;
-  product: number;
-  financials: number;
-}
-
 // Benchmark comparison
 export interface BenchmarkComparison {
   metricName: string;

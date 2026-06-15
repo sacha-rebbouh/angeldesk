@@ -15,7 +15,6 @@ interface AnalysisVersion {
   id: string;
   version: number;
   completedAt: Date;
-  score: number;
   triggerType: "INITIAL" | "UPDATE";
 }
 
@@ -83,20 +82,6 @@ export const TimelineVersions = memo(function TimelineVersions({
                         >
                           V{analysis.version}
                         </span>
-                        {analysis.score > 0 && (
-                          <span
-                            className={cn(
-                              "text-xs font-semibold",
-                              analysis.score >= 80
-                                ? "text-green-600"
-                                : analysis.score >= 60
-                                ? "text-amber-600"
-                                : "text-red-600"
-                            )}
-                          >
-                            {analysis.score}
-                          </span>
-                        )}
                       </div>
 
                       {/* Date + heure en dessous */}
@@ -123,9 +108,6 @@ export const TimelineVersions = memo(function TimelineVersions({
                           { locale: fr }
                         )}
                       </p>
-                      {analysis.score > 0 && (
-                        <p className="text-muted-foreground">Score: {analysis.score}/100</p>
-                      )}
                     </div>
                   </TooltipContent>
                 </Tooltip>

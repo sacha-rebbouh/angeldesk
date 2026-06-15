@@ -101,11 +101,6 @@ describe("context-retriever thesis-first analysis binding", () => {
       growthRate: null,
       valuationPre: null,
       amountRequested: null,
-      globalScore: 90,
-      teamScore: 88,
-      marketScore: 84,
-      productScore: 82,
-      financialsScore: 80,
     });
     mocks.founderFindMany.mockResolvedValue([]);
     mocks.documentFindMany.mockResolvedValue([]);

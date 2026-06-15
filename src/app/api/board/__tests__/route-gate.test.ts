@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   requireAuth: vi.fn(),
   dealFindFirst: vi.fn(),
   boardRequestSchema: { safeParse: vi.fn() },
-  checkRateLimit: vi.fn(),
+  checkRateLimitDistributed: vi.fn(),
   assertDealCorpusReady: vi.fn(),
   aiBoardSessionFindFirst: vi.fn(),
   aiBoardSessionCreate: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock("@/lib/prisma", () => ({
 
 vi.mock("@/lib/sanitize", () => ({
   boardRequestSchema: mocks.boardRequestSchema,
-  checkRateLimit: mocks.checkRateLimit,
+  checkRateLimitDistributed: mocks.checkRateLimitDistributed,
 }));
 
 vi.mock("@/services/documents/readiness-gate", async (importOriginal) => {
@@ -73,7 +73,7 @@ describe("POST /api/board - ARC-LIGHT Phase 1 gate", () => {
       success: true,
       data: { dealId: "deal_1" },
     });
-    mocks.checkRateLimit.mockReturnValue({ allowed: true, remaining: 1, resetIn: 0 });
+    mocks.checkRateLimitDistributed.mockResolvedValue({ allowed: true, remaining: 1, resetIn: 0 });
     mocks.dealFindFirst.mockResolvedValue({ id: "deal_1", userId: "user_1" });
   });
 

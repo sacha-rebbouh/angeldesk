@@ -46,7 +46,6 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
   const data = result.data as Record<string, unknown>;
   const findings = data.findings as Record<string, unknown> | undefined;
   const narrative = data.narrative as { summary?: string } | undefined;
-  const cScore = data.score as { value?: number; grade?: string } | undefined;
 
   const detected = (findings?.contradictions ??
     findings?.detectedContradictions) as Array<{
@@ -70,7 +69,6 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
   );
 
   const consistency = findings?.consistencyAnalysis as {
-    overallScore?: number;
     interpretation?: string;
   } | undefined;
 
@@ -90,20 +88,6 @@ function ContradictionDetector({ result }: { result?: AgentResult }) {
   return (
     <>
       <SubsectionTitle>Contradictions détectées</SubsectionTitle>
-
-      {cScore?.value !== undefined && (
-        <LabelValue
-          label="Score consistance"
-          value={`${cScore.value}/100 (${cScore.grade ?? "N/A"})`}
-        />
-      )}
-
-      {consistency?.overallScore !== undefined && (
-        <LabelValue
-          label="Consistance globale"
-          value={`${consistency.overallScore}/100`}
-        />
-      )}
 
       {narrative?.summary && <BodyText>{narrative.summary}</BodyText>}
       {consistency?.interpretation && (
@@ -205,10 +189,8 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
   const data = result.data as Record<string, unknown>;
   const findings = data.findings as Record<string, unknown> | undefined;
   const narrative = data.narrative as { summary?: string } | undefined;
-  const dScore = data.score as { value?: number; grade?: string } | undefined;
 
   const skepticism = findings?.skepticismAssessment as {
-    score?: number;
     verdict?: string;
     verdictRationale?: string;
   } | undefined;
@@ -281,21 +263,8 @@ function DevilsAdvocate({ result }: { result?: AgentResult }) {
     <>
       <SubsectionTitle>Avocat du Diable</SubsectionTitle>
 
-      {dScore?.value !== undefined && (
-        <LabelValue
-          label="Score"
-          value={`${dScore.value}/100 (${dScore.grade ?? "N/A"})`}
-        />
-      )}
-
       {skepticism && (
         <>
-          {skepticism.score !== undefined && (
-            <LabelValue
-              label="Score scepticisme"
-              value={`${skepticism.score}/100`}
-            />
-          )}
           {skepticism.verdict && (
             <LabelValue
               label="Verdict"

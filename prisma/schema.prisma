@@ -158,20 +158,15 @@ model Deal {
   geography  String?
 
   arr             Decimal? @db.Decimal(12, 2)
-  growthRate      Decimal? @db.Decimal(5, 2)
+  growthRate      Decimal? @db.Decimal(7, 2)
   amountRequested Decimal? @db.Decimal(12, 2)
   valuationPre    Decimal? @db.Decimal(14, 2)
 
   status DealStatus @default(SCREENING)
 
-  // Scores (after analysis)
-  globalScore       Int? // Score final (synthesis-deal-scorer, 0-100)
-  fundamentalsScore Int? // Score fondamentaux seul (stage-relative, 0-100)
-  conditionsScore   Int? // Score conditions (0-100, AI conditions-analyst)
-  teamScore         Int?
-  marketScore       Int?
-  productScore      Int?
-  financialsScore   Int?
+  // Chantier P5-c — colonnes de note de deal DROPPÉES (globalScore / fundamentalsScore /
+  // conditionsScore / teamScore / marketScore / productScore / financialsScore). Production
+  // retirée en P4, readers basculés en P5-a, types purgés en P5-b ; restitution scoreless.
 
   // Conditions analysis cache (full AI output)
   conditionsAnalysis Json? // Cache résultat complet conditions-analyst
@@ -685,6 +680,10 @@ model Analysis {
   checkpoints        AnalysisCheckpoint[]
   extractionRunLinks AnalysisExtractionRun[]
 
+  // Phase H2 — read-model dénormalisé : signaux canoniques (scores + extracted-info)
+  // pré-calculés pour éviter le loadResults(blob) par-deal sur les pages SSR chaudes.
+  signalSummary AnalysisSignalSummary?
+
   createdAt DateTime @default(now())
 
   @@index([dealId])
@@ -699,6 +698,44 @@ model Analysis {
 enum AnalysisType {
   SCREENING
   FULL_DD
+}
+
+// ANALYSIS SIGNAL SUMMARY (Phase H2) — read-model dénormalisé, clé = analysisId.
+// (scores, extracted-info) sont des fonctions PURES et déterministes de Analysis.results,
+// donc immuables une fois l'analyse COMPLETED → cache sans staleness. Le chemin de lecture
+// (loadCanonicalDealSignals) recalcule la sélection canonique (cheap, sans blob) puis lit
+// cette table par analysisId au lieu de loadResults(blob multi-MB) par deal. Self-correcting :
+// sur miss / schemaVersion obsolète, le read retombe sur loadResults + ré-upsert. L'écriture
+// (completeAnalysis, best-effort hors transaction) n'est qu'une OPTIMISATION, jamais la source
+// de vérité — donc rater un chemin de complétion ne corrompt rien (le read se répare).
+model AnalysisSignalSummary {
+  analysisId String   @id
+  analysis   Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  // Dénormalisé pour batch read / backfill / debug. Pas de FK Deal : la cascade
+  // Deal → Analysis → Summary suffit (suppression deal supprime ses analyses → leurs summaries).
+  dealId String
+
+  // Chantier P5-c — sous-notes canoniques DROPPÉES (globalScore / teamScore / marketScore /
+  // productScore / financialsScore). Le read-model ne calcule/stocke/lit plus de note (P5-a.4).
+
+  // Extracted-info canonique (extractCanonicalExtractedInfo).
+  sector      String?
+  stage       String?
+  instrument  String?
+  geography   String?
+  description String? @db.Text
+
+  // Version du format d'extraction. Un changement de logique extractAnalysisScores /
+  // extractCanonicalExtractedInfo → bump → les anciennes lignes deviennent des misses contrôlés
+  // (recalculées à la lecture), sans migration de données.
+  schemaVersion Int @default(1)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([dealId])
+  @@index([schemaVersion])
 }
 
 // THESIS — Representation structuree de la these d'investissement de la societe,
@@ -766,7 +803,7 @@ model Thesis {
 
   // Source tracking
   // Legacy fields conserves le temps de migrer les consommateurs vers CorpusSnapshot.
-  sourceDocumentIds String[] // IDs des Document utilises pour l'extraction
+  sourceDocumentIds String[] @default([]) // IDs des Document utilises pour l'extraction (default aligne sur la migration 20260417120000 + prod)
   sourceHash        String // hash du corpus utilise — pour detecter staleness sur nouveau doc
   corpusSnapshotId  String?
   corpusSnapshot    CorpusSnapshot? @relation(fields: [corpusSnapshotId], references: [id], onDelete: SetNull)
@@ -2382,7 +2419,7 @@ model DealTermsVersion {
   termsSnapshot Json
 
   // AI analysis at this version
-  conditionsScore  Int?
+  // Chantier P5-c — conditionsScore (note conditions) DROPPÉ ; évaluation qualitative scoreless.
   analysisSnapshot Json?
 
   // Metadata

@@ -1,5 +1,7 @@
 # Plan — Durabilité du pipeline Deep Dive (full_analysis)
 
+> **STATUT (mis à jour)** : **LIVRÉ EN PROD** — split stepwise durable mergé sur `main` (PR #17), flag `DEEP_DIVE_STEPWISE` activé. Les mentions « `main` n'est PAS touché / flag OFF » et « NON poussé » ci-dessous reflètent l'état PRÉ-MERGE de la session et sont périmées. Post-mortem du 1er test prod : voir mémoire `angeldesk_deepdive_postmortem`.
+
 > Document versionné, destiné à audit (Codex) puis exécution **incrémentale**.
 > Source de vérité = `tsc` / `vitest` / `git`, **jamais** l'affichage Read (qui a corrompu le multi-lignes lors de sessions précédentes → utiliser des codemods Node sur octets disque + `grep -c` pour vérifier).
 >

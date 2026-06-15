@@ -20,6 +20,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { queryKeys } from "@/lib/query-keys";
 import { clerkFetch } from "@/lib/clerk-fetch";
+import { fetchLatestAnalysis as fetchLatestAnalysisAuth } from "@/lib/fetch-latest-analysis";
+import { AuthExpiredError } from "@/lib/auth-expired-error";
 import { useResolutions } from "@/hooks/use-resolutions";
 import {
   formatAgentName,
@@ -42,7 +44,6 @@ import { ThesisRevisionBanner } from "./thesis/thesis-revision-banner";
 import { AnalysisProgress, type AgentStatus } from "./analysis-progress";
 import { TimelineVersions } from "./timeline-versions";
 import { type AgentQuestion, type QuestionResponse } from "./founder-responses";
-import { DeltaIndicator } from "./delta-indicator";
 import { ChangedSection } from "./changed-section";
 import { CreditModal } from "@/components/credits/credit-modal";
 import { DeckCoherenceReport as DeckCoherenceReportPanel } from "./deck-coherence-report";
@@ -214,8 +215,6 @@ async function fetchApi<T>(url: string, errorMessage: string): Promise<T> {
   }
 }
 
-import { extractDealScore } from "@/lib/score-utils";
-
 async function fetchQuota(): Promise<{ data: QuotaData }> {
   return fetchApi("/api/credits", "Failed to fetch quota");
 }
@@ -295,8 +294,10 @@ async function startAnalysis(dealId: string, type: string): Promise<StartAnalysi
   return await response.json();
 }
 
+// Passe par le fetcher AUTH-REQUIRED partagé (token Clerk frais + retry skipCache + AuthExpiredError)
+// — même queryFn que l'overlay et le tracker v2 sur la clé `analyses.latest` (cohérence des observers).
 async function fetchLatestAnalysis(dealId: string): Promise<LatestAnalysisResponse> {
-  return fetchApi(`/api/deals/${dealId}/analyses`, "Failed to fetch analysis status");
+  return fetchLatestAnalysisAuth<LatestAnalysisResponse>(dealId);
 }
 
 async function fetchUsageStatus(): Promise<{ usage: UsageStatus }> {
@@ -316,7 +317,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   const queryClient = useQueryClient();
   const router = useRouter();
   const {
-    resolutions,
     resolutionMap,
     resolve: resolveAlert,
     unresolve: unresolveAlert,
@@ -406,7 +406,13 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   const { data: polledAnalysis } = useQuery({
     queryKey: queryKeys.analyses.latest(dealId),
     queryFn: () => fetchLatestAnalysis(dealId),
-    refetchInterval: isPolling ? 3000 : false,
+    // Pas de retry sur session expirée ; stop le poll sur AuthExpiredError (cohérent avec
+    // l'overlay/tracker qui partagent la clé — l'overlay affiche la reconnexion).
+    retry: (failureCount, err) => !(err instanceof AuthExpiredError) && failureCount < 3,
+    refetchInterval: (query) => {
+      if (query.state.error instanceof AuthExpiredError) return false;
+      return isPolling ? 3000 : false;
+    },
     refetchOnWindowFocus: true,
     staleTime: isPolling ? 0 : 30_000,
   });
@@ -656,9 +662,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
 
   const staleness = stalenessData?.staleness;
   const isAnalysisStale = staleness?.isStale ?? false;
-  const thesisGated = !!thesis
-    && new Set(["alert_dominant", "vigilance"]).has(thesis.verdict)
-    && !thesis.thesisBypass;
 
   // Determine analysis type based on credit balance
   // Thesis-first : tier1_complete retire. Seul Deep Dive (full_analysis) existe.
@@ -948,24 +951,15 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
   const timelineVersions = useMemo(() => {
     return completedAnalyses
       .map((analysis, index) => {
-        // Extract global score from synthesis-deal-scorer if available
-        const results = analysis.results ?? onDemandResults[analysis.id] ?? null;
-        const scorerResult = results?.["synthesis-deal-scorer"];
-        const scorerData = scorerResult?.success && scorerResult.data
-          ? scorerResult.data as { overallScore?: number; score?: { value?: number } }
-          : null;
-        const score = scorerData?.overallScore ?? scorerData?.score?.value ?? 0;
-
         return {
           id: analysis.id,
           version: completedAnalyses.length - index, // Most recent = highest version number
           completedAt: new Date(analysis.completedAt ?? analysis.createdAt),
-          score,
           triggerType: index === completedAnalyses.length - 1 ? "INITIAL" as const : "UPDATE" as const,
         };
       })
       .reverse(); // Oldest first for timeline display
-  }, [completedAnalyses, onDemandResults]);
+  }, [completedAnalyses]);
 
   // Build agent statuses from live results for progress display
   const agentStatuses = useMemo<AgentStatus[]>(() => {
@@ -1011,10 +1005,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
     }
     return prev;
   }, [completedAnalyses, currentAnalysisId, onDemandResults]);
-
-  // Extract current and previous scores for DeltaIndicator
-  const currentScore = useMemo(() => extractDealScore(displayedResult?.results), [displayedResult]);
-  const previousScore = useMemo(() => extractDealScore(previousAnalysis?.results), [previousAnalysis]);
 
   // Extract questions from question-master agent results
   // Extract and consolidate questions from ALL agents across analyses (F73 + cross-run persistence)
@@ -1435,14 +1425,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   <CardTitle className="text-lg">
                     {displayedResult.isLive ? "Résultats" : "Analyse sauvegardée"}
                   </CardTitle>
-                  {/* Delta Indicator for score when previous version exists */}
-                  {!thesisGated && previousScore != null && previousScore > 0 && currentScore != null && currentScore > 0 && (
-                    <DeltaIndicator
-                      currentValue={currentScore!}
-                      previousValue={previousScore!}
-                      unit="/100"
-                    />
-                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {displayedResult.success && (
@@ -1470,7 +1452,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                             <FileText className="h-4 w-4 text-blue-600" />
                             Résumé exécutif
                           </div>
-                          <span className="text-xs text-muted-foreground ml-6">5-7 pages — Score, red flags, questions clés</span>
+                          <span className="text-xs text-muted-foreground ml-6">5-7 pages — Orientation, signaux d&apos;alerte, questions clés</span>
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleExportPdf("full")} className="flex flex-col items-start gap-0.5 py-2.5">
                           <div className="flex items-center gap-2 font-medium">
@@ -1545,7 +1527,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     thesis={thesis}
                     totalTimeMs={displayedResult.totalTimeMs}
                     totalCost={displayedResult.totalCost}
-                    currentScore={currentScore ?? null}
                   />
                 )}
 
@@ -1644,7 +1625,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                     results={tier3Results}
                     totalAgentsRun={displayedResult.results ? Object.values(displayedResult.results).filter((result) => result.success).length : 0}
                     resolutionMap={resolutionMap}
-                    resolutions={resolutions}
                     onResolve={resolveAlert}
                     onUnresolve={unresolveAlert}
                     isResolving={isResolving}
@@ -1691,7 +1671,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   dealId={dealId}
                   displayedResult={displayedResult}
                   resolutionMap={resolutionMap}
-                  resolutions={resolutions}
                   onResolve={resolveAlert}
                   onUnresolve={unresolveAlert}
                   isResolving={isResolving}
@@ -1701,7 +1680,6 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                   onSubmitAndReanalyze={handleSubmitAndReanalyze}
                   isSubmittingResponses={isSubmittingResponses}
                   isReanalyzing={mutation.isPending}
-                  currentScore={currentScore ?? 0}
                 />
               </TabsContent>
 

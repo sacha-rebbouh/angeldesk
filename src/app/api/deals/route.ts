@@ -2,15 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import { checkRateLimit } from "@/lib/sanitize";
+import { checkRateLimitDistributed } from "@/lib/sanitize";
 import { DealStage, FundingInstrument } from "@prisma/client";
 import { handleApiError } from "@/lib/api-error";
 import {
   getCurrentFactNumber,
   getCurrentFactString,
   loadCanonicalDealSignals,
-  resolveCanonicalAnalysisScores,
 } from "@/services/deals/canonical-read-model";
+import {
+  GROWTH_RATE_MAX,
+  GROWTH_RATE_MIN,
+} from "@/services/deals/growth-rate-bounds";
 
 const createDealSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -22,7 +25,7 @@ const createDealSchema = z.object({
   instrument: z.nativeEnum(FundingInstrument).optional(),
   geography: z.string().optional(),
   arr: z.number().positive().optional(),
-  growthRate: z.number().optional(),
+  growthRate: z.number().min(GROWTH_RATE_MIN).max(GROWTH_RATE_MAX).optional(),
   amountRequested: z.number().positive().optional(),
   valuationPre: z.number().positive().optional(),
 });
@@ -33,7 +36,7 @@ export async function GET(request: NextRequest) {
     const user = await requireAuth();
 
     // Rate limiting: max 60 requests per minute
-    const rateLimit = checkRateLimit(`deals-get:${user.id}`, { maxRequests: 60, windowMs: 60000 });
+    const rateLimit = await checkRateLimitDistributed(`deals-get:${user.id}`, { maxRequests: 60, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { error: "Rate limit exceeded", retryAfter: rateLimit.resetIn },
@@ -102,13 +105,6 @@ export async function GET(request: NextRequest) {
 
     const canonicalDeals = deals.map((deal) => {
       const factMap = signals.factMapByDealId.get(deal.id) ?? new Map();
-      const scores = resolveCanonicalAnalysisScores(deal.id, signals, {
-        globalScore: deal.globalScore,
-        teamScore: deal.teamScore,
-        marketScore: deal.marketScore,
-        productScore: deal.productScore,
-        financialsScore: deal.financialsScore,
-      });
 
       return {
         ...deal,
@@ -127,11 +123,6 @@ export async function GET(request: NextRequest) {
         valuationPre:
           getCurrentFactNumber(factMap, "financial.valuation_pre") ??
           (deal.valuationPre != null ? Number(deal.valuationPre) : null),
-        globalScore: scores.globalScore,
-        teamScore: scores.teamScore,
-        marketScore: scores.marketScore,
-        productScore: scores.productScore,
-        financialsScore: scores.financialsScore,
       };
     });
 
@@ -156,7 +147,7 @@ export async function POST(request: NextRequest) {
     const user = await requireAuth();
 
     // Rate limiting: max 20 deal creations per minute
-    const rateLimit = checkRateLimit(`deals-post:${user.id}`, { maxRequests: 20, windowMs: 60000 });
+    const rateLimit = await checkRateLimitDistributed(`deals-post:${user.id}`, { maxRequests: 20, windowMs: 60000 });
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { error: "Rate limit exceeded", retryAfter: rateLimit.resetIn },

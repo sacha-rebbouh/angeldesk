@@ -17,25 +17,33 @@ import {
   resolveCanonicalDealFields,
 } from "@/services/deals/canonical-read-model";
 
+// Bound the number of deals materialized server-side (each one resolves
+// canonical signals). The header still shows the true total via a cheap count.
+const DEALS_PAGE_CAP = 200;
+
 async function getDeals(userId: string) {
   noStore();
-  const deals = await prisma.deal.findMany({
-    where: { userId },
-    orderBy: { updatedAt: "desc" },
-    include: {
-      documents: {
-        select: { id: true },
+  const [deals, totalCount] = await Promise.all([
+    prisma.deal.findMany({
+      where: { userId },
+      orderBy: { updatedAt: "desc" },
+      take: DEALS_PAGE_CAP,
+      include: {
+        documents: {
+          select: { id: true },
+        },
+        redFlags: {
+          where: { status: "OPEN" },
+          select: { severity: true, title: true },
+        },
       },
-      redFlags: {
-        where: { status: "OPEN" },
-        select: { severity: true, title: true },
-      },
-    },
-  });
+    }),
+    prisma.deal.count({ where: { userId } }),
+  ]);
 
   const signals = await loadCanonicalDealSignals(deals.map((deal) => deal.id));
 
-  return deals.map((deal) => {
+  const items = deals.map((deal) => {
     const canonicalFields = resolveCanonicalDealFields(deal.id, signals, {
       companyName: deal.companyName,
       website: deal.website,
@@ -49,11 +57,6 @@ async function getDeals(userId: string) {
       instrument: deal.instrument,
       geography: deal.geography,
       description: deal.description,
-      globalScore: deal.globalScore,
-      teamScore: deal.teamScore,
-      marketScore: deal.marketScore,
-      productScore: deal.productScore,
-      financialsScore: deal.financialsScore,
     });
 
     return {
@@ -63,11 +66,13 @@ async function getDeals(userId: string) {
         signals.latestThesisByDealId.get(deal.id)?.verdict ?? null,
     };
   });
+
+  return { deals: items, totalCount };
 }
 
 export default async function DealsPage() {
   const user = await requireAuth();
-  const deals = await getDeals(user.id);
+  const { deals, totalCount } = await getDeals(user.id);
 
   return (
     <div className="space-y-6">
@@ -86,7 +91,7 @@ export default async function DealsPage() {
         </Button>
       </div>
 
-      {deals.length === 0 ? (
+      {totalCount === 0 ? (
         <Card>
           <CardContent>
             <div className="flex flex-col items-center justify-center py-10 text-center">
@@ -110,7 +115,10 @@ export default async function DealsPage() {
               <div>
                 <CardTitle>Tous les deals</CardTitle>
                 <CardDescription>
-                  {deals.length} deal{deals.length !== 1 ? "s" : ""} au total
+                  {totalCount} deal{totalCount !== 1 ? "s" : ""} au total
+                  {totalCount > deals.length
+                    ? ` · ${deals.length} affichés`
+                    : ""}
                 </CardDescription>
               </div>
             </div>

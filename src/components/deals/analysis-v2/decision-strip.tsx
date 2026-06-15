@@ -1,6 +1,6 @@
 import { BadgePair } from "./atoms/badge-pair";
 import type { buildDecisionStripModel } from "./lib/selectors";
-import { RECOMMENDATION_CONFIG, THESIS_VERDICT_CONFIG } from "@/lib/ui-configs";
+import { RECOMMENDATION_CONFIG, THESIS_VERDICT_CONFIG, DECK_COHERENCE_LABELS } from "@/lib/ui-configs";
 
 type Model = ReturnType<typeof buildDecisionStripModel>;
 
@@ -49,14 +49,14 @@ function MetricCard({
 }
 
 export function DecisionStrip({ model }: { model: Model }) {
-  const { orientation, solidity, alertDistribution, coherenceScore, contradictionsCritical, totalContradictions, thesisVerdict, completion } = model;
+  const { orientation, solidity, alertDistribution, coherenceBand, contradictionsCritical, totalContradictions, thesisVerdict, completion } = model;
 
-  const orientationLabel = orientation ? RECOMMENDATION_CONFIG[orientation]?.label ?? "Non qualifiée" : "Score final indisponible";
+  const orientationLabel = orientation ? RECOMMENDATION_CONFIG[orientation]?.label ?? "Non qualifiée" : "Orientation indisponible";
   const orientationDetail = orientation
     ? null
     : completion.hasSynthesisScorer
       ? "Aucune orientation agrégée disponible."
-      : "L'agent de synthèse n'a pas pu produire de score final sur cette analyse.";
+      : "L'agent de synthèse n'a pas pu produire d'orientation agrégée sur cette analyse.";
 
   const alertConvergence = (() => {
     const { STOP, INVESTIGATE_FURTHER, PROCEED_WITH_CAUTION, PROCEED, total } = alertDistribution;
@@ -83,7 +83,7 @@ export function DecisionStrip({ model }: { model: Model }) {
   const { coverage } = model;
   const incompleteCount = coverage.incompleteAgents.length;
 
-  const coherenceLabel = coherenceScore != null ? `${coherenceScore} / 100` : "Score indisponible";
+  const coherenceLabel = coherenceBand ? DECK_COHERENCE_LABELS[coherenceBand] : "Cohérence indisponible";
   const coherenceDetail = totalContradictions > 0
     ? `${totalContradictions} contradiction${totalContradictions > 1 ? "s" : ""} dont ${contradictionsCritical} critique${contradictionsCritical > 1 ? "s" : ""}`
     : "Aucune contradiction documentée par l'agent.";
@@ -113,7 +113,7 @@ export function DecisionStrip({ model }: { model: Model }) {
         <MetricCard
           eyebrow="Cohérence du deck"
           primary={coherenceLabel}
-          tone={coherenceScore != null ? (coherenceScore >= 80 ? "favorable" : coherenceScore >= 60 ? "info" : coherenceScore >= 40 ? "vigilance" : "alert") : "neutral"}
+          tone={coherenceBand === "strong" ? "favorable" : coherenceBand === "moderate" ? "info" : coherenceBand === "weak" ? "vigilance" : coherenceBand === "incoherent" ? "alert" : "neutral"}
           detail={coherenceDetail}
         />
         <MetricCard

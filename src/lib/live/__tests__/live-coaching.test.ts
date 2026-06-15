@@ -1310,7 +1310,6 @@ describe("Context Compiler — serializeContext with condensed intel", () => {
       sector: overrides.sector ?? "SaaS",
       stage: overrides.stage ?? "Series A",
       dealBasics: overrides.dealBasics ?? { arr: null, growthRate: null, amountRequested: null, valuationPre: null, geography: null, description: null, website: null },
-      scores: overrides.scores ?? { global: 72, team: null, market: null, product: null, financials: null },
       financialSummary: overrides.financialSummary ?? {
         keyMetrics: {},
         benchmarkPosition: "",
@@ -1338,7 +1337,6 @@ describe("Context Compiler — serializeContext with condensed intel", () => {
         valuationRange: null,
         comparableDeals: [],
       },
-      overallScore: overrides.overallScore ?? 72,
       signalProfile: overrides.signalProfile ?? "Signaux favorables",
       keyContradictions: overrides.keyContradictions ?? [],
       allAgentFindings: overrides.allAgentFindings ?? {},
@@ -1420,9 +1418,11 @@ describe("Context Compiler — serializeContext with condensed intel", () => {
     expect(ctxWithNull).toBeDefined();
   });
 
-  it("DealContext overallScore defaults to 72", () => {
+  it("DealContext signalProfile defaults to a verbal orientation (no number)", () => {
     const ctx = makeDealContext({});
-    expect(ctx.overallScore).toBe(72);
+    expect(ctx.signalProfile).toBe("Signaux favorables");
+    // Dé-scorisation : le profil est VERBAL, jamais une note chiffrée.
+    expect(ctx.signalProfile).not.toMatch(/\d/);
   });
 });
 

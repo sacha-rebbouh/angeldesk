@@ -8,6 +8,16 @@ const mocks = vi.hoisted(() => ({
   dealDelete: vi.fn(),
   documentFindMany: vi.fn(),
   transaction: vi.fn(),
+  // F1 — cleanup orphelins à la suppression deal
+  analysisFindMany: vi.fn(),
+  aiBoardSessionFindMany: vi.fn(),
+  aiBoardSessionDeleteMany: vi.fn(),
+  llmCallLogDeleteMany: vi.fn(),
+  costEventDeleteMany: vi.fn(),
+  costAlertDeleteMany: vi.fn(),
+  contextEngineSnapshotDeleteMany: vi.fn(),
+  dealChatContextDeleteMany: vi.fn(),
+  chatConversationDeleteMany: vi.fn(),
   factEventFindFirst: vi.fn(),
   factEventUpdate: vi.fn(),
   factEventCreate: vi.fn(),
@@ -87,28 +97,42 @@ describe("/api/deals/[dealId]", () => {
       instrument: "SAFE",
       geography: "France",
       description: "Canonical tagline",
-      globalScore: 91,
-      teamScore: 83,
-      marketScore: 79,
-      productScore: 77,
-      financialsScore: 75,
     });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({
         deal: {
           update: mocks.dealUpdate,
+          delete: mocks.dealDelete,
         },
         factEvent: {
           findFirst: mocks.factEventFindFirst,
           update: mocks.factEventUpdate,
           create: mocks.factEventCreate,
         },
+        analysis: { findMany: mocks.analysisFindMany },
+        aIBoardSession: { findMany: mocks.aiBoardSessionFindMany, deleteMany: mocks.aiBoardSessionDeleteMany },
+        lLMCallLog: { deleteMany: mocks.llmCallLogDeleteMany },
+        costEvent: { deleteMany: mocks.costEventDeleteMany },
+        costAlert: { deleteMany: mocks.costAlertDeleteMany },
+        contextEngineSnapshot: { deleteMany: mocks.contextEngineSnapshotDeleteMany },
+        dealChatContext: { deleteMany: mocks.dealChatContextDeleteMany },
+        chatConversation: { deleteMany: mocks.chatConversationDeleteMany },
       })
     );
     mocks.refreshCurrentFactsView.mockResolvedValue(undefined);
     mocks.documentFindMany.mockResolvedValue([]);
     mocks.dealDelete.mockResolvedValue({ id: "deal_1" });
     mocks.deleteFile.mockResolvedValue(undefined);
+    // F1 — défauts cleanup orphelins (aucune ligne par défaut)
+    mocks.analysisFindMany.mockResolvedValue([]);
+    mocks.aiBoardSessionFindMany.mockResolvedValue([]);
+    mocks.aiBoardSessionDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.llmCallLogDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.costEventDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.costAlertDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.contextEngineSnapshotDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.dealChatContextDeleteMany.mockResolvedValue({ count: 0 });
+    mocks.chatConversationDeleteMany.mockResolvedValue({ count: 0 });
   });
 
   it("returns canonicalized detail data on GET", async () => {
@@ -126,11 +150,6 @@ describe("/api/deals/[dealId]", () => {
       instrument: "EQUITY",
       geography: "Legacy Geography",
       description: "Legacy description",
-      globalScore: 11,
-      teamScore: 12,
-      marketScore: 13,
-      productScore: 14,
-      financialsScore: 15,
       founders: [],
       documents: [],
       redFlags: [],
@@ -157,11 +176,6 @@ describe("/api/deals/[dealId]", () => {
       instrument: "SAFE",
       geography: "France",
       description: "Canonical tagline",
-      globalScore: 91,
-      teamScore: 83,
-      marketScore: 79,
-      productScore: 77,
-      financialsScore: 75,
     });
   });
 
@@ -184,11 +198,6 @@ describe("/api/deals/[dealId]", () => {
       instrument: "EQUITY",
       geography: "Legacy Geography",
       description: "Legacy description",
-      globalScore: 11,
-      teamScore: 12,
-      marketScore: 13,
-      productScore: 14,
-      financialsScore: 15,
       founders: [],
       documents: [],
       redFlags: [],
@@ -304,6 +313,49 @@ describe("/api/deals/[dealId]", () => {
       expect(mocks.deleteFile).not.toHaveBeenCalled();
       expect(mocks.documentFindMany).not.toHaveBeenCalled();
       expect(mocks.dealDelete).not.toHaveBeenCalled();
+    });
+
+    it("supprime en transaction les orphelins dealId-scalaire (RGPD) AVANT le deal, LLMCallLog résolu indirectement", async () => {
+      mocks.dealFindFirst.mockResolvedValue({ id: "deal_1", userId: "user_1" });
+      mocks.documentFindMany.mockResolvedValue([]);
+      mocks.analysisFindMany.mockResolvedValue([{ id: "an_1" }, { id: "an_2" }]);
+      mocks.aiBoardSessionFindMany.mockResolvedValue([{ id: "bs_1" }]);
+
+      const response = await DELETE(new Request("http://localhost/api/deals/deal_1") as never, {
+        params: Promise.resolve({ dealId: "deal_1" }),
+      });
+
+      expect(response.status).toBe(200);
+
+      // LLMCallLog n'a pas de dealId : résolu via les analyses + sessions board du deal.
+      expect(mocks.llmCallLogDeleteMany).toHaveBeenCalledWith({
+        where: { OR: [{ analysisId: { in: ["an_1", "an_2"] } }, { boardSessionId: { in: ["bs_1"] } }] },
+      });
+
+      // Orphelins à dealId scalaire — CostEvent inclus (absent du plan F1 initial).
+      // Le helper partagé requête par `dealId: { in: [...] }` (multi-deal).
+      for (const deleteMany of [
+        mocks.costEventDeleteMany,
+        mocks.costAlertDeleteMany,
+        mocks.contextEngineSnapshotDeleteMany,
+        mocks.dealChatContextDeleteMany,
+        mocks.chatConversationDeleteMany,
+        mocks.aiBoardSessionDeleteMany,
+      ]) {
+        expect(deleteMany).toHaveBeenCalledWith({ where: { dealId: { in: ["deal_1"] } } });
+      }
+
+      // Le deal est supprimé EN DERNIER (après tous les orphelins → cascades FK).
+      const dealDeleteOrder = mocks.dealDelete.mock.invocationCallOrder[0];
+      for (const deleteMany of [
+        mocks.llmCallLogDeleteMany,
+        mocks.costEventDeleteMany,
+        mocks.chatConversationDeleteMany,
+        mocks.aiBoardSessionDeleteMany,
+      ]) {
+        expect(Math.max(...deleteMany.mock.invocationCallOrder)).toBeLessThan(dealDeleteOrder);
+      }
+      expect(mocks.dealDelete).toHaveBeenCalledWith({ where: { id: "deal_1" } });
     });
   });
 });

@@ -42,7 +42,6 @@ import { resolve } from "node:path";
 const A9_RESTE_INSCOPE_FILES = [
   "src/agents/document-extractor.ts",
   "src/agents/red-flag-detector.ts",
-  "src/agents/deal-scorer.ts",
   "src/agents/tier0/fact-extractor.ts",
   "src/agents/tier0/deck-coherence-checker.ts",
   "src/agents/chat/deal-chat-agent.ts",

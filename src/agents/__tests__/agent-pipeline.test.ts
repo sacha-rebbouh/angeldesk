@@ -1310,16 +1310,6 @@ vi.mock("@/services/funding-db", () => ({
   getValuationBenchmarks: vi.fn().mockResolvedValue(null),
 }));
 
-// ---------- Funding DB Percentile Calculator (used by synthesis-deal-scorer) ----------
-vi.mock("@/services/funding-db/percentile-calculator", () => ({
-  calculateDealPercentile: vi.fn().mockResolvedValue({
-    percentileOverall: 55,
-    percentileSector: 60,
-    percentileStage: 50,
-    totalDealsCompared: 100,
-  }),
-}));
-
 // ---------- Fact Store ----------
 vi.mock("@/services/fact-store/fact-keys", () => ({
   FACT_KEYS: {

@@ -4,7 +4,7 @@ import { proofLabel } from "@/lib/pdf/pdf-helpers";
 /**
  * Phase 2 — helper PDF `proofLabel()`.
  *
- * Asymétrie volontaire par rapport à `recLabel()` : pas de fallback implicite.
+ * Pas de fallback implicite (la solidité peut être absente).
  * Le label "SOLIDITÉ À QUALIFIER" n'est retourné QUE si la section PDF passe
  * explicitement `{ showUnqualified: true }`. Par défaut, l'absence retourne
  * `null` — la section doit décider de l'affichage.

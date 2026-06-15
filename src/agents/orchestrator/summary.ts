@@ -24,43 +24,9 @@ export function generateTier1Summary(results: Record<string, AgentResult>): stri
 
   parts.push(`**Tier 1 Investigation**: ${successCount}/${totalCount} agents completes`);
 
-  // Extract key scores from agents that have them
-  const scores: { name: string; score: number }[] = [];
-
-  const agentScoreFields: Record<string, string> = {
-    "financial-auditor": "overallScore",
-    "market-intelligence": "marketScore",
-    "competitive-intel": "competitiveScore",
-    "team-investigator": "overallTeamScore",
-    "tech-stack-dd": "techStackScore",
-    "tech-ops-dd": "techOpsScore",
-    "legal-regulatory": "legalScore",
-    "cap-table-auditor": "capTableScore",
-    "gtm-analyst": "gtmScore",
-    "customer-intel": "customerScore",
-  };
-
-  for (const [agentName, scoreField] of Object.entries(agentScoreFields)) {
-    const result = results[agentName];
-    if (result?.success && "data" in result) {
-      const data = result.data as Record<string, unknown>;
-      const score = data[scoreField];
-      if (typeof score === "number") {
-        scores.push({
-          name: agentName.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-          score,
-        });
-      }
-    }
-  }
-
-  if (scores.length > 0) {
-    parts.push("\n**Scores par dimension:**");
-    for (const { name, score } of scores.sort((a, b) => b.score - a.score)) {
-      const emoji = score >= 70 ? "✅" : score >= 50 ? "⚠️" : "❌";
-      parts.push(`${emoji} ${name}: ${score}/100`);
-    }
-  }
+  // P2 — Aucune note par dimension restituée (les sous-scores /100 ont été
+  // retirés : ce résumé alimente aussi le contexte chat LLM). La couverture et
+  // l'orientation sont portées par la synthèse et l'UI scoreless.
 
   // Count critical issues from question-master
   const questionMaster = results["question-master"];
@@ -91,22 +57,19 @@ export function generateTier3Summary(results: Record<string, AgentResult>): stri
   // Get verdict from synthesis-deal-scorer
   const scorer = results["synthesis-deal-scorer"] as SynthesisDealScorerResult | undefined;
   if (scorer?.success && scorer.data) {
-    const { overallScore, verdict, investmentRecommendation } = scorer.data;
-    parts.push(`\n**Score Final**: ${overallScore}/100`);
-    parts.push(`**Profil**: ${verdict.replace("_", " ").toUpperCase()}`);
+    const { verdict, investmentRecommendation } = scorer.data;
+    // P2 — Aucune note de deal restituée (plus de "Score Final/100").
+    parts.push(`\n**Profil**: ${verdict.replace("_", " ").toUpperCase()}`);
     parts.push(`**Signal**: ${ACTION_LABELS[investmentRecommendation.action.toLowerCase()] ?? investmentRecommendation.action}`);
     parts.push(`> ${investmentRecommendation.rationale}`);
   }
 
-  // Get skepticism from devil's advocate
+  // Get top concerns from devil's advocate (P2 — plus de score de scepticisme /100)
   const devils = results["devils-advocate"];
   if (devils?.success && "data" in devils) {
-    const data = devils.data as { overallSkepticism?: number; topConcerns?: string[] };
-    if (typeof data.overallSkepticism === "number") {
-      parts.push(`\n**Scepticisme**: ${data.overallSkepticism}/100`);
-    }
+    const data = devils.data as { topConcerns?: string[] };
     if (data.topConcerns && data.topConcerns.length > 0) {
-      parts.push(`**Top concerns**: ${data.topConcerns.slice(0, 3).join("; ")}`);
+      parts.push(`\n**Top concerns**: ${data.topConcerns.slice(0, 3).join("; ")}`);
     }
   }
 
@@ -138,9 +101,10 @@ export function generateFullAnalysisSummary(results: Record<string, AgentResult>
   // Get final verdict
   const scorer = results["synthesis-deal-scorer"] as SynthesisDealScorerResult | undefined;
   if (scorer?.success && scorer.data) {
-    const { overallScore, verdict, investmentRecommendation } = scorer.data;
+    const { verdict, investmentRecommendation } = scorer.data;
+    // P2 — Aucune note de deal restituée (plus de "Score: X/100").
     parts.push(`\n**ANALYSE FINALE**`);
-    parts.push(`Score: ${overallScore}/100 - ${verdict.replace("_", " ").toUpperCase()}`);
+    parts.push(`Profil: ${verdict.replace("_", " ").toUpperCase()}`);
     parts.push(`Signal: ${ACTION_LABELS[investmentRecommendation.action.toLowerCase()] ?? investmentRecommendation.action}`);
     parts.push(`> ${investmentRecommendation.rationale}`);
   }
@@ -148,18 +112,15 @@ export function generateFullAnalysisSummary(results: Record<string, AgentResult>
   // Add Tier 2 sector insights if available
   if (tier2Result && results[tier2Result]?.success && "data" in results[tier2Result]) {
     const sectorData = results[tier2Result].data as {
-      sectorScore?: number;
       sectorFit?: string;
       sectorInsights?: { metric?: string; assessment?: string }[];
     };
-    if (sectorData.sectorScore) {
+    // P2 — Aucun score sectoriel /100 restitué ; on garde le fit qualitatif et
+    // les insights observables.
+    if (sectorData.sectorFit || (sectorData.sectorInsights && sectorData.sectorInsights.length > 0)) {
       parts.push(`\n**ANALYSE SECTORIELLE**`);
-      parts.push(`Score Sectoriel: ${sectorData.sectorScore}/100`);
-      if (sectorData.sectorFit) {
-        const fitLabel = typeof sectorData.sectorFit === "string"
-          ? sectorData.sectorFit.toUpperCase()
-          : `${(sectorData.sectorFit as { score?: number }).score ?? 0}/100`;
-        parts.push(`Fit: ${fitLabel}`);
+      if (typeof sectorData.sectorFit === "string") {
+        parts.push(`Fit: ${sectorData.sectorFit.toUpperCase()}`);
       }
       if (sectorData.sectorInsights && sectorData.sectorInsights.length > 0) {
         const topInsights = sectorData.sectorInsights.slice(0, 3);
@@ -183,10 +144,10 @@ export function generateSummary(
   void _type;
   const parts: string[] = [];
 
-  // Scoring summary from synthesis-deal-scorer
+  // P2 — Orientation (pas de note de deal) depuis synthesis-deal-scorer.
   const scorer = results["synthesis-deal-scorer"] as SynthesisDealScorerResult | undefined;
-  if (scorer?.success && scorer.data?.overallScore) {
-    parts.push(`**Score Global**: ${scorer.data.overallScore}/100`);
+  if (scorer?.success && scorer.data?.verdict) {
+    parts.push(`**Profil**: ${ACTION_LABELS[scorer.data.verdict.toLowerCase()] ?? scorer.data.verdict}`);
   }
 
   // Red flags summary

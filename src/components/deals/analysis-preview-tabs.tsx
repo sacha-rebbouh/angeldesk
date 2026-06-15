@@ -32,7 +32,6 @@ interface AnalysisPreviewTabsProps {
   thesis?: AnalysisThesis | null;
   totalTimeMs?: number | null;
   totalCost?: number | null;
-  currentScore?: number | null;
 }
 
 export const AnalysisPreviewTabs = memo(function AnalysisPreviewTabs({
@@ -41,7 +40,6 @@ export const AnalysisPreviewTabs = memo(function AnalysisPreviewTabs({
   thesis,
   totalTimeMs,
   totalCost,
-  currentScore,
 }: AnalysisPreviewTabsProps) {
   const entries = Object.entries(results);
   const memoLabel = results["memo-generator"]?.success ? "Mémo d’investissement" : "Dossier de décision";
@@ -66,7 +64,6 @@ export const AnalysisPreviewTabs = memo(function AnalysisPreviewTabs({
           thesis={thesis}
           totalTimeMs={totalTimeMs}
           totalCost={totalCost}
-          currentScore={currentScore}
         />
       </TabsContent>
 

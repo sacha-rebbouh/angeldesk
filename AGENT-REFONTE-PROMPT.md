@@ -1,5 +1,7 @@
 # PROMPT ABSOLU - Refonte des 40 Agents (3 Tiers)
 
+> **ARCHIVED** — superseded by `docs-doctrine/angeldesk-strategic-pivot.md` (doctrine canonique). Conservé pour historique.
+
 > **Document de reference pour la refonte complete des 40 agents d'Angel Desk (Tier 1, 2 et 3).**
 > Ce fichier doit etre lu en entier avant de modifier un agent.
 > Chaque agent doit etre refait selon ces standards - aucune exception.

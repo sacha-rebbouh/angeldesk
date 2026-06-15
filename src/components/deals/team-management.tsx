@@ -48,24 +48,12 @@ import {
   Briefcase,
   Award,
   GraduationCap,
-  TrendingUp,
-  Target,
-  Network,
-  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ============================================================================
 // TYPES
 // ============================================================================
-
-interface AnalysisScores {
-  domainExpertise?: number;
-  entrepreneurialExperience?: number;
-  executionCapability?: number;
-  networkStrength?: number;
-  overallFounderScore?: number;
-}
 
 interface AnalysisBackground {
   yearsExperience?: number;
@@ -107,7 +95,6 @@ interface VerifiedInfo {
   // From team-investigator analysis (new format)
   source?: "team-investigator";
   analyzedAt?: string;
-  scores?: AnalysisScores;
   background?: AnalysisBackground;
   strengths?: string[];
   concerns?: string[];
@@ -199,20 +186,6 @@ async function enrichFounder(dealId: string, founderId: string) {
 // ============================================================================
 // HELPERS
 // ============================================================================
-
-function getScoreColor(score: number): string {
-  if (score >= 80) return "text-green-700 bg-green-50 border-green-200";
-  if (score >= 60) return "text-blue-700 bg-blue-50 border-blue-200";
-  if (score >= 40) return "text-orange-700 bg-orange-50 border-orange-200";
-  return "text-red-700 bg-red-50 border-red-200";
-}
-
-function getScoreBg(score: number): string {
-  if (score >= 80) return "bg-green-500";
-  if (score >= 60) return "bg-blue-500";
-  if (score >= 40) return "bg-orange-500";
-  return "bg-red-500";
-}
 
 function getVerifiedInfo(founder: Founder): VerifiedInfo | null {
   if (!founder.verifiedInfo) return null;
@@ -564,30 +537,6 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 }
 
 // ============================================================================
-// SCORE MINI BAR
-// ============================================================================
-
-const ScoreMiniBar = memo(function ScoreMiniBar({ label, value, icon: Icon }: { label: string; value: number; icon: React.ComponentType<{ className?: string }> }) {
-  return (
-    <div className="flex items-center gap-2 min-w-0">
-      <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between mb-0.5">
-          <span className="text-[10px] text-muted-foreground truncate">{label}</span>
-          <span className="text-[10px] font-semibold ml-1">{value}</span>
-        </div>
-        <div className="h-1 rounded-full bg-muted overflow-hidden">
-          <div
-            className={cn("h-full rounded-full transition-all", getScoreBg(value))}
-            style={{ width: `${value}%` }}
-          />
-        </div>
-      </div>
-    </div>
-  );
-});
-
-// ============================================================================
 // MEMBER CARD (unified: DB founder + analysis data)
 // ============================================================================
 
@@ -607,7 +556,6 @@ const MemberCard = memo(function MemberCard({
   const vi = getVerifiedInfo(founder);
   const isAnalyzed = vi?.source === "team-investigator";
   const isLinkedInEnriched = !!vi?.linkedinScrapedAt;
-  const scores = vi?.scores;
   const background = vi?.background;
   const strengths = vi?.strengths;
   const concerns = vi?.concerns;
@@ -618,7 +566,6 @@ const MemberCard = memo(function MemberCard({
     ? (vi?.redFlags as Array<{ type: string; severity: string; message: string }> | undefined)
     : undefined;
   const highlights = vi?.highlights;
-  const overallScore = scores?.overallFounderScore;
   const safeLinkedInUrl = founder.linkedinUrl && isSafeLinkedInUrl(founder.linkedinUrl)
     ? founder.linkedinUrl
     : null;
@@ -627,15 +574,10 @@ const MemberCard = memo(function MemberCard({
     <div className="rounded-lg border bg-card transition-colors hover:border-muted-foreground/20">
       {/* Header row */}
       <div className="flex items-start gap-3 p-4 pb-2">
-        {/* Avatar with score ring */}
+        {/* Avatar */}
         <div className="relative shrink-0">
-          <div className={cn(
-            "flex h-11 w-11 items-center justify-center rounded-full text-sm font-semibold",
-            overallScore !== undefined
-              ? getScoreColor(overallScore) + " border"
-              : "bg-muted text-muted-foreground"
-          )}>
-            {overallScore !== undefined ? overallScore : founder.name.charAt(0).toUpperCase()}
+          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-muted text-sm font-semibold text-muted-foreground">
+            {founder.name.charAt(0).toUpperCase()}
           </div>
         </div>
 
@@ -697,21 +639,13 @@ const MemberCard = memo(function MemberCard({
         </div>
       </div>
 
-      {/* Analysis scores */}
-      {scores && (
+      {/* Analysis provenance caveat */}
+      {isAnalyzed && !vi?.linkedinVerified && !isLinkedInEnriched && (
         <div className="px-4 pb-2">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <ScoreMiniBar label="Domain" value={scores.domainExpertise ?? 0} icon={Target} />
-            <ScoreMiniBar label="Startup XP" value={scores.entrepreneurialExperience ?? 0} icon={TrendingUp} />
-            <ScoreMiniBar label="Execution" value={scores.executionCapability ?? 0} icon={Zap} />
-            <ScoreMiniBar label="Network" value={scores.networkStrength ?? 0} icon={Network} />
+          <div className="flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            <span>Analyse estimee depuis le deck. <button onClick={onEdit} className="underline font-medium hover:text-amber-900">Ajoutez le LinkedIn</button> pour une analyse verifiee.</span>
           </div>
-          {isAnalyzed && !vi?.linkedinVerified && !isLinkedInEnriched && (
-            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
-              <AlertTriangle className="h-3 w-3 shrink-0" />
-              <span>Scores estimes depuis le deck. <button onClick={onEdit} className="underline font-medium hover:text-amber-900">Ajoutez le LinkedIn</button> pour une analyse verifiee.</span>
-            </div>
-          )}
         </div>
       )}
 

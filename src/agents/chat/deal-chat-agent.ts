@@ -19,6 +19,7 @@ import type {
   LiveSessionContextData,
 } from "@/services/chat-context";
 import { sanitizeForLLM } from "@/lib/sanitize";
+import { scrubAgentScoreData, stripDealScoreMentions } from "@/services/signal-profile";
 import {
   retrieveContext,
   type RetrievedContext,
@@ -99,11 +100,6 @@ export interface FullChatContext {
     growthRate?: number | null;
     amountRequested?: number | null;
     valuationPre?: number | null;
-    globalScore?: number | null;
-    teamScore?: number | null;
-    marketScore?: number | null;
-    productScore?: number | null;
-    financialsScore?: number | null;
     founders?: Array<{
       name: string;
       role: string;
@@ -126,11 +122,6 @@ export interface FullChatContext {
     growthRate?: number | null;
     amountRequested?: number | null;
     valuationPre?: number | null;
-    globalScore?: number | null;
-    teamScore?: number | null;
-    marketScore?: number | null;
-    productScore?: number | null;
-    financialsScore?: number | null;
     founders?: Array<{
       name: string;
       role: string;
@@ -423,13 +414,6 @@ ${thesisCtxEarly.decision ? `**Decision BA** : ${thesisCtxEarly.decision}${thesi
 - **Montant demande**: ${deal.amountRequested != null ? `${this.formatMoneyValue(Number(deal.amountRequested))}` : "Non specifie"}
 - **Valorisation pre-money**: ${deal.valuationPre != null ? `${this.formatMoneyValue(Number(deal.valuationPre))}` : "Non specifie"}
 
-## Scores d'analyse (si disponibles)
-- **Score global**: ${deal.globalScore ?? "Non calcule"}/100
-- **Equipe**: ${deal.teamScore ?? "-"}/100
-- **Marche**: ${deal.marketScore ?? "-"}/100
-- **Produit**: ${deal.productScore ?? "-"}/100
-- **Financials**: ${deal.financialsScore ?? "-"}/100
-
 ## Fondateurs
 ${deal.founders && deal.founders.length > 0
   ? deal.founders.map((f) => {
@@ -559,9 +543,6 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
           contextPrompt += `\n### ${this.formatAgentName(agentName)}\n`;
           if (summary.summary) {
             contextPrompt += `${summary.summary}\n`;
-          }
-          if (summary.score !== undefined) {
-            contextPrompt += `**Score**: ${summary.score}/100\n`;
           }
           if (summary.keyFindings && summary.keyFindings.length > 0) {
             contextPrompt += `**Points cles**:\n`;
@@ -722,7 +703,13 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
         preserveNewlines: true,
         warnOnSuspicious: true,
       });
-      history += `\n**${role}**: ${sanitizedContent}\n`;
+      // Dé-scorisation : scrub les mentions de note dans les réponses ASSISTANT
+      // historiques (générées avant la bascule, ex. « Score : 81/100 ») avant de
+      // les réinjecter dans le prompt ; les messages UTILISATEUR restent intacts
+      // (ce sont ses mots propres, pas une note que nous restituons).
+      const content =
+        msg.role === "user" ? sanitizedContent : stripDealScoreMentions(sanitizedContent);
+      history += `\n**${role}**: ${content}\n`;
     }
 
     return history;
@@ -761,15 +748,15 @@ ${documents.map((d) => `- ${d.name} (${d.type}) - ${d.isProcessed ? "Analyse" : 
       let agentsSection = "## RÉSULTATS D'AGENTS (Données COMPLÈTES)\n";
       for (const result of retrievedCtx.agentResults) {
         agentsSection += `\n### ${this.formatAgentName(result.agent)}\n`;
-        if (scoresAllowed && result.score !== undefined) {
-          agentsSection += `**Score**: ${result.score}/100\n`;
-        }
         if (result.confidence !== undefined) {
           agentsSection += `**Confiance**: ${result.confidence}%\n`;
         }
-        // Include FULL agent data if available
+        // Include FULL agent data if available — scrubbé des champs de NOTE DE
+        // DEAL (overallScore/score/grade/dimensionScores…) avant sérialisation,
+        // sinon le JSON brut réinjecte les notes que le prompt n'affiche plus.
         if (result.fullData) {
-          agentsSection += `**Données complètes de l'agent**:\n\`\`\`json\n${JSON.stringify(result.fullData, null, 2).slice(0, 15000)}\n\`\`\`\n`;
+          const scrubbedFullData = scrubAgentScoreData(result.agent, result.fullData);
+          agentsSection += `**Données complètes de l'agent**:\n\`\`\`json\n${JSON.stringify(scrubbedFullData, null, 2).slice(0, 15000)}\n\`\`\`\n`;
         } else {
           // Fallback to summary/findings if no fullData
           if (result.summary) {
@@ -1154,14 +1141,17 @@ Reponds en JSON:
             includeScores: !context.thesis || context.thesis.thesisBypass,
           }
         );
-        retrievedContextPrompt = this.buildRetrievedContextPrompt(retrievedCtx);
+        // Dé-scorisation : scrub des mentions de note au niveau du bloc de
+        // contexte assemblé (summaries/findings/red flags historiques peuvent
+        // contenir « Score : X/100 »). N'altère ni le system prompt ni la question.
+        retrievedContextPrompt = stripDealScoreMentions(this.buildRetrievedContextPrompt(retrievedCtx));
         console.log(`[DealChatAgent] Retrieved context for intent ${intent}: ${retrievedCtx.facts.length} facts, ${retrievedCtx.agentResults.length} agent results, ${retrievedCtx.redFlags.length} red flags`);
       } catch (retrieveError) {
         console.warn("[DealChatAgent] Failed to retrieve context, continuing with basic context:", retrieveError);
       }
 
       // Step 3: Build full prompt
-      const contextPrompt = this.buildContextPrompt();
+      const contextPrompt = stripDealScoreMentions(this.buildContextPrompt());
       const historyPrompt = this.buildConversationHistory();
       const intentGuidance = this.getIntentGuidance(intent);
 

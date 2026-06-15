@@ -87,22 +87,22 @@ describe("buildOutput CA — invariants A4-bis (D1 + D2)", () => {
       expect(result.findings.signalIntensity).toBe("high");
     });
 
-    it("score < 40 (sans red flag) → signalIntensity: high", () => {
+    it("P2 — score < 40 (sans red flag) → signalIntensity: low (le score N'escalade PLUS)", () => {
       const data = makeLLMResponse(30);
       const result = buildOutput(data, "form", makeMockContext());
-      expect(result.findings.signalIntensity).toBe("high");
+      expect(result.findings.signalIntensity).toBe("low");
     });
 
-    it("1 red flag HIGH (0 CRITICAL) + score >= 60 → signalIntensity: elevated", () => {
+    it("1 red flag HIGH (0 CRITICAL) → signalIntensity: elevated", () => {
       const data = makeLLMResponse(75, { high: 1 });
       const result = buildOutput(data, "form", makeMockContext());
       expect(result.findings.signalIntensity).toBe("elevated");
     });
 
-    it("score 50 (entre 40 et 60), aucun red flag → signalIntensity: elevated", () => {
+    it("P2 — score 50 (sans red flag) → signalIntensity: low (le score est ignoré)", () => {
       const data = makeLLMResponse(50);
       const result = buildOutput(data, "form", makeMockContext());
-      expect(result.findings.signalIntensity).toBe("elevated");
+      expect(result.findings.signalIntensity).toBe("low");
     });
 
     it("score haut + aucun red flag → signalIntensity: low", () => {
@@ -112,20 +112,21 @@ describe("buildOutput CA — invariants A4-bis (D1 + D2)", () => {
     });
   });
 
-  describe("Phase A A4-bis — signalContribution.orientation déterministe", () => {
-    it("score >= 85 + low intensity → very_favorable", () => {
+  describe("P2 — signalContribution.orientation déterministe SANS score", () => {
+    it("low intensity (aucun red flag) → favorable — score haut IGNORÉ (plus de very_favorable)", () => {
       const data = makeLLMResponse(90);
-      const result = buildOutput(data, "form", makeMockContext());
-      expect(result.findings.signalContribution.orientation).toBe("very_favorable");
-    });
-
-    it("score >= 70 + low → favorable", () => {
-      const data = makeLLMResponse(75);
       const result = buildOutput(data, "form", makeMockContext());
       expect(result.findings.signalContribution.orientation).toBe("favorable");
     });
 
-    it("1 CRITICAL → alert_dominant", () => {
+    it("low intensity → favorable quel que soit le score (90 et 30 donnent la même orientation)", () => {
+      const high = buildOutput(makeLLMResponse(90), "form", makeMockContext());
+      const low = buildOutput(makeLLMResponse(30), "form", makeMockContext());
+      expect(high.findings.signalContribution.orientation).toBe("favorable");
+      expect(low.findings.signalContribution.orientation).toBe("favorable");
+    });
+
+    it("1 CRITICAL → alert_dominant (red flag pilote, pas le score)", () => {
       const data = makeLLMResponse(60, { critical: 1 });
       const result = buildOutput(data, "form", makeMockContext());
       expect(result.findings.signalContribution.orientation).toBe("alert_dominant");
@@ -164,8 +165,16 @@ describe("buildOutput CA — invariants A4-bis (D1 + D2)", () => {
       expect(result.alertSignal.hasBlocker).toBe(true);
     });
 
-    it("score < 40 → INVESTIGATE_FURTHER", () => {
+    it("P2 — score < 40 sans red flag → PROCEED (recommendation pilotée par red flags, plus par le score)", () => {
+      // P2 : signalIntensity ne dérive plus du score → alertSignal.recommendation
+      // (dérivé de l'intensité) n'escalade plus sur un score bas sans red flag.
       const data = makeLLMResponse(30);
+      const result = buildOutput(data, "form", makeMockContext());
+      expect(result.alertSignal.recommendation).toBe("PROCEED");
+    });
+
+    it("1 red flag HIGH → INVESTIGATE_FURTHER (escalade par red flag)", () => {
+      const data = makeLLMResponse(70, { high: 2 });
       const result = buildOutput(data, "form", makeMockContext());
       expect(result.alertSignal.recommendation).toBe("INVESTIGATE_FURTHER");
     });

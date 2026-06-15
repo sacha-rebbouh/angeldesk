@@ -16,7 +16,7 @@ export function DecisionSection({ model }: { model: Model }) {
         <h2 className="av-h2">Synthèse de décision</h2>
         <p className="av-note">
           Les éléments ci-dessous consolident ce qui étaye la thèse et ce qui la fragilise. Les risques sont rangés par
-          impact documenté. La décision finale revient à l'investisseur.
+          impact documenté. La décision finale revient à l&apos;investisseur.
         </p>
       </header>
 
@@ -57,7 +57,7 @@ export function DecisionSection({ model }: { model: Model }) {
         <h3 className="av-h3">Risques rangés par impact documenté</h3>
         {ranks.length === 0 ? (
           <PartialBanner tone="info" title="Aucun risque consolidé">
-            Les agents n'ont pas remonté de risque critique ou élevé sur cette analyse.
+            Les agents n&apos;ont pas remonté de risque critique ou élevé sur cette analyse.
           </PartialBanner>
         ) : (
           <ol className="flex flex-col gap-2.5">

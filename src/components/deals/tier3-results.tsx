@@ -12,8 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { VERDICT_CONFIG, getSeverityStyle } from "@/lib/ui-configs";
-import { ScoreBadge } from "@/components/shared/score-badge";
+import { getSeverityStyle, type Orientation, type EvidenceSolidity } from "@/lib/ui-configs";
 import { ExpandableSection } from "@/components/shared/expandable-section";
 import {
   AlertTriangle,
@@ -38,7 +37,8 @@ import type {
 import { devilsAdvocateAlertKey } from "@/services/alert-resolution/alert-keys";
 import { ResolutionBadge } from "./resolution-badge";
 import { ResolutionDialog } from "./resolution-dialog";
-import { AdjustedScoreBadge } from "./adjusted-score-badge";
+import { BadgePair } from "./analysis-v2/atoms/badge-pair";
+import { aggregateOrientation, aggregateSolidity } from "./analysis-v2/lib/solidity-aggregator";
 import type { AlertResolution, CreateResolutionInput } from "@/hooks/use-resolutions";
 
 interface Tier3ResultsProps {
@@ -52,19 +52,13 @@ interface Tier3ResultsProps {
   }>;
   totalAgentsRun?: number;
   resolutionMap?: Record<string, import("@/hooks/use-resolutions").AlertResolution>;
-  resolutions?: import("@/hooks/use-resolutions").AlertResolution[];
   onResolve?: (input: import("@/hooks/use-resolutions").CreateResolutionInput) => Promise<unknown>;
   onUnresolve?: (alertKey: string) => Promise<unknown>;
   isResolving?: boolean;
-  /** Thesis-first : meta-gate — masquer score si these fragile sans bypass */
+  /** Thesis-first : meta-gate — masquer l'orientation si these fragile sans bypass */
   thesisVerdict?: string | null;
   thesisBypass?: boolean;
 }
-
-const VerdictBadge = memo(function VerdictBadge({ verdict }: { verdict: string }) {
-  const c = VERDICT_CONFIG[verdict] ?? { label: verdict, color: "bg-gray-100 text-gray-800" };
-  return <Badge variant="outline" className={cn("text-sm px-3 py-1", c.color)}>{c.label}</Badge>;
-});
 
 // Hoisted config — badge-specific colors (solid bg for badges, not the subtle bg from global config)
 const RECOMMENDATION_BADGE_CONFIG: Record<string, { label: string; color: string }> = {
@@ -94,12 +88,23 @@ const RecommendationBadge = memo(function RecommendationBadge({ action }: { acti
   );
 });
 
+// Dé-scorisation : libellé verbal du verdict de scepticisme (Devil's Advocate),
+// remplace l'ancien score /100. Valeurs producteur devils-advocate.ts.
+const SKEPTICISM_VERDICT_LABELS: Record<string, { label: string; color: string }> = {
+  VERY_SKEPTICAL: { label: "Très sceptique", color: "bg-red-100 text-red-800" },
+  SKEPTICAL: { label: "Sceptique", color: "bg-orange-100 text-orange-800" },
+  CAUTIOUS: { label: "Prudent", color: "bg-yellow-100 text-yellow-800" },
+  NEUTRAL: { label: "Neutre", color: "bg-slate-100 text-slate-700" },
+  CAUTIOUSLY_OPTIMISTIC: { label: "Prudemment optimiste", color: "bg-green-100 text-green-800" },
+};
+
 // Synthesis Deal Scorer Card - Main scoring synthesis (includes DA kill reasons)
 const SynthesisScorerCard = memo(function SynthesisScorerCard({
   data,
   devilsData,
+  orientation,
+  solidity,
   hideCriticalRisks = false,
-  resolutions,
   resolutionMap,
   onResolve,
   onUnresolve,
@@ -107,8 +112,9 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
 }: {
   data: SynthesisDealScorerData;
   devilsData?: DevilsAdvocateData | null;
+  orientation: Orientation | null;
+  solidity: EvidenceSolidity | null;
   hideCriticalRisks?: boolean;
-  resolutions?: AlertResolution[];
   resolutionMap?: Record<string, AlertResolution>;
   onResolve?: (input: CreateResolutionInput) => Promise<unknown>;
   onUnresolve?: (alertKey: string) => Promise<unknown>;
@@ -116,18 +122,6 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
 }) {
   const visibleStrengths = data.keyStrengths;
   const visibleWeaknesses = data.keyWeaknesses;
-  const comparativeRankingMethod = data.comparativeRanking.method;
-  const comparativeRankingWeak =
-    data.comparativeRanking.insufficientData === true ||
-    comparativeRankingMethod === "INSUFFICIENT_DATA" ||
-    (data.comparativeRanking.similarDealsAnalyzed > 0 && data.comparativeRanking.similarDealsAnalyzed < 3);
-  const comparativeRankingUnavailable =
-    comparativeRankingMethod === "UNAVAILABLE" || data.comparativeRanking.similarDealsAnalyzed === 0;
-  const canTrustComparativeRanking = !comparativeRankingWeak && !comparativeRankingUnavailable;
-  const comparativeRankingNotice = comparativeRankingUnavailable
-    ? (data.comparativeRanking.calculationDetail ?? "Le ranking comparatif n'a pas pu etre calcule de maniere fiable.")
-    : data.comparativeRanking.calculationDetail ??
-      `Seulement ${data.comparativeRanking.similarDealsAnalyzed} deals comparables ont ete trouves. Le percentile affiche n'est pas statistiquement robuste.`;
 
   // DA data merged into Scorer
   // Phase A slice A3 — `structuralRisks` (D1) remplace `killReasons` legacy.
@@ -140,7 +134,7 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
     ...(devilsData?.findings?.concernsSummary?.conditional ?? []).map(c => ({ text: c, level: "conditional" as const })),
     ...(devilsData?.findings?.concernsSummary?.serious ?? []).map(c => ({ text: c, level: "serious" as const })),
   ], [devilsData]);
-  const skepticismScore = devilsData?.findings?.skepticismAssessment?.score;
+  const skepticismVerdict = devilsData?.findings?.skepticismAssessment?.verdict ?? null;
 
   const [daDialogState, setDaDialogState] = useState<{
     alertKey: string; title: string; severity: string; description?: string;
@@ -160,17 +154,11 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Target className="h-6 w-6 text-primary" />
-            <CardTitle className="text-xl">Score Final</CardTitle>
+            <CardTitle className="text-xl">Verdict de synthèse</CardTitle>
           </div>
-          <div className="flex items-center gap-3">
-            <VerdictBadge verdict={data.verdict} />
-            <ScoreBadge score={data.overallScore} size="lg" />
-            {resolutions && resolutions.length > 0 && (
-              <AdjustedScoreBadge originalScore={data.overallScore} resolutions={resolutions} />
-            )}
-          </div>
+          <BadgePair orientation={orientation} solidity={solidity} size="sm" />
         </div>
-        <CardDescription>Score final — analyse multi-tiers avec consensus et réflexion</CardDescription>
+        <CardDescription>Synthèse multi-tiers avec consensus et réflexion</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Recommendation */}
@@ -184,69 +172,6 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           </div>
           <RecommendationBadge action={data.investmentRecommendation.action} />
         </div>
-
-        {/* Scores par dimension */}
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Scores par dimension</p>
-          <div className="grid gap-2">
-            {data.dimensionScores.map((dim) => (
-              <div key={dim.dimension} className="flex items-center justify-between p-2 border rounded">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium text-sm">{dim.dimension}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-24 h-2 rounded-full bg-muted">
-                    <div
-                      className={cn(
-                        "h-full rounded-full",
-                        dim.score >= 80 ? "bg-green-500" :
-                        dim.score >= 60 ? "bg-blue-500" :
-                        dim.score >= 40 ? "bg-yellow-500" : "bg-red-500"
-                      )}
-                      style={{ width: `${dim.score}%` }}
-                    />
-                  </div>
-                  <span className="text-sm font-medium w-12 text-right">{dim.score}/100</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Comparative ranking caveat */}
-        {!canTrustComparativeRanking && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <div className="flex items-start gap-2">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-              <div className="space-y-1">
-                <p className="text-sm font-medium text-amber-900">
-                  Benchmark comparatif non robuste
-                </p>
-                <p className="text-sm text-amber-800">{comparativeRankingNotice}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Comparative Ranking - quand le benchmark est statistiquement utilisable */}
-        {canTrustComparativeRanking && (
-          <div className="space-y-2">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="p-3 rounded-lg bg-muted text-center">
-                <p className="text-2xl font-bold">{data.comparativeRanking.percentileOverall}%</p>
-                <p className="text-xs text-muted-foreground">Position globale</p>
-              </div>
-              <div className="p-3 rounded-lg bg-muted text-center">
-                <p className="text-2xl font-bold">{data.comparativeRanking.percentileSector}%</p>
-                <p className="text-xs text-muted-foreground">Position dans le secteur</p>
-              </div>
-              <div className="p-3 rounded-lg bg-muted text-center">
-                <p className="text-2xl font-bold">{data.comparativeRanking.similarDealsAnalyzed}</p>
-                <p className="text-xs text-muted-foreground">Deals Comparés</p>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Strengths & Weaknesses - Limited for FREE */}
         <div className="grid md:grid-cols-2 gap-4">
@@ -303,35 +228,17 @@ const SynthesisScorerCard = memo(function SynthesisScorerCard({
           </div>
         )}
 
-        {/* DA Skepticism — merged from Devil's Advocate */}
-        {devilsData && skepticismScore != null && (
+        {/* DA Skepticism — merged from Devil's Advocate (verbal, dé-scorisé) */}
+        {devilsData && skepticismVerdict && SKEPTICISM_VERDICT_LABELS[skepticismVerdict] && (
           <div className="pt-3 border-t">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between">
               <p className="text-sm font-medium flex items-center gap-2">
                 <Brain className="h-4 w-4 text-purple-500" />
                 Niveau de scepticisme
               </p>
-              <div className="flex items-center gap-2">
-                <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    className={cn(
-                      "h-full",
-                      skepticismScore <= 30 ? "bg-green-500" :
-                      skepticismScore <= 50 ? "bg-yellow-500" :
-                      skepticismScore <= 70 ? "bg-orange-500" : "bg-red-500"
-                    )}
-                    style={{ width: `${skepticismScore}%` }}
-                  />
-                </div>
-                <span className={cn(
-                  "text-sm font-bold",
-                  skepticismScore <= 30 ? "text-green-700" :
-                  skepticismScore <= 50 ? "text-yellow-700" :
-                  skepticismScore <= 70 ? "text-orange-700" : "text-red-700"
-                )}>
-                  {skepticismScore}/100
-                </span>
-              </div>
+              <Badge variant="outline" className={cn("text-sm px-3 py-1", SKEPTICISM_VERDICT_LABELS[skepticismVerdict].color)}>
+                {SKEPTICISM_VERDICT_LABELS[skepticismVerdict].label}
+              </Badge>
             </div>
           </div>
         )}
@@ -627,7 +534,6 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
   // Access findings with fallbacks for backwards compatibility
   const contradictions = data.findings?.contradictions ?? [];
   const dataGaps = data.findings?.dataGaps ?? [];
-  const consistencyScore = data.findings?.consistencyAnalysis?.overallScore ?? data.score?.value ?? 0;
   const summaryAssessment = data.narrative?.summary ?? data.narrative?.keyInsights?.[0] ?? "";
   // Count by severity
   const criticalCount = contradictions.filter(c => c.severity === "CRITICAL").length;
@@ -640,23 +546,6 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
           <div className="flex items-center gap-2">
             <Zap className="h-6 w-6 text-amber-600" />
             <CardTitle className="text-lg">Cohérence & Contradictions</CardTitle>
-          </div>
-          {/* Consistency Score Gauge */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="w-32 h-3 bg-gray-200 rounded-full overflow-hidden">
-                <div
-                  className={cn(
-                    "h-full transition-all duration-500",
-                    consistencyScore >= 80 ? "bg-green-500" :
-                    consistencyScore >= 60 ? "bg-yellow-500" :
-                    consistencyScore >= 40 ? "bg-orange-500" : "bg-red-500"
-                  )}
-                  style={{ width: `${consistencyScore}%` }}
-                />
-              </div>
-            </div>
-            <ScoreBadge score={consistencyScore} size="lg" />
           </div>
         </div>
         <CardDescription>
@@ -684,21 +573,21 @@ const ContradictionDetectorCard = memo(function ContradictionDetectorCard({ data
           </div>
         </div>
 
-        {/* Summary Assessment */}
+        {/* Summary Assessment — tonalité dérivée des comptes de contradictions (observables), plus d'un score */}
         {summaryAssessment && (
           <div className={cn(
             "p-4 rounded-lg border-2",
-            consistencyScore >= 80 ? "bg-green-50 border-green-200" :
-            consistencyScore >= 60 ? "bg-yellow-50 border-yellow-200" :
-            "bg-red-50 border-red-200"
+            criticalCount > 0 ? "bg-red-50 border-red-200" :
+            highCount > 0 ? "bg-yellow-50 border-yellow-200" :
+            "bg-green-50 border-green-200"
           )}>
             <div className="flex items-start gap-2">
-              {consistencyScore >= 80 ? (
-                <CheckCircle className="h-5 w-5 text-green-600 shrink-0" />
-              ) : consistencyScore >= 60 ? (
+              {criticalCount > 0 ? (
+                <XCircle className="h-5 w-5 text-red-600 shrink-0" />
+              ) : highCount > 0 ? (
                 <AlertTriangle className="h-5 w-5 text-yellow-600 shrink-0" />
               ) : (
-                <XCircle className="h-5 w-5 text-red-600 shrink-0" />
+                <CheckCircle className="h-5 w-5 text-green-600 shrink-0" />
               )}
               <p className="text-sm">{summaryAssessment}</p>
             </div>
@@ -1017,7 +906,7 @@ const MemoGeneratorCard = memo(function MemoGeneratorCard({ data }: { data: Memo
 });
 
 // Main Tier 3 Results Component - Synthesis Agents (3 cards: Verdict, Coherence, Memo)
-export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun, resolutionMap, resolutions, onResolve, onUnresolve, isResolving, thesisVerdict, thesisBypass }: Tier3ResultsProps) {
+export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun, resolutionMap, onResolve, onUnresolve, isResolving, thesisVerdict, thesisBypass }: Tier3ResultsProps) {
   const getAgentData = useCallback(<T,>(agentName: string): T | null => {
     const result = results[agentName];
     if (!result?.success || !result.data) return null;
@@ -1029,7 +918,12 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
   const contradictionData = getAgentData<ContradictionDetectorData>("contradiction-detector");
   const memoData = getAgentData<MemoGeneratorData>("memo-generator");
 
-  // Thesis-first meta-gate : masquer le score global si these fragile sans bypass
+  // Dé-scorisation : orientation × solidité (modèle 2 axes verbal), dérivés
+  // par les mêmes sélecteurs score-indépendants que la decision-strip v2.
+  const orientation = useMemo(() => aggregateOrientation(results), [results]);
+  const evidenceSolidity = useMemo(() => aggregateSolidity(results), [results]);
+
+  // Thesis-first meta-gate : masquer l'orientation si these fragile sans bypass
   const fragileThesisVerdicts = new Set(["alert_dominant", "vigilance"]);
   const thesisGated =
     !!thesisVerdict && fragileThesisVerdicts.has(thesisVerdict) && !thesisBypass;
@@ -1040,20 +934,14 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
 
   // Header metrics (simplified — no scenario data)
   const headerMetrics = useMemo(() => {
-    const daSkepticism = devilsData?.findings?.skepticismAssessment != null
-      ? devilsData.findings.skepticismAssessment.score
-      : undefined;
-    const daIsFallback = devilsData?.findings?.skepticismAssessment?.isFallback ?? false;
+    const skepticismVerdict = devilsData?.findings?.skepticismAssessment?.verdict ?? null;
     // Phase A slice A3 — `structuralRisks` (D1) ; severity CRITICAL remplace
     // l'ancien filtre `dealBreakerLevel === "ABSOLUTE"`.
     const criticalStructuralRisksCount = devilsData?.findings?.structuralRisks?.filter(sr => sr.severity === "CRITICAL")?.length ?? 0;
     const contradictions = contradictionData?.findings?.contradictions?.filter(c => c.severity === "CRITICAL" || c.severity === "HIGH")?.length ?? 0;
 
     return {
-      skepticism: daSkepticism ?? null,
-      skepticismSource: daSkepticism != null
-        ? (daIsFallback ? "da-derived" as const : "da" as const)
-        : "none" as const,
+      skepticismVerdict,
       criticalStructuralRisks: criticalStructuralRisksCount,
       contradictions,
     };
@@ -1083,14 +971,11 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
                       Thèse prioritaire
                     </p>
                     <p className="mt-1 text-sm text-red-100">
-                      Score global masqué tant que la thèse reste fragile.
+                      Orientation masquée tant que la thèse reste fragile.
                     </p>
                   </div>
                 ) : (
-                  <>
-                    <div className="text-4xl font-bold text-white">{scorerData.overallScore}<span className="text-xl text-slate-400">/100</span></div>
-                    <VerdictBadge verdict={scorerData.verdict} />
-                  </>
+                  <BadgePair orientation={orientation} solidity={evidenceSolidity} layout="stacked" size="sm" />
                 )}
               </div>
             )}
@@ -1102,7 +987,7 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
               <div className="flex items-start gap-3">
                 <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-300" />
                 <div>
-                  <p className="text-sm font-semibold text-red-100">Score global non applicable</p>
+                  <p className="text-sm font-semibold text-red-100">Orientation non applicable</p>
                   <p className="mt-1 text-sm leading-relaxed text-red-100/90">
                     Le verdict thèse reste prioritaire. Les métriques ci-dessous servent à lire les risques, pas à contourner une thèse jugée fragile.
                   </p>
@@ -1110,37 +995,22 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
               </div>
             </div>
           )}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-            {/* Skepticism Score */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            {/* Skepticism — verbal (dé-scorisé) */}
             <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
               <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Scepticisme</div>
-              {headerMetrics.skepticismSource === "none" ? (
+              {headerMetrics.skepticismVerdict && SKEPTICISM_VERDICT_LABELS[headerMetrics.skepticismVerdict] ? (
                 <>
-                  <div className="text-3xl font-bold text-slate-500">—</div>
-                  <div className="text-xs text-slate-500 mt-1">Donnees indisponibles</div>
+                  <div className="text-2xl font-bold text-white">
+                    {SKEPTICISM_VERDICT_LABELS[headerMetrics.skepticismVerdict].label}
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">Devil&apos;s Advocate</div>
                 </>
               ) : (
-                (() => {
-                  const skepticismValue = headerMetrics.skepticism ?? 0;
-
-                  return (
                 <>
-                  <div className={cn(
-                    "text-3xl font-bold",
-                    skepticismValue <= 30 ? "text-green-400" :
-                    skepticismValue <= 50 ? "text-yellow-400" :
-                    skepticismValue <= 70 ? "text-orange-400" : "text-red-400"
-                  )}>
-                    {skepticismValue}/100
-                  </div>
-                  <div className="text-xs text-slate-400 mt-1">
-                    {headerMetrics.skepticismSource === "da" ? "Devil's Advocate" :
-                     headerMetrics.skepticismSource === "da-derived" ? "Devil's Advocate (estime)" :
-                     "Donnees indisponibles"}
-                  </div>
+                  <div className="text-2xl font-bold text-slate-500">—</div>
+                  <div className="text-xs text-slate-500 mt-1">Données indisponibles</div>
                 </>
-                  );
-                })()
               )}
             </div>
 
@@ -1168,15 +1038,6 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
                 {headerMetrics.criticalStructuralRisks > 0 ? "Risques critiques" : headerMetrics.contradictions > 0 ? "Contradictions" : "Pas de blocage"}
               </div>
             </div>
-
-            {/* Data Reliability */}
-            {scorerData && (
-              <div className="bg-white/10 backdrop-blur rounded-lg p-4 border border-white/10">
-                <div className="text-xs text-slate-300 uppercase tracking-wider mb-1">Fiabilité données</div>
-                <div className="text-3xl font-bold text-white">{scorerData.confidence}%</div>
-                <div className="text-xs text-slate-400 mt-1">Completude des sources</div>
-              </div>
-            )}
           </div>
 
           {/* Recommendation Banner */}
@@ -1201,17 +1062,17 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
 
         {/* Tab 1: Verdict — Scorer (with DA merged) + NoGo if applicable */}
         <TabsContent value="verdict" className="space-y-4 mt-4">
-          {/* Thesis-first meta-gate : masquer score si these fragile sans bypass */}
+          {/* Thesis-first meta-gate : masquer l'orientation si these fragile sans bypass */}
           {thesisGated && (
             <Card className="border-red-300 bg-red-50">
               <CardContent className="py-4">
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
                   <div>
-                    <p className="font-semibold text-red-900 text-sm">Score global non applicable</p>
+                    <p className="font-semibold text-red-900 text-sm">Orientation non applicable</p>
                     <p className="text-xs text-red-800 mt-1 leading-relaxed">
                       La these d&apos;investissement a ete jugee <strong>{thesisVerdict === "alert_dominant" ? "dominee par des signaux d'alerte" : "fragile"}</strong>
-                      {" "}et vous n&apos;avez pas explicitement bypass cette alerte. Le score global est masque
+                      {" "}et vous n&apos;avez pas explicitement bypass cette alerte. L&apos;orientation est masquee
                       pour interdire le faux confort. Consultez la carte These ci-dessus + les points d&apos;alerte.
                     </p>
                   </div>
@@ -1220,7 +1081,7 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
             </Card>
           )}
           {(() => {
-            const showNoGo = scorerData && (scorerData.overallScore ?? 100) < 35 && !thesisGated;
+            const showNoGo = scorerData && scorerData.verdict === "alert_dominant" && !thesisGated;
             return (
               <>
                 <div className="grid gap-4 md:grid-cols-2">
@@ -1228,8 +1089,9 @@ export const Tier3Results = memo(function Tier3Results({ results, totalAgentsRun
                     <SynthesisScorerCard
                       data={scorerData}
                       devilsData={devilsData}
+                      orientation={orientation}
+                      solidity={evidenceSolidity}
                       hideCriticalRisks={!!showNoGo}
-                      resolutions={resolutions}
                       resolutionMap={resolutionMap}
                       onResolve={onResolve}
                       onUnresolve={onUnresolve}

@@ -12,7 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { formatAgentName, formatPercentileShort } from "@/lib/format-utils";
-import { ScoreBadge } from "@/components/shared/score-badge";
 import { ExpandableSection } from "@/components/shared/expandable-section";
 import { GlossaryTerm } from "@/components/shared/glossary-term";
 import { RedFlagsSummary } from "./red-flags-summary";
@@ -71,7 +70,12 @@ import {
   TIER1_SIGNAL_INTENSITY_LABELS,
   TIER1_SIGNAL_INTENSITY_BLOCK_CLASS,
   TIER1_SIGNAL_INTENSITY_BADGE_CLASS,
+  type Tier1SignalIntensityValue,
+  type Orientation,
+  type EvidenceSolidity,
 } from "@/lib/ui-configs";
+import { BadgePair } from "./analysis-v2/atoms/badge-pair";
+import { aggregateOrientation, aggregateSolidity } from "./analysis-v2/lib/solidity-aggregator";
 
 interface ReActMetadata {
   reasoningTrace: ReasoningTrace;
@@ -284,6 +288,66 @@ const Tier1AlertSignalDisplay = memo(function Tier1AlertSignalDisplay({
   );
 });
 
+/**
+ * Dé-scorisation P3 — chip d'intensité verbal en tête de carte agent, en
+ * remplacement de l'ancien `ScoreBadge` (note /100, bannie). Aucune note de
+ * deal restituée : on affiche le signal verbal Tier 1 (`signalIntensity` natif,
+ * fallback read-only sur `alertSignal.recommendation`) avec les mêmes libellés
+ * et classes que `Tier1AlertSignalDisplay` (cf. `ui-configs.ts`).
+ */
+const Tier1SignalChip = memo(function Tier1SignalChip({
+  signalIntensity,
+  recommendation,
+}: {
+  signalIntensity: string | null | undefined;
+  recommendation?: string | null;
+}) {
+  const intensity = resolveTier1SignalIntensity(signalIntensity, recommendation);
+  const label = intensity
+    ? TIER1_SIGNAL_INTENSITY_LABELS[intensity]
+    : ALERT_SIGNAL_LABELS[recommendation ?? ""] ?? "À QUALIFIER";
+  const badgeClass = intensity ? TIER1_SIGNAL_INTENSITY_BADGE_CLASS[intensity] : "bg-muted text-muted-foreground";
+  return (
+    <Badge variant="outline" className={cn("text-xs font-semibold uppercase tracking-wide", badgeClass)}>
+      {label}
+    </Badge>
+  );
+});
+
+/**
+ * Dé-scorisation P3 — résout l'intensité verbale d'une dimension Tier 1 depuis
+ * une donnée agent faiblement typée (certaines, ex. cap-table, n'exposent pas
+ * `signalIntensity`/`alertSignal` au niveau type). Read-only, score-indépendant.
+ */
+function dimensionIntensityOf(data: unknown): Tier1SignalIntensityValue | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as { signalIntensity?: unknown; alertSignal?: { recommendation?: unknown } | null };
+  const signalIntensity = typeof record.signalIntensity === "string" ? record.signalIntensity : null;
+  const recommendation =
+    record.alertSignal && typeof record.alertSignal === "object" && typeof record.alertSignal.recommendation === "string"
+      ? record.alertSignal.recommendation
+      : null;
+  return resolveTier1SignalIntensity(signalIntensity, recommendation);
+}
+
+/**
+ * Dé-scorisation P3 — badge d'intensité verbal pour les listes de dimensions
+ * (résumé Tier 1) à partir d'une intensité déjà résolue. Aucune note restituée.
+ */
+const Tier1IntensityBadge = memo(function Tier1IntensityBadge({
+  intensity,
+}: {
+  intensity: Tier1SignalIntensityValue | null;
+}) {
+  const label = intensity ? TIER1_SIGNAL_INTENSITY_LABELS[intensity] : "Non qualifié";
+  const badgeClass = intensity ? TIER1_SIGNAL_INTENSITY_BADGE_CLASS[intensity] : "bg-muted text-muted-foreground";
+  return (
+    <Badge variant="outline" className={cn("text-xs font-semibold uppercase tracking-wide", badgeClass)}>
+      {label}
+    </Badge>
+  );
+});
+
 // Financial Auditor Card - Rich display
 const FinancialAuditCard = memo(function FinancialAuditCard({
   data,
@@ -318,7 +382,7 @@ const FinancialAuditCard = memo(function FinancialAuditCard({
                 limitations={data.meta?.limitations}
               />
             )}
-            <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
           </div>
         </div>
         {/* Summary */}
@@ -684,7 +748,7 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Background check et complémentarité</CardDescription>
       </CardHeader>
@@ -692,24 +756,6 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
         {/* Summary */}
         {data.narrative?.summary && (
           <p className="text-sm text-muted-foreground">{data.narrative.summary}</p>
-        )}
-
-        {/* Team Composition */}
-        {teamComposition && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
-            <div className="p-2 rounded-lg bg-muted">
-              <div className="text-lg font-bold">{teamComposition.technicalStrength}</div>
-              <div className="text-xs text-muted-foreground">Tech</div>
-            </div>
-            <div className="p-2 rounded-lg bg-muted">
-              <div className="text-lg font-bold">{teamComposition.businessStrength}</div>
-              <div className="text-xs text-muted-foreground">Business</div>
-            </div>
-            <div className="p-2 rounded-lg bg-muted">
-              <div className="text-lg font-bold">{teamComposition.complementarityScore}</div>
-              <div className="text-xs text-muted-foreground">Complémentarité</div>
-            </div>
-          </div>
         )}
 
         {/* Founder Profiles */}
@@ -720,10 +766,6 @@ const TeamInvestigatorCard = memo(function TeamInvestigatorCard({
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-medium">{f.name}</span>
                   <Badge variant="outline">{f.role}</Badge>
-                </div>
-                <div className="flex gap-2 text-xs">
-                  <span>Domain: {f.scores?.domainExpertise ?? 0}/100</span>
-                  <span>Startup XP: {f.scores?.entrepreneurialExperience ?? 0}/100</span>
                 </div>
                 {f.linkedinVerified && (
                   <div className="text-xs text-green-600 mt-1">✓ LinkedIn vérifié</div>
@@ -837,7 +879,7 @@ const CompetitiveIntelCard = memo(function CompetitiveIntelCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Paysage concurrentiel et moat</CardDescription>
       </CardHeader>
@@ -853,15 +895,6 @@ const CompetitiveIntelCard = memo(function CompetitiveIntelCard({
             <div className="flex items-center justify-between mb-1">
               <span className="text-sm font-medium">Moat</span>
               <Badge variant="outline">{moatAnalysis.primaryMoatType?.replace(/_/g, " ")}</Badge>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-2 rounded-full bg-background">
-                <div
-                  className="h-full rounded-full bg-purple-500"
-                  style={{ width: `${moatAnalysis.overallMoatStrength ?? 0}%` }}
-                />
-              </div>
-              <span className="text-sm font-medium">{moatAnalysis.overallMoatStrength ?? 0}/100</span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">{moatAnalysis.moatJustification}</p>
             <Badge variant="outline" className={cn(
@@ -972,32 +1005,10 @@ const DeckForensicsCard = memo(function DeckForensicsCard({
         <div className="p-3 rounded-lg bg-muted">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium">Crédibilité</span>
-            <ScoreBadge score={data.score?.value ?? 0} />
+            <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
           </div>
           <p className="text-sm text-muted-foreground">{data.narrative?.summary}</p>
         </div>
-
-        {/* Narrative Analysis */}
-        {data.findings?.narrativeAnalysis && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
-            <div className="p-2 rounded-lg bg-muted">
-              <div className="text-lg font-bold">{data.findings.narrativeAnalysis.storyCoherence}</div>
-              <div className="text-xs text-muted-foreground">Cohérence</div>
-            </div>
-            {data.findings.deckQuality && (
-              <>
-                <div className="p-2 rounded-lg bg-muted">
-                  <div className="text-lg font-bold">{data.findings.deckQuality.professionalismScore}</div>
-                  <div className="text-xs text-muted-foreground">Professionnalisme</div>
-                </div>
-                <div className="p-2 rounded-lg bg-muted">
-                  <div className="text-lg font-bold">{data.findings.deckQuality.transparencyScore}</div>
-                  <div className="text-xs text-muted-foreground">Transparence</div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
 
         {/* Claim Verification */}
         {Array.isArray(data.findings?.claimVerification) && (
@@ -1104,7 +1115,6 @@ const MarketIntelCard = memo(function MarketIntelCard({
   onShowTrace?: () => void;
 }) {
   const findings = data?.findings;
-  const score = data?.score;
   const narrative = data?.narrative;
   const redFlags = data?.redFlags;
   const timingAssessmentColors: Record<string, string> = {
@@ -1138,7 +1148,7 @@ const MarketIntelCard = memo(function MarketIntelCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data?.signalIntensity} recommendation={data?.alertSignal?.recommendation} />
         </div>
         <CardDescription>Validation TAM / SAM / SOM et timing</CardDescription>
       </CardHeader>
@@ -1269,7 +1279,7 @@ const TechStackDDCard = memo(function TechStackDDCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Stack technique, scalabilité, dette</CardDescription>
       </CardHeader>
@@ -1421,7 +1431,7 @@ const TechOpsDDCard = memo(function TechOpsDDCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Maturité, équipe, sécurité, IP</CardDescription>
       </CardHeader>
@@ -1602,7 +1612,7 @@ const LegalRegulatoryCard = memo(function LegalRegulatoryCard({
               <ReActIndicator reactData={reactData} onShowTrace={onShowTrace} />
             )}
           </div>
-          <ScoreBadge score={data.score?.value ?? 0} size="lg" />
+          <Tier1SignalChip signalIntensity={data.signalIntensity} recommendation={data.alertSignal?.recommendation} />
         </div>
         <CardDescription>Structure juridique et compliance</CardDescription>
       </CardHeader>
@@ -1688,7 +1698,6 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
 
   // v2.0 data extraction
   const findings = isV2 ? data.findings : null;
-  const scoreValue = isV2 ? data.score?.value : data.capTableScore;
   const redFlags = isV2 ? data.redFlags : null;
   const narrative = isV2 ? data.narrative : null;
   const alertSignal = isV2 ? data.alertSignal : null;
@@ -1733,7 +1742,7 @@ const CapTableAuditCard = memo(function CapTableAuditCard({
 
               />
             )}
-            <ScoreBadge score={scoreValue ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={signalIntensity} recommendation={alertSignal?.recommendation} />
           </div>
         </div>
         <CardDescription>Dilution, terms, investisseurs</CardDescription>
@@ -2085,7 +2094,6 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
 }) {
   // v2.0 data extraction
   const findings = data.findings;
-  const scoreValue = data.score?.value;
   const redFlags = data.redFlags ?? [];
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
@@ -2124,7 +2132,7 @@ const GTMAnalystCard = memo(function GTMAnalystCard({
 
               />
             )}
-            <ScoreBadge score={scoreValue ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={signalIntensity} recommendation={alertSignal?.recommendation} />
           </div>
         </div>
         <CardDescription>Go-to-market et efficacité commerciale</CardDescription>
@@ -2461,7 +2469,6 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
 }) {
   // v2.0 data extraction
   const findings = data.findings;
-  const scoreValue = data.score?.value;
   const redFlags = data.redFlags ?? [];
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
@@ -2495,7 +2502,7 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
 
               />
             )}
-            <ScoreBadge score={scoreValue ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={signalIntensity} recommendation={alertSignal?.recommendation} />
           </div>
         </div>
         <CardDescription>Base clients et PMF signals</CardDescription>
@@ -2523,7 +2530,6 @@ const CustomerIntelCard = memo(function CustomerIntelCard({
                 )}>
                   {getEnumLabel(pmf.pmfVerdict, PMF_LABELS)}
                 </Badge>
-                <span className="text-sm font-bold">{pmf.pmfScore}/100</span>
               </div>
             </div>
             <p className="text-xs text-muted-foreground">{pmf.pmfJustification}</p>
@@ -2958,7 +2964,6 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
 }) {
   // v2.0 data extraction
   const findings = data.findings;
-  const scoreValue = data.score?.value;
   const narrative = data.narrative;
   const alertSignal = data.alertSignal;
   const signalIntensity = data.signalIntensity;
@@ -3015,7 +3020,7 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
                 {READINESS_LABELS[tier1Summary.overallReadiness] ?? tier1Summary.overallReadiness.replace(/_/g, " ")}
               </Badge>
             )}
-            <ScoreBadge score={scoreValue ?? 0} size="lg" />
+            <Tier1SignalChip signalIntensity={signalIntensity} recommendation={alertSignal?.recommendation} />
           </div>
         </div>
         <CardDescription>Questions killer, négociation et roadmap DD</CardDescription>
@@ -3052,21 +3057,12 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
               <div className="mt-2 grid grid-cols-3 md:grid-cols-6 gap-1">
                 {tier1Summary.agentsAnalyzed.map((a: {
                   agentName: string;
-                  score: number;
-                  grade: string;
                   criticalRedFlagsCount: number;
                 }, i: number) => (
                   <div key={i} className="p-1 rounded bg-white text-center text-xs">
                     <div className="truncate text-muted-foreground">{a.agentName.replace("-", " ").slice(0, 10)}</div>
-                    <div className={cn(
-                      "font-bold",
-                      a.score >= 80 ? "text-green-600" :
-                      a.score >= 60 ? "text-yellow-600" : "text-red-600"
-                    )}>
-                      {a.grade} ({a.score})
-                    </div>
                     {a.criticalRedFlagsCount > 0 && (
-                      <div className="text-red-600">{a.criticalRedFlagsCount} crit.</div>
+                      <div className="text-red-600 font-bold">{a.criticalRedFlagsCount} crit.</div>
                     )}
                   </div>
                 ))}
@@ -3426,12 +3422,14 @@ const QuestionMasterCard = memo(function QuestionMasterCard({
 
 // Summary View - Top-level digest of all agents (F50)
 const Tier1SummaryView = memo(function Tier1SummaryView({
-  scores,
-  avgScore,
+  dimensions,
+  orientation,
+  solidity,
   results,
 }: {
-  scores: { name: string; score: number; icon: React.ReactNode }[];
-  avgScore: number;
+  dimensions: { name: string; intensity: Tier1SignalIntensityValue | null; icon: React.ReactNode }[];
+  orientation: Orientation | null;
+  solidity: EvidenceSolidity | null;
   results: Record<string, AgentResultWithReAct>;
 }) {
   // Extract top red flags across all agents
@@ -3464,45 +3462,36 @@ const Tier1SummaryView = memo(function Tier1SummaryView({
     return insights.slice(0, 5);
   }, [results]);
 
-  // Extract weakest dimensions
-  const weakestDimensions = useMemo(() => {
-    return [...scores]
-      .filter(s => s.score < 60)
-      .sort((a, b) => a.score - b.score)
+  // Dé-scorisation P3 — dimensions au signal d'alerte le plus marqué (intensité
+  // élevée ou critique), en remplacement de l'ancien tri par note la plus basse.
+  const alertDimensions = useMemo(() => {
+    const rank: Record<string, number> = { critical: 0, high: 1, elevated: 2, low: 3 };
+    return dimensions
+      .filter(d => d.intensity === "critical" || d.intensity === "high")
+      .sort((a, b) => (rank[a.intensity ?? ""] ?? 4) - (rank[b.intensity ?? ""] ?? 4))
       .slice(0, 3);
-  }, [scores]);
+  }, [dimensions]);
 
   return (
     <div className="space-y-4">
-      {/* Score Overview */}
-      <div className="text-center py-4">
-        <div className={cn(
-          "text-5xl font-bold mb-1",
-          avgScore >= 80 ? "text-green-600" :
-          avgScore >= 60 ? "text-yellow-600" : "text-red-600"
-        )}>
-          {avgScore}/100
-        </div>
-        <p className="text-sm text-muted-foreground">Score moyen analyse détaillée</p>
+      {/* Orientation × solidité (modèle 2 axes verbal) — aucune note restituée */}
+      <div className="flex flex-col items-center gap-2 py-4">
+        <BadgePair orientation={orientation} solidity={solidity} size="md" />
+        <p className="text-sm text-muted-foreground">Orientation du signal · solidité des preuves</p>
       </div>
 
-      {/* Weakest Dimensions */}
-      {weakestDimensions.length > 0 && (
+      {/* Dimensions à investiguer en priorité */}
+      {alertDimensions.length > 0 && (
         <div className="p-4 rounded-lg border border-red-200 bg-red-50">
-          <p className="text-sm font-medium text-red-800 mb-2">Points faibles a investiguer</p>
+          <p className="text-sm font-medium text-red-800 mb-2">Dimensions à investiguer en priorité</p>
           <div className="space-y-2">
-            {weakestDimensions.map((dim, i) => (
-              <div key={i} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {dim.icon}
-                  <span className="text-sm">{dim.name}</span>
+            {alertDimensions.map((dim, i) => (
+              <div key={i} className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="shrink-0">{dim.icon}</span>
+                  <span className="text-sm truncate">{dim.name}</span>
                 </div>
-                <Badge variant="outline" className={cn(
-                  "text-xs",
-                  dim.score < 40 ? "bg-red-100 text-red-800" : "bg-yellow-100 text-yellow-800"
-                )}>
-                  {dim.score}/100
-                </Badge>
+                <Tier1IntensityBadge intensity={dim.intensity} />
               </div>
             ))}
           </div>
@@ -3593,36 +3582,26 @@ export const Tier1Results = memo(function Tier1Results({ results, resolutionMap,
     return Object.values(results).filter(r => r._react).length;
   }, [results]);
 
-  // Calculate summary scores
-  const scores = useMemo(() => {
-    const scoreList: { name: string; score: number; icon: React.ReactNode }[] = [];
-    if (financialData) scoreList.push({ name: "Financial", score: financialData.score?.value ?? 0, icon: <DollarSign className="h-4 w-4" /> });
-    if (teamData) scoreList.push({ name: "Team", score: teamData.score?.value ?? 0, icon: <Users className="h-4 w-4" /> });
-    if (competitiveData) scoreList.push({ name: "Competitive", score: competitiveData.score?.value ?? 0, icon: <Target className="h-4 w-4" /> });
-    if (marketData) scoreList.push({ name: "Market", score: marketData.score?.value ?? 0, icon: <Globe className="h-4 w-4" /> });
-    if (techStackData) scoreList.push({ name: "Tech Stack", score: techStackData.score?.value ?? 0, icon: <Server className="h-4 w-4" /> });
-    if (techOpsData) scoreList.push({ name: "Tech Ops", score: techOpsData.score?.value ?? 0, icon: <Shield className="h-4 w-4" /> });
-    if (legalData) scoreList.push({ name: "Legal", score: legalData.score?.value ?? 0, icon: <Scale className="h-4 w-4" /> });
-    if (capTableData) {
-      const capTable = capTableData as {
-        score?: { value?: number };
-        capTableScore?: number;
-      };
-      scoreList.push({
-        name: "Cap Table",
-        score: capTable.score?.value ?? capTable.capTableScore ?? 0,
-        icon: <PieChart className="h-4 w-4" />,
-      });
-    }
-    if (gtmData) scoreList.push({ name: "GTM", score: gtmData.score?.value ?? 0, icon: <Rocket className="h-4 w-4" /> });
-    if (customerData) scoreList.push({ name: "Customer", score: customerData.score?.value ?? 0, icon: <UserCheck className="h-4 w-4" /> });
-    return scoreList;
+  // Dé-scorisation P3 — synthèse verbale par dimension (intensité de signal),
+  // plus aucune note /100. L'orientation × solidité globale est dérivée par les
+  // mêmes agrégateurs score-indépendants que la decision-strip v2 et l'investor-view.
+  const dimensions = useMemo(() => {
+    const list: { name: string; intensity: Tier1SignalIntensityValue | null; icon: React.ReactNode }[] = [];
+    if (financialData) list.push({ name: "Financial", intensity: dimensionIntensityOf(financialData), icon: <DollarSign className="h-4 w-4" /> });
+    if (teamData) list.push({ name: "Team", intensity: dimensionIntensityOf(teamData), icon: <Users className="h-4 w-4" /> });
+    if (competitiveData) list.push({ name: "Competitive", intensity: dimensionIntensityOf(competitiveData), icon: <Target className="h-4 w-4" /> });
+    if (marketData) list.push({ name: "Market", intensity: dimensionIntensityOf(marketData), icon: <Globe className="h-4 w-4" /> });
+    if (techStackData) list.push({ name: "Tech Stack", intensity: dimensionIntensityOf(techStackData), icon: <Server className="h-4 w-4" /> });
+    if (techOpsData) list.push({ name: "Tech Ops", intensity: dimensionIntensityOf(techOpsData), icon: <Shield className="h-4 w-4" /> });
+    if (legalData) list.push({ name: "Legal", intensity: dimensionIntensityOf(legalData), icon: <Scale className="h-4 w-4" /> });
+    if (capTableData) list.push({ name: "Cap Table", intensity: dimensionIntensityOf(capTableData), icon: <PieChart className="h-4 w-4" /> });
+    if (gtmData) list.push({ name: "GTM", intensity: dimensionIntensityOf(gtmData), icon: <Rocket className="h-4 w-4" /> });
+    if (customerData) list.push({ name: "Customer", intensity: dimensionIntensityOf(customerData), icon: <UserCheck className="h-4 w-4" /> });
+    return list;
   }, [financialData, teamData, competitiveData, marketData, techStackData, techOpsData, legalData, capTableData, gtmData, customerData]);
 
-  const avgScore = useMemo(() => {
-    if (scores.length === 0) return 0;
-    return Math.round(scores.reduce((sum, s) => sum + s.score, 0) / scores.length);
-  }, [scores]);
+  const overallOrientation = useMemo(() => aggregateOrientation(results), [results]);
+  const overallSolidity = useMemo(() => aggregateSolidity(results), [results]);
 
   const handleCloseTrace = useCallback(() => {
     setOpenTraceAgent(null);
@@ -3722,26 +3701,22 @@ export const Tier1Results = memo(function Tier1Results({ results, resolutionMap,
                 </Badge>
               )}
             </div>
-            <ScoreBadge score={avgScore} size="lg" />
+            <BadgePair orientation={overallOrientation} solidity={overallSolidity} size="sm" />
           </div>
           <CardDescription>
-            {scores.length} agents exécutés avec succès
+            {dimensions.length} agents exécutés avec succès
             {reactAgentsCount > 0 && " - Cliquez sur les badges ReAct pour voir les traces"}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-5 md:grid-cols-10 gap-2">
-            {scores.map((s, i) => (
-              <div key={i} className="flex flex-col items-center p-2 rounded-lg bg-muted">
-                <div className={cn(
-                  "mb-1",
-                  s.score >= 80 ? "text-green-600" :
-                  s.score >= 60 ? "text-yellow-600" : "text-red-600"
-                )}>
-                  {s.icon}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
+            {dimensions.map((d, i) => (
+              <div key={i} className="flex items-center justify-between gap-3 p-2 rounded-lg bg-muted">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-muted-foreground shrink-0">{d.icon}</span>
+                  <span className="text-sm truncate">{d.name}</span>
                 </div>
-                <span className="text-xs text-muted-foreground">{s.name}</span>
-                <span className="text-sm font-bold">{s.score}</span>
+                <Tier1IntensityBadge intensity={d.intensity} />
               </div>
             ))}
           </div>
@@ -3761,8 +3736,9 @@ export const Tier1Results = memo(function Tier1Results({ results, resolutionMap,
         {/* Summary Tab - F50 */}
         <TabsContent value="summary" className="mt-4">
           <Tier1SummaryView
-            scores={scores}
-            avgScore={avgScore}
+            dimensions={dimensions}
+            orientation={overallOrientation}
+            solidity={overallSolidity}
             results={results}
           />
         </TabsContent>

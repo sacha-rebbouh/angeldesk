@@ -6,9 +6,9 @@
  */
 
 import React from "react";
-import { Page, View, Text, Svg, Circle, Path } from "@react-pdf/renderer";
+import { Page, View, Text } from "@react-pdf/renderer";
 import { colors, spacing, styles } from "./pdf-theme";
-import { formatValue, scoreColor, severityColor, severityBgColor } from "./pdf-helpers";
+import { formatValue, severityColor, severityBgColor } from "./pdf-helpers";
 
 // ---------------------------------------------------------------------------
 // PdfPage — Wrapper with header/footer
@@ -322,141 +322,6 @@ export function SeverityBadge({ severity }: { severity: string }) {
       <Text style={{ fontSize: 7, fontWeight: 600, color: fg }}>
         {label}
       </Text>
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ScoreCircle — SVG circle with colored arc + score center
-// ---------------------------------------------------------------------------
-
-export function ScoreCircle({
-  score,
-  size = 60,
-}: {
-  score: number;
-  size?: number;
-}) {
-  const r = (size - 6) / 2;
-  const cx = size / 2;
-  const cy = size / 2;
-  const progress = Math.min(Math.max(score, 0), 100) / 100;
-  const color = scoreColor(score);
-
-  // Build SVG arc path for the progress
-  const startAngle = -90;
-  const endAngle = startAngle + 360 * progress;
-  const startRad = (startAngle * Math.PI) / 180;
-  const endRad = (endAngle * Math.PI) / 180;
-  const x1 = cx + r * Math.cos(startRad);
-  const y1 = cy + r * Math.sin(startRad);
-  const x2 = cx + r * Math.cos(endRad);
-  const y2 = cy + r * Math.sin(endRad);
-  const largeArc = progress > 0.5 ? 1 : 0;
-
-  return (
-    <View style={{ width: size, height: size + 14, alignItems: "center" }}>
-      <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {/* Background circle */}
-        <Circle
-          cx={cx}
-          cy={cy}
-          r={r}
-          stroke={colors.border}
-          strokeWidth={3}
-          fill="none"
-        />
-        {/* Progress arc */}
-        {progress > 0 && (
-          <Path
-            d={`M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`}
-            stroke={color}
-            strokeWidth={3}
-            strokeLinecap="round"
-            fill="none"
-          />
-        )}
-      </Svg>
-      {/* Score text overlay */}
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: size,
-          height: size,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <Text
-          style={{
-            fontSize: size * 0.35,
-            fontWeight: 700,
-            color,
-          }}
-        >
-          {score}
-        </Text>
-        <Text style={{ fontSize: size * 0.13, color: colors.muted }}>
-          /100
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// ScoreBar — Horizontal progress bar
-// ---------------------------------------------------------------------------
-
-export function ScoreBar({
-  score,
-  label,
-  showValue = true,
-}: {
-  score: number;
-  label?: string;
-  showValue?: boolean;
-}) {
-  const color = scoreColor(score);
-  const pct = Math.min(Math.max(score, 0), 100);
-
-  return (
-    <View style={{ marginBottom: 4 }}>
-      {label && (
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 2,
-          }}
-        >
-          <Text style={{ fontSize: 8, color: colors.text }}>{label}</Text>
-          {showValue && (
-            <Text style={{ fontSize: 8, fontWeight: 600, color }}>
-              {score}/100
-            </Text>
-          )}
-        </View>
-      )}
-      <View
-        style={{
-          height: 6,
-          backgroundColor: colors.bgLight,
-          borderRadius: 3,
-          overflow: "hidden",
-        }}
-      >
-        <View
-          style={{
-            width: `${pct}%`,
-            height: 6,
-            backgroundColor: color,
-            borderRadius: 3,
-          }}
-        />
-      </View>
     </View>
   );
 }

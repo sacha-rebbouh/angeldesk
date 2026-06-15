@@ -32,9 +32,9 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
     <section id="these" className="flex scroll-mt-44 flex-col gap-5">
       <header className="flex flex-col gap-1">
         <span className="av-eyebrow">Section 2</span>
-        <h2 className="av-h2">Thèse de l'investisseur</h2>
+        <h2 className="av-h2">Thèse de l&apos;investisseur</h2>
         <p className="av-note">
-          Reformulation de la thèse, hypothèses porteuses et alertes structurelles. Le statut "réconcilié" indique si
+          Reformulation de la thèse, hypothèses porteuses et alertes structurelles. Le statut &laquo;&nbsp;réconcilié&nbsp;&raquo; indique si
           la thèse a été confrontée aux résultats des agents.
         </p>
       </header>
@@ -55,7 +55,7 @@ export function ThesisSection({ model }: { model: ThesisSectionModel }) {
 
       {model.cards.length === 0 ? (
         <PartialBanner tone="info" title="Aucune thèse enregistrée">
-          Le module thèse n'a pas produit de contenu pour ce dossier.
+          Le module thèse n&apos;a pas produit de contenu pour ce dossier.
         </PartialBanner>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">

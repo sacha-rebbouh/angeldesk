@@ -1,0 +1,40 @@
+{
+  "startedAt": "2026-05-18T11:28:40.585Z",
+  "finishedAt": "2026-05-18T11:28:46.949Z",
+  "durationMs": 6364,
+  "args": {
+    "dealId": null,
+    "all": true,
+    "limit": 1,
+    "maxCandidates": 1,
+    "dryRun": true,
+    "onlyCompleted": true,
+    "since": null,
+    "force": false,
+    "summaryOut": "/Users/sacharebbouh/Desktop/angeldesk/docs-private/backfills/evidence-signals-2026-05-18T11-28-40-585Z.json"
+  },
+  "totals": {
+    "candidates": 1,
+    "skipped": 1,
+    "processed": 0,
+    "wouldProcess": 0,
+    "failed": 0,
+    "limitReached": false,
+    "signalsPersisted": 0,
+    "signalsDeduplicated": 0,
+    "claimsPersisted": 0,
+    "claimsDeduplicated": 0,
+    "attachmentsLinked": 0
+  },
+  "perDoc": [
+    {
+      "documentId": "cmmmdh8n80009v8g9387fulou",
+      "documentName": "FUR LOVE SAFE ROUND €400k  (1)_compressed.pdf",
+      "dealId": "cmmmdf1wu0007v8g91a29764y",
+      "processingStatus": "COMPLETED",
+      "decision": "skipped",
+      "skipReason": "no_terminal_extraction_run",
+      "latestRunId": null
+    }
+  ]
+}
