@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P6.2 — replay durable stepwise old/new snapshots (byte-equiv)
+
+### Fichiers
+- `src/agents/orchestrator/__tests__/p5-descoring-durability-replay.test.ts` (NOUVEAU) : test d'intégration durabilité × lecture scoreless.
+
+### Description
+**Chantier dé-scorisation, P6.2 (gaté Codex APPROVE, sans REQUEST_CHANGES) — test-only.** Prouve la durabilité de la dé-scorisation **à travers la frontière du snapshot stepwise**, en composant deux propriétés déjà testées séparément (`full-analysis-snapshot.test.ts` round-trip byte-préservant ; `signal-profile.test.ts` lecture old/new + poisoned-score). Construit un `FullAnalysisStepState` (base v4 valide) avec un résultat `synthesis-deal-scorer`, le passe par le chemin durable RÉEL (`serializeStepState` → `deserializeStepState`), puis le lit par le chemin de production (`readDoctrineOrientation`). **3 scénarios** : (1) snapshot ANCIEN portant `overallScore=91` + `verdict alert_dominant` → après round-trip le score est préservé (carry) mais l'orientation vient du verdict catégoriel (`legacy_verdict`, alerte), jamais du score (assertion **poisoned-score** explicite : 91 aurait suggéré favorable) ; `scrubAllScoresForLLMContext` retire la note du résultat round-trippé ; (2) snapshot NOUVEAU scoreless (`signalProfile`) → source `profile`, aucun overallScore ; (3) **TEETH** : synthesis portant QUE `overallScore` (sans verdict ni profil) → orientation `none` (jamais dérivée d'un score). Non-redondant : la nouveauté est le round-trip durable AVANT lecture. tsc 0 ; suite unit complète 4538 passed / 9 skipped / 0 failed (4531 + 7).
+
+---
 ## 2026-06-15 — Dé-scorisation — P6.1 — source-guard structurel anti-régression (schema + types agents)
 
 ### Fichiers
@@ -325,16 +334,5 @@ Reader de note de deal entièrement orphelin (grep `score-utils` / `extractDealS
 
 ### Description
 Le cluster analysis-panel ne restitue plus aucune note de deal (delta de note + timeline de note supprimés). **Gate Codex APPROVE** (aucun nit) : ne pas inventer de delta verbal local est le bon choix (réservé au modèle dédié `analysis-delta`), cascade `thesisGated`/`resolutions` saine, `resolutionMap` préservé. Composants devenus orphelins laissés sur disque (Karpathy, préexistants, signalés) : `delta-indicator.tsx` (plus aucun consumer) et `adjusted-score-badge.tsx` (orphelin depuis l'étape SuiviDD). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; suite unit complète 4509 passed / 9 skipped / 0 failed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 5/N — SuiviDD (onglet Suivi DD) scoreless
-
-### Fichiers
-- `src/components/deals/suivi-dd/suivi-dd-dashboard.tsx` : le dashboard SuiviDD affichait `AdjustedScoreBadge` (note de deal originale ajustée par les résolutions = note de deal restituée, bannie). Retrait du badge + import. Les props `currentScore` et `resolutions` (qui n'existaient que pour ce badge) supprimées ; import de type `AlertResolution` devenu inutile retiré ; div header droit vide retiré. La progression DD reste rendue par la barre (alertes traitées/total + %) et les compteurs de sévérité (OBSERVABLES).
-- `src/components/deals/suivi-dd/suivi-dd-tab.tsx` : prop `currentScore` retirée ; prop `resolutions` retirée (ne servait qu'à forwarder vers le dashboard ; `resolutionMap`, distinct, reste consommé par `useUnifiedAlerts`).
-- `src/components/deals/analysis-panel.tsx` : ne passe plus `currentScore` ni `resolutions` à `SuiviDDTab` (garde encore `currentScore` pour `DeltaIndicator` + `resolutions` pour `Tier3Results`, traités à l'étape suivante).
-
-### Description
-L'onglet Suivi DD ne restitue plus aucune note de deal. **Gate Codex APPROVE** (aucun nit) : cascade de props correcte, `resolutionMap` préservé, métriques restantes (progression, %, compteurs sévérité, réponses) toutes observables. `AdjustedScoreBadge` n'a plus aucun consumer (tier3-results l'a retiré cette session) → composant préexistant laissé sur disque (Karpathy), signalé. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests deals 521 passed.
 
 ---
