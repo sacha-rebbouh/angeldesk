@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — UX — durée d'analyse en wall-clock (carte « Couverture » affichait « 0 min »)
+
+### Fichiers
+- `src/lib/analysis-duration.ts` (NOUVEAU) : `resolveAnalysisDurationMs(startedAt, completedAt, totalTimeMs)` — préfère le wall-clock `completedAt − startedAt`, fallback `totalTimeMs`.
+- `src/lib/__tests__/analysis-duration.test.ts` (NOUVEAU) : 5 tests (cas avekapeti 41 min, fallback, intervalles non positifs, null).
+- `src/components/deals/analysis-v2/lib/selectors.ts` : `extractDealHeader` calcule `totalDurationMin` via le helper ; `startedAt?` ajouté à `extractDealHeader` / `buildDecisionStripModel` / `buildAnalysisV2ViewModel`.
+- `src/app/(dashboard)/deals/[dealId]/page.tsx` + `.../analysis-preview/avekapeti-v2/page.tsx` : `startedAt` ajouté au `select` Prisma + passé au view model.
+
+### Description
+**Fix UX (trouvé par Sacha pendant le re-test E2E — « pourquoi ça dit 0 min ? »).** La carte « Couverture » affichait `Analyse complète · 0 min` pour une analyse de **41 min** (wall-clock `startedAt`→`completedAt`). Cause : la durée était dérivée de `analysis.totalTimeMs`, qui en mode **stepwise/durable** ne capture que la durée de la **dernière invocation Inngest** (`report.duration` ≈ 5 s ; l'orchestrateur est ré-instancié à chaque step → jamais le temps total écoulé). Fix display-side (sûr, corrige aussi les analyses historiques) : préférer le wall-clock. `totalTimeMs` est purement un champ d'affichage (le coût = `totalCost`, séparé). **RESTE (même bug `totalTimeMs`, follow-up trivial via le même helper)** : `analysis-memo-full.tsx` + `analysis-investor-view.tsx` (reçoivent `totalTimeMs` en prop → à étendre `startedAt`/`completedAt`). Fix UI cosmétique (skip gate Codex per routing UI). tsc 0 ; suite unit complète 4553 passed / 9 skipped / 0 failed (4548 + 5 helper).
+
+---
 ## 2026-06-15 — UX — masque d'analyse affiché dès le clic (fix latence ~30s)
 
 ### Fichiers
@@ -326,14 +338,5 @@ Décision produit Sacha (AskUserQuestion, Q1 overview) : remplacer le score grid
 
 ### Description
 Décision produit Sacha (AskUserQuestion, Q2 listes) : remplacer la note de deal des listes par un **compteur de signaux d'alerte**. Le nouveau badge montre le **total** (toutes sévérités) pour coller à la formulation « N signaux dont M critiques » ; les 3 surfaces affichent **déjà** ailleurs un compteur CRITICAL+HIGH (colonne « Alertes » desktop + tooltip, footers mobile/kanban) → total vs critique = deux lectures distinctes. **Gate Codex APPROVE** (« maintien séparé Signaux total / Alertes critique acceptable, colле à la décision produit » ; nit comment stale corrigé). Plus aucune note de deal (`deal.globalScore`) restituée dans les listes. `score-badge.tsx` devient probablement orphelin (à confirmer/retirer en étape D composants partagés). tsc 0 ; eslint clean ; doctrine guards 40 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 11/N (C4) — tier1-results.tsx : cleanup vars mortes (clôt le fichier)
-
-### Fichiers
-- `src/components/deals/tier1-results.tsx` : retrait des 4 variables mortes `scoreValue` (cartes cap-table, gtm, customer, question-master), rendues inutiles par l'étape C1 (remplacement du `ScoreBadge` de tête par `Tier1SignalChip`). Aucune autre logique touchée.
-
-### Description
-Étape 4/4 (cleanup) qui **clôt le chantier tier1-results.tsx** (C1 chips de tête, C2 sous-scores par dimension, C3 résumé agrégé scoreless, C4 cleanup). Plus aucune note de deal restituée dans le fichier (vérifié : zéro `/100` hors commentaires, zéro `ScoreBadge`, zéro grade A-F, zéro sous-score d'appréciation ; allowlist conservée = métriques observables + confiances par item). Warning eslint `hiddenCriticalCount` **préexistant** (présent dès le HEAD pré-session `6796cca`, non induit) laissé en place par principe Karpathy. **Gate Codex APPROVE** (cleanup pur confirmé). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 54 passed.
 
 ---
