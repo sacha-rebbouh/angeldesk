@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P5-b.2 — purge ConditionsAnalystData.score (Option B, cast Record legacy)
+
+### Fichiers
+- `src/agents/types.ts` : `ConditionsAnalystData` — `score?: AgentScore` retiré + commentaire P5-b.
+- `src/agents/type-modules/tier3.ts` : `ConditionsAnalystData` (one-liner) — idem.
+- `src/services/terms-normalization.ts` : fallback legacy `conditionsBreakdown` — lecture `score.breakdown` (criterion + justification) passée d'un accès typé à un cast `Record` étroit.
+
+### Description
+**Chantier dé-scorisation, P5-b.2 (gaté Codex APPROVE, Option B arbitrée — sans REQUEST_CHANGES).** Purge du champ de note `score` côté conditions. **Fork de périmètre tranché par Codex** : `ConditionsAnalystData.score` avait UN lecteur typé vivant (le fallback legacy `terms-normalization.ts` qui lit `score.breakdown` criterion/justification pour les snapshots conditions pré-P4). Option B retenue (vs A garder le champ / C drop le fallback) : retirer le champ du type + lire le fallback via cast `Record` étroit → compat snapshot historique préservée (libellés qualitatifs, jamais value/grade), runtime byte-équivalent. Producteur n'émet plus de `score` top-level depuis P4-b2 ; seuls `trancheAssessments[].score` (LARGE-différé) subsistent. `AgentScore` import non orphelin (ContradictionDetector/DevilsAdvocate). **Pas de bump `STEPWISE_GRAPH_VERSION`** (purge de type, bytes runtime inchangés). **P5-b COMPLET** (b.1 synthèse + b.2 conditions). tsc 0 (lu directement) ; suite unit complète 4502 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-15 — Dé-scorisation — P5-b.1 — purge des champs de note du type SynthesisDealScorerData (synthèse)
 
 ### Fichiers
@@ -323,14 +334,5 @@ La Vue investisseur ne restitue plus aucune note de deal ni orientation dérivé
 
 ### Description
 tier2-results.tsx ne restitue plus aucun sous-score sectoriel (grep `sectorScore`/`ScoreBadge`/`/25`/`scoreBreakdown` = 0). **Gate Codex APPROVE** (aucun nit). Conservé (allowlist, métriques OBSERVABLES) : `valuation.percentilePosition` (percentile de la valorisation dans la distribution secteur = benchmark de marché, confirmé Codex), multiples de valo, `VALUATION_VERDICT_CONFIG` (verbal), unit economics observables, `verdict.confidence` par item (qualitatif). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests deals 434 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 2/N — tier3-results.tsx entièrement scoreless
-
-### Fichiers
-- `src/components/deals/tier3-results.tsx` : suite du keystone (modèle BadgePair gaté APPROVE). (1) `SynthesisScorerCard` header : « Score Final » → « Verdict de synthèse », `VerdictBadge`+`ScoreBadge`+`AdjustedScoreBadge` → `BadgePair(orientation, solidity)` (props). (2) bloc « Scores par dimension » (`dimensionScores[].score` /100) supprimé. (3) bloc « Comparative Ranking » supprimé (`percentileOverall`/`percentileSector` = percentiles DE SCORE bannis) + caveat + vars dérivées mortes. (4) scepticisme /100 (hero tile + card bar) → verdict VERBAL `skepticismAssessment.verdict` via `SKEPTICISM_VERDICT_LABELS`. (5) tuile « Fiabilité données » (`scorerData.confidence`%) supprimée (doctrine rejette « Confiance » comme axe → solidité de la BadgePair) ; grille hero 3→2 cols. (6) `ContradictionDetectorCard` : jauge « Consistency Score » /100 + ScoreBadge supprimées ; tonalité de l'encart résumé re-dérivée des comptes de contradictions (`criticalCount`/`highCount`, observables). (7) `showNoGo` : `overallScore < 35` (score-based, flaggé Codex) → `verdict === "alert_dominant"`. (8) wordings « Score global non applicable/masqué » → « Orientation non applicable/masquée ». (9) dead-code induit retiré : `VerdictBadge`, imports `VERDICT_CONFIG`/`ScoreBadge`/`AdjustedScoreBadge`, prop `resolutions` du card.
-
-### Description
-tier3-results.tsx ne restitue plus AUCUNE note de deal (grep `overallScore`/`/100`/`percentile`/`dimensionScores`/`ScoreBadge` = 0 hors commentaire). Remplacements verbaux score-indépendants. **Gate Codex APPROVE** ; nits non bloquants appliqués (casts inline du verdict scepticisme retirés — `DevilsAdvocateData.skepticismAssessment.verdict` est typé ; commentaires « masquer score » → « masquer l'orientation »). Nit différé : `Tier3ResultsProps.resolutions` reste déclaré + passé par `analysis-panel.tsx` mais inutilisé → sera retiré au micro-step analysis-panel. Conservé (allowlist) : counts observables (contradictions/risques), `RecommendationBadge` (verbal), `narrative.summary`. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests deals+signal-profile+analysis-v2 551 passed.
 
 ---
