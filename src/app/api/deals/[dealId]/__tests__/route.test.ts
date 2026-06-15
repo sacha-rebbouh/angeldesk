@@ -97,11 +97,6 @@ describe("/api/deals/[dealId]", () => {
       instrument: "SAFE",
       geography: "France",
       description: "Canonical tagline",
-      globalScore: 91,
-      teamScore: 83,
-      marketScore: 79,
-      productScore: 77,
-      financialsScore: 75,
     });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({
@@ -155,11 +150,6 @@ describe("/api/deals/[dealId]", () => {
       instrument: "EQUITY",
       geography: "Legacy Geography",
       description: "Legacy description",
-      globalScore: 11,
-      teamScore: 12,
-      marketScore: 13,
-      productScore: 14,
-      financialsScore: 15,
       founders: [],
       documents: [],
       redFlags: [],
@@ -186,11 +176,6 @@ describe("/api/deals/[dealId]", () => {
       instrument: "SAFE",
       geography: "France",
       description: "Canonical tagline",
-      globalScore: 91,
-      teamScore: 83,
-      marketScore: 79,
-      productScore: 77,
-      financialsScore: 75,
     });
   });
 
@@ -213,11 +198,6 @@ describe("/api/deals/[dealId]", () => {
       instrument: "EQUITY",
       geography: "Legacy Geography",
       description: "Legacy description",
-      globalScore: 11,
-      teamScore: 12,
-      marketScore: 13,
-      productScore: 14,
-      financialsScore: 15,
       founders: [],
       documents: [],
       redFlags: [],

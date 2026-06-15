@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mocks the DB + blob deps so we can exercise loadCanonicalDealSignals' new
 // denormalized read path: cache HIT must skip loadResults entirely; cache MISS
 // must self-correct (loadResults + re-upsert) and yield the SAME resolved
-// signals as a hit — otherwise users would see different scores depending on
+// signals as a hit — otherwise users would see different signals depending on
 // cache warmth.
 const mocks = vi.hoisted(() => ({
   prisma: {
@@ -54,14 +54,6 @@ const RESULTS = {
   },
 };
 
-const SCORES = {
-  globalScore: 82,
-  teamScore: 88,
-  marketScore: 75,
-  productScore: 79.5,
-  financialsScore: 70,
-};
-
 const EXTRACTED = {
   sector: "Fintech",
   stage: "SEED",
@@ -93,7 +85,7 @@ describe("loadCanonicalDealSignals — denormalized read-model", () => {
 
   it("reads canonical signals from the cache without loading results (hit)", async () => {
     mocks.prisma.analysisSignalSummary.findMany.mockResolvedValue([
-      { analysisId: "an_1", ...SCORES, ...EXTRACTED },
+      { analysisId: "an_1", ...EXTRACTED },
     ]);
 
     const signals = await loadCanonicalDealSignals(["deal_1"]);
@@ -105,7 +97,6 @@ describe("loadCanonicalDealSignals — denormalized read-model", () => {
     );
     expect(mocks.loadResults).not.toHaveBeenCalled();
     expect(mocks.prisma.analysisSignalSummary.upsert).not.toHaveBeenCalled();
-    expect(signals.analysisScoresByDealId.get("deal_1")).toEqual(SCORES);
     expect(signals.extractedInfoByDealId.get("deal_1")).toEqual(EXTRACTED);
   });
 
@@ -121,7 +112,6 @@ describe("loadCanonicalDealSignals — denormalized read-model", () => {
       expect.objectContaining({ where: { analysisId: "an_1" } })
     );
     // Equivalence with the hit path above — same resolved signals.
-    expect(signals.analysisScoresByDealId.get("deal_1")).toEqual(SCORES);
     expect(signals.extractedInfoByDealId.get("deal_1")).toEqual(EXTRACTED);
   });
 
@@ -136,7 +126,6 @@ describe("loadCanonicalDealSignals — denormalized read-model", () => {
     const signals = await loadCanonicalDealSignals(["deal_1"]);
 
     expect(mocks.loadResults).toHaveBeenCalledWith("an_1");
-    expect(signals.analysisScoresByDealId.get("deal_1")).toEqual(SCORES);
     expect(signals.extractedInfoByDealId.get("deal_1")).toEqual(EXTRACTED);
     expect(mocks.logger.warn).toHaveBeenCalled();
   });
@@ -149,7 +138,7 @@ describe("loadCanonicalDealSignals — denormalized read-model", () => {
     const signals = await loadCanonicalDealSignals(["deal_1"]);
 
     // Best-effort: the failed upsert is swallowed, the read still returns signals.
-    expect(signals.analysisScoresByDealId.get("deal_1")).toEqual(SCORES);
+    expect(signals.extractedInfoByDealId.get("deal_1")).toEqual(EXTRACTED);
     expect(mocks.logger.warn).toHaveBeenCalled();
   });
 });

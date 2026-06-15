@@ -6,7 +6,6 @@ import {
   getCurrentFactString,
   pickCanonicalAnalysis,
   resolveCanonicalDealFields,
-  resolveCanonicalAnalysisScores,
   type CanonicalDealSignals,
 } from "@/services/deals/canonical-read-model";
 
@@ -91,42 +90,6 @@ describe("canonical-read-model", () => {
     expect(selected?.id).toBe("analysis_official");
   });
 
-  it("hides legacy score fallback when a latest thesis exists without canonical analysis", () => {
-    const signals: CanonicalDealSignals = {
-      latestThesisByDealId: new Map([
-        [
-          "deal_1",
-          {
-            id: "thesis_active",
-            dealId: "deal_1",
-            verdict: "favorable",
-            corpusSnapshotId: "snap_active",
-          },
-        ],
-      ]),
-      selectedAnalysisByDealId: new Map([["deal_1", null]]),
-      analysisScoresByDealId: new Map([["deal_1", null]]),
-      extractedInfoByDealId: new Map([["deal_1", null]]),
-      factMapByDealId: new Map([["deal_1", new Map()]]),
-    };
-
-    const scores = resolveCanonicalAnalysisScores("deal_1", signals, {
-      globalScore: 88,
-      teamScore: 80,
-      marketScore: 79,
-      productScore: 78,
-      financialsScore: 77,
-    });
-
-    expect(scores).toEqual({
-      globalScore: null,
-      teamScore: null,
-      marketScore: null,
-      productScore: null,
-      financialsScore: null,
-    });
-  });
-
   it("reads canonical fact values from the fact map", () => {
     const factMap = new Map([
       ["company.name", makeCurrentFact("company.name", "Canonical Co", "Canonical Co")],
@@ -141,18 +104,6 @@ describe("canonical-read-model", () => {
     const signals: CanonicalDealSignals = {
       latestThesisByDealId: new Map(),
       selectedAnalysisByDealId: new Map(),
-      analysisScoresByDealId: new Map([
-        [
-          "deal_1",
-          {
-            globalScore: 91,
-            teamScore: 83,
-            marketScore: 79,
-            productScore: 77,
-            financialsScore: 75,
-          },
-        ],
-      ]),
       extractedInfoByDealId: new Map([
         [
           "deal_1",
@@ -211,11 +162,6 @@ describe("canonical-read-model", () => {
         instrument: "EQUITY",
         geography: "Legacy Geography",
         description: "Legacy description",
-        globalScore: 11,
-        teamScore: 12,
-        marketScore: 13,
-        productScore: 14,
-        financialsScore: 15,
       })
     ).toMatchObject({
       companyName: "Canonical Co",
@@ -226,11 +172,6 @@ describe("canonical-read-model", () => {
       instrument: "EQUITY",
       geography: "EMEA",
       description: "Fact tagline",
-      globalScore: 91,
-      teamScore: 83,
-      marketScore: 79,
-      productScore: 77,
-      financialsScore: 75,
     });
   });
 });

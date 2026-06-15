@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   loadCanonicalDealSignals: vi.fn(),
   getCurrentFactString: vi.fn(),
   getCurrentFactNumber: vi.fn(),
-  resolveCanonicalAnalysisScores: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -40,7 +39,6 @@ vi.mock("@/services/deals/canonical-read-model", () => ({
   loadCanonicalDealSignals: mocks.loadCanonicalDealSignals,
   getCurrentFactString: mocks.getCurrentFactString,
   getCurrentFactNumber: mocks.getCurrentFactNumber,
-  resolveCanonicalAnalysisScores: mocks.resolveCanonicalAnalysisScores,
 }));
 
 const { GET, POST } = await import("../route");
@@ -61,11 +59,6 @@ describe("GET /api/deals", () => {
         growthRate: 12,
         amountRequested: 100000,
         valuationPre: 1500000,
-        globalScore: 11,
-        teamScore: 12,
-        marketScore: 13,
-        productScore: 14,
-        financialsScore: 15,
         founders: [],
         documents: [],
         redFlags: [],
@@ -83,13 +76,6 @@ describe("GET /api/deals", () => {
       .mockReturnValueOnce(88)
       .mockReturnValueOnce(250_000)
       .mockReturnValueOnce(9_000_000);
-    mocks.resolveCanonicalAnalysisScores.mockReturnValue({
-      globalScore: 91,
-      teamScore: 83,
-      marketScore: 79,
-      productScore: 77,
-      financialsScore: 75,
-    });
     mocks.handleApiError.mockImplementation((error: unknown) => {
       throw error;
     });
@@ -111,11 +97,6 @@ describe("GET /api/deals", () => {
       growthRate: 88,
       amountRequested: 250_000,
       valuationPre: 9_000_000,
-      globalScore: 91,
-      teamScore: 83,
-      marketScore: 79,
-      productScore: 77,
-      financialsScore: 75,
     });
     expect(payload.pagination).toMatchObject({
       page: 1,

@@ -9,7 +9,6 @@ import {
   getCurrentFactNumber,
   getCurrentFactString,
   loadCanonicalDealSignals,
-  resolveCanonicalAnalysisScores,
 } from "@/services/deals/canonical-read-model";
 import {
   GROWTH_RATE_MAX,
@@ -64,6 +63,15 @@ export async function GET(request: NextRequest) {
       prisma.deal.count({ where }),
       prisma.deal.findMany({
         where,
+        // P5 dé-scorisation : ne pas charger les colonnes de note (drop = P5-c)
+        omit: {
+          globalScore: true,
+          fundamentalsScore: true,
+          teamScore: true,
+          marketScore: true,
+          productScore: true,
+          financialsScore: true,
+        },
         include: {
           founders: {
             select: {
@@ -106,13 +114,6 @@ export async function GET(request: NextRequest) {
 
     const canonicalDeals = deals.map((deal) => {
       const factMap = signals.factMapByDealId.get(deal.id) ?? new Map();
-      const scores = resolveCanonicalAnalysisScores(deal.id, signals, {
-        globalScore: deal.globalScore,
-        teamScore: deal.teamScore,
-        marketScore: deal.marketScore,
-        productScore: deal.productScore,
-        financialsScore: deal.financialsScore,
-      });
 
       return {
         ...deal,
@@ -131,11 +132,6 @@ export async function GET(request: NextRequest) {
         valuationPre:
           getCurrentFactNumber(factMap, "financial.valuation_pre") ??
           (deal.valuationPre != null ? Number(deal.valuationPre) : null),
-        globalScore: scores.globalScore,
-        teamScore: scores.teamScore,
-        marketScore: scores.marketScore,
-        productScore: scores.productScore,
-        financialsScore: scores.financialsScore,
       };
     });
 

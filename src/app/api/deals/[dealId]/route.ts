@@ -55,11 +55,6 @@ function normalizeDealDetail(deal: {
   instrument: string | null;
   geography: string | null;
   description: string | null;
-  globalScore: number | null;
-  teamScore: number | null;
-  marketScore: number | null;
-  productScore: number | null;
-  financialsScore: number | null;
   documents?: Array<{ storageUrl?: string | null } & Record<string, unknown>>;
 }) {
   return loadCanonicalDealSignals([deal.id]).then((signals) => ({
@@ -78,11 +73,6 @@ function normalizeDealDetail(deal: {
       instrument: deal.instrument,
       geography: deal.geography,
       description: deal.description,
-      globalScore: deal.globalScore,
-      teamScore: deal.teamScore,
-      marketScore: deal.marketScore,
-      productScore: deal.productScore,
-      financialsScore: deal.financialsScore,
     }),
   }));
 }
@@ -105,6 +95,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
       where: {
         id: dealId,
         userId: user.id,
+      },
+      // P5 dé-scorisation : ne pas charger les colonnes de note (drop = P5-c)
+      omit: {
+        globalScore: true,
+        fundamentalsScore: true,
+        teamScore: true,
+        marketScore: true,
+        productScore: true,
+        financialsScore: true,
       },
       include: {
         founders: {
