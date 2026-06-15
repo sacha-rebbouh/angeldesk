@@ -799,16 +799,15 @@ export async function processAgentResult(
     // Le drop des colonnes Deal.*Score + le nettoyage des readers (CLUSTER) = P5.
 
     case "conditions-analyst": {
-      // Persist full analysis cache. Chantier P4 — conditions-analyst ne
-      // produit plus de note de deal ; `conditionsScore` est neutralisé
-      // (colonne droppée en P5).
+      // Persist full analysis cache. Chantier dé-scorisation — conditions-analyst
+      // ne produit plus de note de deal ; `conditionsScore` n'est plus écrit
+      // (colonne droppée en P5-c).
       const caResult = result as AgentResult & {
         data?: { [key: string]: unknown };
       };
       await prisma.deal.update({
         where: { id: dealId },
         data: {
-          conditionsScore: null,
           conditionsAnalysis: caResult.data
             ? (caResult.data as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,

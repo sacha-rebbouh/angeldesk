@@ -52,8 +52,7 @@ async function getDeal(dealId: string, userId: string) {
       id: dealId,
       userId,
     },
-    // P5 dé-scorisation : ne pas charger les colonnes de note global/dimension
-    // (conditionsScore reste lu pour l'onglet Conditions → retiré en P5-a.3 ; drop = P5-c)
+    // P5 dé-scorisation : ne pas charger les colonnes de note (drop = P5-c)
     omit: {
       globalScore: true,
       fundamentalsScore: true,
@@ -61,6 +60,7 @@ async function getDeal(dealId: string, userId: string) {
       marketScore: true,
       productScore: true,
       financialsScore: true,
+      conditionsScore: true,
     },
     include: {
       founders: true,
@@ -206,7 +206,6 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
     return buildTermsResponse(
       deal.dealTerms as Record<string, unknown> | null,
       cached,
-      deal.conditionsScore ?? null,
       mode,
       tranches,
     );

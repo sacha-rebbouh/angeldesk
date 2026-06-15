@@ -66,6 +66,7 @@ async function getDashboardStats(userId: string) {
           marketScore: true,
           productScore: true,
           financialsScore: true,
+          conditionsScore: true,
         },
         include: {
           redFlags: {

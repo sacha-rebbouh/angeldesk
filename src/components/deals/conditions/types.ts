@@ -171,7 +171,6 @@ export interface TermsResponse {
   terms: DealTermsData | null;
   mode: DealMode;
   tranches: TrancheData[] | null;
-  conditionsScore: number | null;
   conditionsBreakdown: DimensionAssessmentItem[] | null;
   conditionsAnalysis: ConditionsFindings | null;
   negotiationAdvice: NegotiationAdviceItem[] | null;
@@ -186,7 +185,6 @@ export interface TermsVersionData {
   version: number;
   label: string | null;
   termsSnapshot: Record<string, unknown>;
-  conditionsScore: number | null;
   source: string;
   changeNote: string | null;
   createdAt: string;

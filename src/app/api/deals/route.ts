@@ -71,6 +71,7 @@ export async function GET(request: NextRequest) {
           marketScore: true,
           productScore: true,
           financialsScore: true,
+          conditionsScore: true,
         },
         include: {
           founders: {

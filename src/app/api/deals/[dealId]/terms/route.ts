@@ -125,8 +125,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
       select: {
         id: true,
         stage: true,
-        globalScore: true,
-        conditionsScore: true,
         conditionsAnalysis: true,
         dealTerms: true,
         dealStructure: {
@@ -151,7 +149,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
       buildTermsResponse(
         deal.dealTerms as unknown as Record<string, unknown> | null,
         cached,
-        deal.conditionsScore ?? null,
         mode,
         tranches,
       )
@@ -242,7 +239,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
           dealId,
           version: versionCount + 1,
           termsSnapshot: snapshot as Prisma.InputJsonValue,
-          conditionsScore: deal.conditionsScore,
           analysisSnapshot: deal.conditionsAnalysis as Prisma.InputJsonValue | undefined,
           source: existingTerms.source ?? "manual",
         },
@@ -352,12 +348,11 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       console.error(`[conditions-analyst] Standalone analysis ${analysisStatus}:`, msg);
     }
 
-    // --- 3. Update deal (cache analyse conditions ; note neutralisée — chantier P4, colonne droppée en P5) ---
+    // --- 3. Update deal (cache analyse conditions ; plus de note conditions écrite — chantier dé-scorisation P5) ---
     await prisma.$transaction([
       prisma.deal.update({
         where: { id: dealId },
         data: {
-          conditionsScore: null,
           conditionsAnalysis: analysisResult
             ? (analysisResult as unknown as Prisma.InputJsonValue)
             : undefined,
@@ -382,7 +377,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const response = buildTermsResponse(
       upsertedTerms as unknown as Record<string, unknown>,
       analysisResult,
-      null,
       mode as DealMode,
       responseTranches,
     );

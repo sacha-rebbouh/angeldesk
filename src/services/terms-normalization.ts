@@ -54,7 +54,6 @@ export function normalizeTerms(rawTerms: Record<string, unknown> | null): DealTe
 export function buildTermsResponse(
   terms: Record<string, unknown> | null,
   cached: ConditionsAnalystData | null,
-  conditionsScore: number | null,
   mode: DealMode = "SIMPLE",
   tranches: TrancheData[] | null = null,
 ) {
@@ -78,7 +77,6 @@ export function buildTermsResponse(
     terms: normalizedTerms,
     mode,
     tranches,
-    conditionsScore,
     // Chantier P4 — évaluation qualitative par critère (scoreless). Nouveau champ
     // findings.dimensionAssessment ; compat lecture legacy depuis score.breakdown
     // (criterion + justification) pour les snapshots historiques pré-P4.

@@ -36,6 +36,7 @@ async function getDeals(userId: string) {
         marketScore: true,
         productScore: true,
         financialsScore: true,
+        conditionsScore: true,
       },
       include: {
         documents: {

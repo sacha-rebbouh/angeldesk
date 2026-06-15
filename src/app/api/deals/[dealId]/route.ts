@@ -104,6 +104,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         marketScore: true,
         productScore: true,
         financialsScore: true,
+        conditionsScore: true,
       },
       include: {
         founders: {
