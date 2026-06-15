@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P5-a.4 — read-model core scoreless (P5-a bascule readers COMPLET)
+
+### Fichiers
+- `src/services/deals/analysis-signal-summary.ts` (−36) : moitié SCORES retirée (`AnalysisSignalSummaryData.scores`, `computeAnalysisSignalSummary`, `SummaryRow`, `rowToData`, `select` `readAnalysisSignalSummaries`, write `upsert`). **`extractedInfo` (sector/stage/instrument/geo/description) ENTIÈREMENT CONSERVÉ** (moitié live).
+- `src/services/analysis-results/score-extraction.ts` (−90) : `extractAnalysisScores` + interface `AnalysisScores` + helper `normalizeDimensionLabel` SUPPRIMÉS. `extractCanonicalExtractedInfo` + `CanonicalExtractedInfo` + `isRecord`/`readString` conservés.
+- `src/services/funding-db/percentile-calculator.ts` SUPPRIMÉ (`calculateDealPercentile` = percentile-DE-score, orphelin en prod — bloc F37 retiré en P4-a, aucun import production) + son test ; 2 `vi.mock` morts retirés (agent-pipeline + sequential-pipeline).
+- Test `analysis-signal-summary.test.ts` : assertions de score retirées, couverture `extractedInfo` conservée.
+
+### Description
+**Chantier dé-scorisation, P5-a.4 (gaté Codex APPROVE, sans REQUEST_CHANGES) — clôt P5-a (bascule readers).** Le cœur du read-model ne calcule/stocke/lit plus de note. **Durabilité (validée Codex)** : colonnes `AnalysisSignalSummary.*Score` restent en DB jusqu'à P5-c (drop confirmé) ; **pas de bump `CURRENT_SIGNAL_SUMMARY_SCHEMA_VERSION`** (la moitié `extractedInfo` cachée est inchangée → vieux rows valides en lecture ; scores simplement ignorés). Pas de bump `STEPWISE_GRAPH_VERSION`. `extractAnalysisScores`/`AnalysisScores`/`calculateDealPercentile` totalement absents (reste 1 commentaire historique). **P5-a COMPLET** : a.1 chat, a.2 canonical deal-fields, a.3 terms/conditions, a.4 read-model core. tsc 0 (lu directement) ; suite unit complète 4502 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-15 — Dé-scorisation — P5-a.3 — bascule des readers du cluster TERMS/CONDITIONS off conditionsScore
 
 ### Fichiers
@@ -318,15 +330,4 @@ tier3-results.tsx ne restitue plus AUCUNE note de deal (grep `overallScore`/`/10
 
 ### Description
 Micro-étape 1 (keystone) de la dé-scorisation du legacy panel encore rendu LIVE (`AnalysisPanelWrapper` → `analysis-panel.tsx` → tier1/2/3-results, reachable juste après la 1ère analyse avant bascule v2). **Décision de modèle gatée Codex APPROVE** : mirror la decision-strip v2 (`BadgePair` 5 valeurs, `RECOMMENDATION_CONFIG`/`EVIDENCE_SOLIDITY_CONFIG`) plutôt que le 4-valeurs `readDoctrineOrientation` du PDF — cohérence écran-à-écran + réutilisation de l'atome, le collapse 5→4 étant une migration cross-surface séparée (v2 + legacy ensemble). `aggregateOrientation` score-indépendant (lit `signalContribution.orientation` → `verdict` → `signalIntensity`, jamais `overallScore`). Codex a flaggé que `showNoGo < 35` est un comportement SCORE-BASED (pas un simple affichage) → à corriger micro-étape suivante. Sites restants tier3 (dimensionScores/100, percentile de score, skepticism/100, consistency/100, confidence%, SynthesisScorerCard header) = micro-étapes suivantes. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). tsc 0 ; tests `src/components/deals/__tests__` 434 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (PDF) étape 6/6 — nettoyage helpers/composants de rendu de score morts
-
-### Fichiers
-- `src/lib/pdf/pdf-components.tsx` : suppression de `ScoreCircle` (rendait `{score}/100` en SVG) et `ScoreBar` (rendait `{score}/100`). Imports `Svg`/`Circle`/`Path` (utilisés seulement par ScoreCircle) et `scoreColor` retirés.
-- `src/lib/pdf/pdf-helpers.ts` : suppression de `scoreColor`, `scoreBgColor`, `recLabel` (labeller orientation 5 valeurs), `fmtWeight` (devenu inutilisé après PDF-5). Doc de `proofLabel` reformulée (ne référence plus `recLabel`).
-- `src/lib/pdf/__tests__/pdf-helpers-proof-label.test.ts` : commentaire reformulé (ne référence plus le helper `recLabel` supprimé).
-
-### Description
-Clôture du sous-chantier PDF. `ScoreCircle`/`recLabel`/`fmtWeight` rendus morts par mes changements (PDF-1/2/5) ; `ScoreBar`/`scoreBgColor` étaient préexistant-morts — supprimés malgré la règle Karpathy « signal-only » car ce sont des primitives de RENDU DE SCORE (`/100`) que le chantier de-scorisation autorise à retirer et que les source-guards P6 banniraient (gate Codex : arbitrage APPROVE explicite). `scoreColor` devient mort une fois ScoreCircle+ScoreBar retirés. Conservés signal-only : `RecommendationBadge` (badge VERBAL d'orientation, pas une primitive de score) + `improvedDealScore` (type `NegotiationData` jamais rendu → producteur = P4). Conservés allowlist : `confidenceScore` (red-flags, % par flag), `w.confidence` (early-warnings, % par alerte) = confiances PAR ITEM. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
 
