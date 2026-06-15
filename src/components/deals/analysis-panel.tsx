@@ -1452,7 +1452,7 @@ export const AnalysisPanel = memo(function AnalysisPanel({ dealId, dealName, cur
                             <FileText className="h-4 w-4 text-blue-600" />
                             Résumé exécutif
                           </div>
-                          <span className="text-xs text-muted-foreground ml-6">5-7 pages — Orientation, signaux d'alerte, questions clés</span>
+                          <span className="text-xs text-muted-foreground ml-6">5-7 pages — Orientation, signaux d&apos;alerte, questions clés</span>
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleExportPdf("full")} className="flex flex-col items-start gap-0.5 py-2.5">
                           <div className="flex items-center gap-2 font-medium">
