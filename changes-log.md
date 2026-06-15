@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P5-c — MIGRATION DROP des 13 colonnes de note de deal mortes
+
+### Fichiers
+- `prisma/schema.prisma` : drop `Deal.{global,fundamentals,conditions,team,market,product,financials}Score` (7), `AnalysisSignalSummary.{global,team,market,product,financials}Score` (5, Float), `DealTermsVersion.conditionsScore` (1). Commentaires P5-c.
+- `prisma/migrations/20260615110802_descoring_drop_dead_score_columns/migration.sql` : 13 `ALTER TABLE ... DROP COLUMN` exacts. Générée **sans DB** (`migrate diff --from-schema-datamodel HEAD --to-schema-datamodel edité`) car `.env.local` = prod Neon uniquement (pas de dev/shadow → pas de `migrate dev`).
+- 5 blocs `omit` Prisma retirés (`dashboard/page`, `deals/page`, `deals/[dealId]/page`, `api/deals/route`, `api/deals/[dealId]/route`) — obligatoire post-drop (omit d'une colonne droppée = erreur).
+- 3 mocks Prisma Deal nettoyés (`base-agent-date-rendering` 7 nulls, `analysis-cache` 5 nulls, `context-compiler` 5 valeurs vestigiales). Tests d'absence `export`/`compare` (`not.toHaveProperty`) laissés (valides après drop).
+
+### Description
+**Chantier dé-scorisation, P5-c (gaté Codex APPROVE, sans REQUEST_CHANGES) — byte-equiv-critique.** Drop physique des 13 colonnes de note mortes (3 familles, décision verrouillée Codex). **Mortes** : zéro writer (P4-b4/P5-a.3), zéro reader d'écran (P3), readers cluster basculés (P5-a), types purgés (P5-b) ; `AnalysisSignalSummary.findMany` a un `select` explicite sans scores ; `src/scoring` globalScore = type interne distinct. **Durabilité** : pas de bump `STEPWISE_GRAPH_VERSION` (snapshots dans `Analysis.summary`, pas ces colonnes) ni `CURRENT_SIGNAL_SUMMARY_SCHEMA_VERSION` (extractedInfo inchangé). **ORDONNANCEMENT PROD verrouillé par Codex** : DROP destructif → **déployer le code scoreless d'ABORD, drainer les instances old-code, PUIS `migrate deploy`** (appliquer avant deploy casserait l'ancien code prod qui lit encore les colonnes) ; **inverse** la règle habituelle « apply before merge ». **PROD Neon À LA MAIN par SACHA** (`migrate deploy`, soft-bloqué harness) après deploy scoreless ; `migrate status` + `migrate diff` clean attendus. tsc 0 (lu directement) ; suite unit complète 4502 passed / 9 skipped / 0 failed ; migration SQL relue = 13 DROP COLUMN exacts.
+
+---
 ## 2026-06-15 — Dé-scorisation — P5-b.2 — purge ConditionsAnalystData.score (Option B, cast Record legacy)
 
 ### Fichiers
@@ -325,14 +337,5 @@ L'onglet Suivi DD ne restitue plus aucune note de deal. **Gate Codex APPROVE** (
 
 ### Description
 La Vue investisseur ne restitue plus aucune note de deal ni orientation dérivée d'un score. **Gate Codex APPROVE** (aucun nit). Conservé (allowlist) : `thesis.confidence` (% sur un fait précis), badges qualitatifs par item/question, compte de contradictions (observable). `analysis-panel.tsx` garde encore `currentScore` pour `DeltaIndicator` + `SuiviDDTab` (étapes suivantes). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; suite unit complète 4509 passed / 9 skipped / 0 failed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 3/N — tier2-results.tsx (expert sectoriel) scoreless
-
-### Fichiers
-- `src/components/deals/tier2-results.tsx` : carte expert sectoriel (rend `SectorExpertData`, pas la synthèse deal → sous-scores SECTORIELS, pas la note de deal ; mirror PDF-4 tier2-expert). (1) header carte : bloc « Score Secteur » + `data.sectorScore` (4xl) supprimé. (2) `VerdictHero` : bloc « Score Secteur » + prop `sectorScore` supprimés ; verdict reste verbal via `SECTOR_FIT_CONFIG[verdict.recommendation].label` + keyInsight/topStrength/topConcern + Fiabilité (`verdict.confidence` qualitatif high/medium/low). (3) `ScoreBreakdownSection` (/25 sous-scores) + son wrapper ExpandableSection « Score Breakdown » supprimés (composant retiré). (4) `SectorFitSection` : ligne « Sector Fit Score » + `ScoreBadge(fit.score)` supprimée (Timing/Strengths/Weaknesses verbaux conservés). (5) dead-code induit : imports `ScoreBadge` + icône `Building2` retirés.
-
-### Description
-tier2-results.tsx ne restitue plus aucun sous-score sectoriel (grep `sectorScore`/`ScoreBadge`/`/25`/`scoreBreakdown` = 0). **Gate Codex APPROVE** (aucun nit). Conservé (allowlist, métriques OBSERVABLES) : `valuation.percentilePosition` (percentile de la valorisation dans la distribution secteur = benchmark de marché, confirmé Codex), multiples de valo, `VALUATION_VERDICT_CONFIG` (verbal), unit economics observables, `verdict.confidence` par item (qualitatif). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests deals 434 passed.
 
 ---
