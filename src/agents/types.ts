@@ -3214,35 +3214,11 @@ export interface ContradictionDetectorResult extends AgentResult {
 
 // Synthesis Deal Scorer Agent
 export interface SynthesisDealScorerData {
-  // Chantier P4 — note de deal retirée de la PRODUCTION (la synthèse ne peuple
-  // plus ces champs). Conservés OPTIONNELS pour la compat durable (snapshots
-  // stepwise en vol + analyses historiques + lecteurs défensifs `?? null`).
-  overallScore?: number; // 0-100
+  // Chantier P5-b — note de deal PURGÉE du type (overallScore / confidence /
+  // dimensionScores / scoreBreakdown / comparativeRanking retirés). Production
+  // retirée en P4, restitution scoreless en P3 ; les snapshots historiques qui
+  // les portent encore sont lus défensivement (cast Record), jamais via ce type.
   verdict: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
-  confidence?: number; // 0-100
-  dimensionScores?: {
-    dimension: string;
-    score: number;
-    weight: number;
-    weightedScore: number;
-    sourceAgents: string[];
-    keyFactors: string[];
-  }[];
-  scoreBreakdown?: {
-    strengthsContribution: number;
-    weaknessesDeduction: number;
-    riskAdjustment: number;
-    opportunityBonus: number;
-  };
-  comparativeRanking?: {
-    percentileOverall: number;
-    percentileSector: number;
-    percentileStage: number;
-    similarDealsAnalyzed: number;
-    method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE";
-    insufficientData?: boolean;
-    calculationDetail?: string;
-  };
   investmentRecommendation: {
     action: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
     rationale: string;

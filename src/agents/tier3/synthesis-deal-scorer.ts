@@ -230,46 +230,18 @@ export interface SynthesisDealScorerDataV2 {
 // Pour compatibilité avec l'ancien type exporté
 export interface SynthesisDealScorerData {
   /**
-   * Chantier P4 — Champs de NOTE DE DEAL retirés de la PRODUCTION. La synthèse
-   * ne les peuple plus (`transformResponse` n'émet plus de score / dimensions /
-   * breakdown / percentile de score / confidence globale). Conservés OPTIONNELS
-   * pour la compat durable : d'anciens snapshots stepwise en vol et des analyses
-   * historiques en DB les portent encore, et des lecteurs défensifs
-   * (`?? null`, `data?.overallScore != null`) doivent continuer à compiler.
-   * La purge finale du type (+ du write persistence devenu inerte) est une
-   * micro-étape P4 ultérieure, puis P5 droppe les colonnes DB.
-   */
-  overallScore?: number;
-  /**
-   * Profil de signal Phase A — type unifié `Tier3Orientation` (équivalent
-   * structurel à l'union string littérale précédente). Cf. `src/agents/types.ts`
-   * et `src/agents/tier3/schemas/common.ts:Tier3OrientationSchema`.
+   * Chantier P5-b — Champs de NOTE DE DEAL PURGÉS du type : overallScore /
+   * confidence / dimensionScores / scoreBreakdown / comparativeRanking.
+   * Production retirée en P4 (`transformResponse` ne les émet plus), restitution
+   * scoreless en P3. D'anciens snapshots stepwise / analyses historiques les
+   * portent encore mais sont lus défensivement (cast Record), jamais via ce
+   * type. P5-c droppe les colonnes DB correspondantes.
+   *
+   * `verdict` : profil de signal Phase A — type unifié `Tier3Orientation`
+   * (équivalent structurel à l'union string littérale précédente). Cf.
+   * `src/agents/types.ts` et `src/agents/tier3/schemas/common.ts:Tier3OrientationSchema`.
    */
   verdict: Tier3Orientation;
-  confidence?: number;
-  dimensionScores?: {
-    dimension: string;
-    score: number;
-    weight: number;
-    weightedScore: number;
-    sourceAgents: string[];
-    keyFactors: string[];
-  }[];
-  scoreBreakdown?: {
-    strengthsContribution: number;
-    weaknessesDeduction: number;
-    riskAdjustment: number;
-    opportunityBonus: number;
-  };
-  comparativeRanking?: {
-    percentileOverall: number;
-    percentileSector: number;
-    percentileStage: number;
-    similarDealsAnalyzed: number;
-    method?: "EXACT" | "INTERPOLATED" | "INSUFFICIENT_DATA" | "UNAVAILABLE";
-    insufficientData?: boolean;
-    calculationDetail?: string;
-  };
   investmentRecommendation: {
     /** Profil de signal — type unifié `Tier3Orientation` (cf. ci-dessus). */
     action: Tier3Orientation;
