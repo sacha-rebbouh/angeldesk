@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Synthèse SDS — étape B1 — nettoyage prompt système (retrait machinerie de score)
+
+### Fichiers
+- `src/agents/tier3/prompts/synthesis-deal-scorer-prompt.ts` : réécrit scoreless (net −177 l). Retiré : tables de scoring 0-100 par dimension, formule pondérée `Score = Σ`, grille Score→orientation, champs de sortie `score`/`dimensionScores`/`scoreBreakdown`/`marketPosition`/`grade`, orientation native demandée au LLM. Conservé VERBATIM : TONALITE anti-prescriptive (ANALYSE et GUIDE / ne DECIDE JAMAIS), NEXT STEPS, FORNEGOTIATION. Nouveau FORMAT DE SORTIE = uniquement ce que `transformResponse` lit.
+- `src/agents/tier3/__tests__/synthesis-deal-scorer-prompt.guard.test.ts` : 2 assertions périmées (orientation native, tables `Team(26%)`) remplacées par assertions descorisation (pas de `dimensionScores`/`scoreBreakdown`/`marketPosition`/`"score":`/`"grade":`/`very_favorable`/`Score=Σ`/`85-100`) + présence des champs qualitatifs lus (`topStrengths`/`topWeaknesses`/`recommendation`/`rationale`/`redFlags`).
+
+### Description
+**Fix synthèse SDS, étape B1 (gaté Codex APPROVE, sans REQUEST_CHANGES).** Fix RACINE du timeout systématique de l'appel LLM de synthèse : le prompt système instruisait toute une machinerie de score (output volumineux) que `transformResponse` JETTE (orientation + solidité dérivées DÉTERMINISTIQUEMENT en aval depuis les signaux consolidés, jamais du LLM). Retirée → prompt lean → LLM plus rapide. Complète la dette descorisation côté system prompt (plus aucune note/score/grade demandé). Le nouveau FORMAT DE SORTIE ne demande QUE ce que `transformResponse` consomme (`recommendation.{rationale,conditions,suggestedTerms}`, `topStrengths`, `topWeaknesses`, `redFlags`, `narrative.keyInsights`) — champs retirés tous optionnels dans `LLMSynthesisResponse`, donc le chemin nominal ne casse pas (validé Codex). La qualité réelle de l'output sera revalidée au re-test E2E payé (différé). tsc 0 ; suite unit complète 4548 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-15 — Synthèse SDS — étape A — fallback déterministe sur échec LLM (synthèse de signaux propre, scoreless)
 
 ### Fichiers
@@ -324,14 +334,5 @@ Décision produit Sacha (AskUserQuestion, Q2 listes) : remplacer la note de deal
 
 ### Description
 Étape 2/4 de tier1-results.tsx : suppression des notes d'appréciation par dimension. Principe : retirer les nombres d'appréciation du deal, conserver les verdicts verbaux existants (`moatVerdict`/`pmfVerdict`, pas de re-dérivation depuis un score) et les comptes observables (`criticalRedFlagsCount`), **sans inventer de contenu de remplacement** (choix produit/UX réservé à l'utilisateur, YAGNI). Allowlist conservée : métriques observables (NRR/churn %, ACV, CAC, croissance %, percentiles de métriques, dilution/parts %), confiance ReAct par item (`reactData.confidence.score`%, non une note de deal). **Gate Codex APPROVE** (aucun nit). Hors périmètre, suivront : résumé `avgScore`/`dim.score` (C3) ; 4 vars mortes `scoreValue` induites par C1 (C4 cleanup). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 54 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 8/N (C1) — tier1-results.tsx : ScoreBadge par carte d'agent → chip d'intensité verbal
-
-### Fichiers
-- `src/components/deals/tier1-results.tsx` : nouveau composant `Tier1SignalChip` (chip verbal d'intensité Tier 1, lit `signalIntensity` natif + fallback read-only `alertSignal.recommendation` via `resolveTier1SignalIntensity` / `TIER1_SIGNAL_INTENSITY_LABELS` / `TIER1_SIGNAL_INTENSITY_BADGE_CLASS`). Les **12 `ScoreBadge` par carte d'agent** (financial, team, competitive, deck-crédibilité, market, tech-stack, tech-ops, legal, cap-table, gtm, customer, question-master — note /100, bannie) remplacés par ce chip. Variable morte `score` (carte market) induite par le changement retirée.
-
-### Description
-Étape 1/4 du gros fichier tier1-results.tsx (3885 l) : retrait des notes /100 par carte d'agent, remplacées par le signal verbal Tier 1 (mêmes libellés/classes que `Tier1AlertSignalDisplay`). Dérivation **score-indépendante** (aucune lecture de `score.value`). Le `ScoreBadge` agrégé du résumé (`avgScore`) + l'import restent volontairement (étapes C3/C4). **Gate Codex APPROVE** : chip scoreless confirmé, doublon chip-en-tête / bloc-corps sur 5 cartes acceptable (scan rapide en tête + justification dans le corps = densité duale de l'ancien, à traiter en polish UX éventuel, pas un problème doctrine). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 77 passed.
 
 ---
