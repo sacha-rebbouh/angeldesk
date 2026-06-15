@@ -9,7 +9,6 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { safeDecrypt } from "@/lib/encryption";
 import { loadResults } from "@/services/analysis-results/load-results";
-import { extractAnalysisScores } from "@/services/analysis-results/score-extraction";
 import { getCurrentFactsFromView } from "@/services/fact-store/current-facts";
 import type { CurrentFact } from "@/services/fact-store/types";
 
@@ -225,17 +224,7 @@ export async function getFullChatContext(
     getCompletedLiveSessions(dealId),
   ]);
 
-  const canonicalDeal = deal
-    ? {
-        ...deal,
-        globalScore: latestAnalysis?.scores.globalScore ?? deal.globalScore,
-        teamScore: latestAnalysis?.scores.teamScore ?? deal.teamScore,
-        marketScore: latestAnalysis?.scores.marketScore ?? deal.marketScore,
-        productScore: latestAnalysis?.scores.productScore ?? deal.productScore,
-        financialsScore:
-          latestAnalysis?.scores.financialsScore ?? deal.financialsScore,
-      }
-    : deal;
+  const canonicalDeal = deal;
 
   return {
     chatContext,
@@ -447,11 +436,6 @@ async function getDealBasicInfo(dealId: string) {
         growthRate: true,
         amountRequested: true,
         valuationPre: true,
-        globalScore: true,
-        teamScore: true,
-        marketScore: true,
-        productScore: true,
-        financialsScore: true,
         founders: {
           select: {
             name: true,
@@ -595,7 +579,6 @@ async function getLatestAnalysisResults(
   if (!analysis || analysis.dealId !== dealId || analysis.status !== "COMPLETED") return null;
 
   const results = await loadResults(analysis.id);
-  const scores = extractAnalysisScores(results);
 
   return {
     id: analysis.id,
@@ -603,7 +586,6 @@ async function getLatestAnalysisResults(
     summary: analysis.summary,
     completedAt: analysis.completedAt,
     hasResults: !!results,
-    scores,
   };
 }
 

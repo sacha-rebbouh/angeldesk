@@ -333,11 +333,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
             valuationPre: canonicalDeal.valuationPre != null
               ? Number(canonicalDeal.valuationPre)
               : null,
-            globalScore: thesisGated ? null : canonicalDeal.globalScore,
-            teamScore: thesisGated ? null : canonicalDeal.teamScore,
-            marketScore: thesisGated ? null : canonicalDeal.marketScore,
-            productScore: thesisGated ? null : canonicalDeal.productScore,
-            financialsScore: thesisGated ? null : canonicalDeal.financialsScore,
             founders: canonicalDeal.founders,
           }
         : {
@@ -364,11 +359,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
             valuationPre: canonicalDeal.valuationPre != null
               ? Number(canonicalDeal.valuationPre)
               : null,
-            globalScore: thesisGated ? null : canonicalDeal.globalScore,
-            teamScore: thesisGated ? null : canonicalDeal.teamScore,
-            marketScore: thesisGated ? null : canonicalDeal.marketScore,
-            productScore: thesisGated ? null : canonicalDeal.productScore,
-            financialsScore: thesisGated ? null : canonicalDeal.financialsScore,
             founders: canonicalDeal.founders,
           }
         : {

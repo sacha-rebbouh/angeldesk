@@ -145,11 +145,6 @@ const baseFullChatContext = {
     growthRate: null,
     amountRequested: null,
     valuationPre: null,
-    globalScore: 88,
-    teamScore: 82,
-    marketScore: 84,
-    productScore: 79,
-    financialsScore: 77,
     founders: [],
   },
   documents: [],
@@ -213,7 +208,6 @@ describe("POST /api/chat/[dealId] thesis-first pairing", () => {
 
     const agentContext = mocks.generateResponse.mock.calls[0]?.[1];
     expect(agentContext.latestAnalysis).toBeNull();
-    expect(agentContext.deal.globalScore).toBeNull();
     expect(agentContext.chatContext.agentSummaries["financial-auditor"].score).toBeUndefined();
   });
 

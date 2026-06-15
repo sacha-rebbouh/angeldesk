@@ -100,11 +100,6 @@ export interface FullChatContext {
     growthRate?: number | null;
     amountRequested?: number | null;
     valuationPre?: number | null;
-    globalScore?: number | null;
-    teamScore?: number | null;
-    marketScore?: number | null;
-    productScore?: number | null;
-    financialsScore?: number | null;
     founders?: Array<{
       name: string;
       role: string;
@@ -127,11 +122,6 @@ export interface FullChatContext {
     growthRate?: number | null;
     amountRequested?: number | null;
     valuationPre?: number | null;
-    globalScore?: number | null;
-    teamScore?: number | null;
-    marketScore?: number | null;
-    productScore?: number | null;
-    financialsScore?: number | null;
     founders?: Array<{
       name: string;
       role: string;
