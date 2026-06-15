@@ -3166,8 +3166,9 @@ export interface ConditionsAnalystFindings {
 
 export interface ConditionsAnalystData {
   meta: AgentMeta;
-  /** Chantier P4 — note de deal non produite ; OPTIONNEL pour compat durable (snapshots v4 en vol + analyses historiques + lecteurs défensifs). */
-  score?: AgentScore;
+  // Chantier P5-b — note de deal (score?: AgentScore) PURGÉE du type. Les snapshots
+  // historiques pré-P4 la portent encore mais sont lus défensivement (cast Record)
+  // dans terms-normalization (libellés qualitatifs seulement), jamais via ce type.
   findings: ConditionsAnalystFindings;
   redFlags: AgentRedFlag[];
   questions: AgentQuestion[];

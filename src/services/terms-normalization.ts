@@ -77,12 +77,16 @@ export function buildTermsResponse(
     terms: normalizedTerms,
     mode,
     tranches,
-    // Chantier P4 — évaluation qualitative par critère (scoreless). Nouveau champ
-    // findings.dimensionAssessment ; compat lecture legacy depuis score.breakdown
+    // Chantier P4 — évaluation qualitative par critère (scoreless) : champ
+    // findings.dimensionAssessment. Compat lecture legacy depuis score.breakdown
     // (criterion + justification) pour les snapshots historiques pré-P4.
+    // Chantier P5-b — `ConditionsAnalystData.score` purgé du type ; ce fallback
+    // legacy est lu via un cast Record étroit (jamais les nombres value/grade/score,
+    // uniquement les libellés qualitatifs), runtime inchangé pour ces snapshots.
     conditionsBreakdown:
       cached?.findings?.dimensionAssessment ??
-      cached?.score?.breakdown?.map(b => ({ criterion: b.criterion, justification: b.justification })) ??
+      (cached as { score?: { breakdown?: { criterion: string; justification: string }[] } } | null)
+        ?.score?.breakdown?.map(b => ({ criterion: b.criterion, justification: b.justification })) ??
       null,
     conditionsAnalysis: (cached?.findings ?? null) as ConditionsFindings | null,
     negotiationAdvice: advice.length > 0 ? advice : null,
