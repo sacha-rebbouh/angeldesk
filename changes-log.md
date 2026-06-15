@@ -1,6 +1,19 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P5-a.1 — bascule des readers du cluster CHAT off Deal.*Score (scoreless)
+
+### Fichiers
+- `src/agents/chat/context-retriever.ts` : 5 champs de score retirés de l'interface `DealInfo`, du `select` Prisma deal, du carry `DealInfo`, et du type+corps de `getLatestAnalysisMeta` (`scores: extractAnalysisScores(results)`) ; import `extractAnalysisScores` retiré (`loadResults` conservé).
+- `src/services/chat-context/index.ts` : 5 champs de score retirés du `select` `getDealBasicInfo`, carry `canonicalDeal` collapsé (`const canonicalDeal = deal`), `scores` retiré de `getLatestAnalysisResults` (`results` conservé pour `hasResults`) ; import `extractAnalysisScores` retiré.
+- `src/app/api/chat/[dealId]/route.ts` : 5 champs de score retirés des 2 objets construits pour l'agent (`dealInfo` + `deal`) ; `thesisGated` conservé (sanitizer).
+- `src/agents/chat/deal-chat-agent.ts` : 5 champs de score optionnels retirés des 2 sous-objets de `FullChatContext` (`canonicalDeal` + `deal` alias legacy).
+- `src/app/api/chat/[dealId]/__tests__/route.test.ts` + `src/agents/chat/__tests__/context-retriever.test.ts` : assertion `agentContext.deal.globalScore` + mocks de score obsolètes retirés (cluster grep-clean).
+
+### Description
+**Chantier dé-scorisation, P5-a.1 (gaté Codex APPROVE après 2 REQUEST_CHANGES).** 1er micro-step de P5 (bascule readers AVANT drop colonnes — colonnes encore en schema, tsc reste vert). Le cluster chat ne lit plus `Deal.*Score` ni `extractAnalysisScores` : champs structurés morts (LLM déjà scoreless depuis P3 + scrubbers G3). **Round 1→2 (finding Codex correct, vérifié tsc)** : le chat route reconstruisait `canonicalDeal.*Score` depuis `getDealBasicInfo` → ajout route + `FullChatContext` au périmètre. **Round 2→3** : mock `dealFindUnique` nettoyé (contrat « cluster fermé » = grep-clean). **Décisions Codex verrouillées pour la suite P5** : ordre a(readers)→b(types optionnels)→c(migration DROP)→cleanup ; DROP aussi `AnalysisSignalSummary.*Score` (même famille read-model) ; `calculateDealPercentile` supprimable dès a.4 (orphelin). **Pas de bump `STEPWISE_GRAPH_VERSION`** (hors graphe durable). tsc 0 (lu directement) ; 10 tests chat verts.
+
+---
 ## 2026-06-15 — Dé-scorisation — P4-b4 — retrait du write de persistence inerte (synthesis → Deal.*Score) — P4 producteurs COMPLET
 
 ### Fichiers
@@ -308,11 +321,3 @@ Clôture du sous-chantier PDF. `ScoreCircle`/`recLabel`/`fmtWeight` rendus morts
 ### Description
 Sous-scores /100 retirés (classe `sectorScore`/`sectorFitScore` du scrubber). L'orientation sectorielle reste portée par `ExtendedVerdict` (`getTier2SectorFitLabel`, verbal). Conservés (allowlist — métriques OBSERVABLES + benchmarks/percentiles de métrique observable) : KeyMetrics + benchmarks P25/médiane/P75/topDécile, ValuationAnalysis (multiples x, percentile P, justifiedRange), UnitEconomics (CAC/LTV/ratio), EdTech retention/completion %, Biotech probabilityOfSuccess %, salesCycleMonths, similarDealsFound, nodeCount, monthlyComputeCost, availableDataPoints/expectedDataPoints (comptes), `ExtendedVerdict.confidence` (verbal). Producteurs intacts = P4. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
 
----
-## 2026-06-14 — Dé-scorisation P3 (PDF) étape 3/N — tier3-synthesis scoreless (retrait scores agrégés/dimension)
-
-### Fichiers
-- `src/lib/pdf/pdf-sections/tier3-synthesis.tsx` : `ContradictionDetector` — retrait de « Score consistance: X/100 (grade) » (`data.score`) et « Consistance globale: X/100 » (`consistencyAnalysis.overallScore`) ; `cScore` supprimé, `overallScore?` retiré du type inline `consistency`. `DevilsAdvocate` — retrait de « Score: X/100 (grade) » (`data.score`) et « Score scepticisme: X/100 » (`skepticismAssessment.score`) ; `dScore` supprimé, `score?` retiré du type inline `skepticism`.
-
-### Description
-Notes de deal / sous-scores agrégés retirés (classe `consistencyScore`/`overallSkepticism` du scrubber `AGENT_DEAL_NOTE_KEYS`). Conservés (allowlist doctrine — confiance/probabilité PAR ITEM sur un fait/scénario précis, jamais une note de deal) : `confidenceLevel` par contradiction, `worstCase.probability`, `alt.plausibility`, ainsi que tout le contenu verbal (`narrative.summary`, `consistency.interpretation`, `skepticism.verdict`/`verdictRationale`, structuralRisks, blindSpots, objections, altNarratives, dataGaps, convergence). Producteurs intacts = P4. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
