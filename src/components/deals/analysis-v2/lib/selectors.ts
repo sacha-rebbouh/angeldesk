@@ -1,5 +1,6 @@
 import type { EvidenceSolidity, Orientation, DeckCoherenceBand } from "@/lib/ui-configs";
 import { thesisAlertCategoryLabel } from "@/lib/ui-configs";
+import { resolveAnalysisDurationMs } from "@/lib/analysis-duration";
 
 import {
   agentData,
@@ -114,8 +115,11 @@ function severityLabel(severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO"
 const POSITIVE_KEYWORDS = /(force|atout|opportun|conviction|avantage|étay|sécuris|valid|aligné|cohérent|preuve|favorable|robuste)/i;
 const NEGATIVE_KEYWORDS = /(risque|alerte|contradictoire|carence|opaque|fragile|incomplet|absent|manqu|incohér|exagér|trompeur|projection|spéculat|hypothè|doute)/i;
 
-function extractDealHeader(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }) {
+function extractDealHeader(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { startedAt?: Date | null; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }) {
   const name = deal.companyName ?? deal.name ?? "Dossier sans nom";
+  // Durée WALL-CLOCK (cf. resolveAnalysisDurationMs) : `totalTimeMs` est faux en
+  // stepwise (ne capture qu'une invocation Inngest → ~5 s pour une analyse de 41 min).
+  const durationMs = resolveAnalysisDurationMs(analysis.startedAt, analysis.completedAt, analysis.totalTimeMs);
   return {
     name,
     status: deal.status ?? null,
@@ -123,7 +127,7 @@ function extractDealHeader(deal: { id: string; name?: string | null; companyName
     stage: deal.stage ?? null,
     completedAt: analysis.completedAt ? new Date(analysis.completedAt) : null,
     totalCostUsd: typeof analysis.totalCost === "number" ? analysis.totalCost : null,
-    totalDurationMin: typeof analysis.totalTimeMs === "number" ? Math.round(analysis.totalTimeMs / 60000) : null,
+    totalDurationMin: durationMs != null ? Math.round(durationMs / 60000) : null,
     totalAgents: analysis.totalAgents ?? null,
     completedAgents: analysis.completedAgents ?? null,
     mode: analysis.mode ?? null,
@@ -288,7 +292,7 @@ function deckCoherenceBand(score: number | null): DeckCoherenceBand | null {
   return "incoherent";
 }
 
-export function buildDecisionStripModel(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { results: ResultsMap | null | undefined; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }, thesis: { verdict?: string | null; reformulated?: string | null } | null) {
+export function buildDecisionStripModel(deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null }, analysis: { results: ResultsMap | null | undefined; startedAt?: Date | null; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null }, thesis: { verdict?: string | null; reformulated?: string | null } | null) {
   const header = extractDealHeader(deal, analysis);
   const orientation = aggregateOrientation(analysis.results) as Orientation | null;
   const solidity = aggregateSolidity(analysis.results) as EvidenceSolidity | null;
@@ -914,7 +918,7 @@ export type AnalysisV2ViewModel = {
 
 export function buildAnalysisV2ViewModel(input: {
   deal: { id: string; name?: string | null; companyName?: string | null; status?: string | null; sector?: string | null; stage?: string | null };
-  analysis: { results: ResultsMap | null | undefined; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null };
+  analysis: { results: ResultsMap | null | undefined; startedAt?: Date | null; completedAt?: Date | null; totalCost?: number | null; totalTimeMs?: number | null; totalAgents?: number | null; completedAgents?: number | null; mode?: string | null };
   thesis: Record<string, unknown> | null;
 }): AnalysisV2ViewModel {
   const { deal, analysis, thesis } = input;

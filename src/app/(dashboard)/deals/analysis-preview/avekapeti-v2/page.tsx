@@ -43,6 +43,7 @@ export default async function AvekapetiAnalysisV2PreviewPage() {
         results: true,
         totalCost: true,
         totalTimeMs: true,
+        startedAt: true,
         completedAt: true,
         totalAgents: true,
         completedAgents: true,
@@ -72,6 +73,7 @@ export default async function AvekapetiAnalysisV2PreviewPage() {
     },
     analysis: {
       results,
+      startedAt: analysis.startedAt,
       completedAt: analysis.completedAt,
       totalCost: typeof analysis.totalCost === "number" ? analysis.totalCost : null,
       totalTimeMs: typeof analysis.totalTimeMs === "number" ? analysis.totalTimeMs : null,

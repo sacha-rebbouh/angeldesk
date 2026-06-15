@@ -219,6 +219,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
         id: true,
         totalCost: true,
         totalTimeMs: true,
+        startedAt: true,
         completedAt: true,
         totalAgents: true,
         completedAgents: true,
@@ -264,6 +265,7 @@ export default async function DealDetailPage({ params, searchParams }: PageProps
           },
           analysis: {
             results: latestCompletedResults as unknown as ResultsMap,
+            startedAt: latestCompletedAnalysis.startedAt,
             completedAt: latestCompletedAnalysis.completedAt,
             totalCost: typeof latestCompletedAnalysis.totalCost === "number" ? latestCompletedAnalysis.totalCost : null,
             totalTimeMs: typeof latestCompletedAnalysis.totalTimeMs === "number" ? latestCompletedAnalysis.totalTimeMs : null,
