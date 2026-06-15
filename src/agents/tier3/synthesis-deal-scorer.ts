@@ -50,7 +50,6 @@ import type {
 import type { BAPreferences } from "@/services/benchmarks";
 import { RedFlagDedup, inferRedFlagTopic, severityRank } from "@/services/red-flag-dedup";
 import type { RedFlagSeverity, ConsolidatedRedFlag } from "@/services/red-flag-dedup";
-import { getWeightsForDeal, formatWeightsForPrompt } from "@/scoring/stage-weights";
 import { SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT } from "./prompts/synthesis-deal-scorer-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
 import {
@@ -316,7 +315,7 @@ export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData,
   constructor() {
     super({
       name: "synthesis-deal-scorer",
-      description: "Synthèse finale: score pondéré + recommandation d'investissement basée sur tous les agents",
+      description: "Synthèse finale: orientation du signal + recommandation analytique basée sur tous les agents",
       modelComplexity: "complex",
       maxRetries: 2,
       // Dé-scorisation P2-d : 220s < plafond Vercel 300s → le timeout gracieux de run()
@@ -368,15 +367,12 @@ export class SynthesisDealScorerAgent extends BaseAgent<SynthesisDealScorerData,
   protected async execute(context: EnrichedAgentContext): Promise<SynthesisDealScorerData> {
     const deal = context.canonicalDeal;
     this._dealStage = deal.stage;
-    // Get dynamic weights based on stage and sector
-    const dealStage = deal.stage || (context.previousResults?.['document-extractor'] as { data?: { extractedInfo?: { stage?: string } } })?.data?.extractedInfo?.stage;
-    const dealSector = deal.sector || (context.previousResults?.['document-extractor'] as { data?: { extractedInfo?: { sector?: string } } })?.data?.extractedInfo?.sector;
-    const weights = getWeightsForDeal(dealStage, dealSector);
-    const weightsTable = formatWeightsForPrompt(weights);
 
-    // Build comprehensive prompt with all context
+    // Build comprehensive prompt with all context. Chantier descorisation (B2) :
+    // plus de pondérations par dimension injectées — le LLM ne calcule plus de
+    // moyenne pondérée (orientation dérivée déterministiquement en aval).
     const dealContext = this.formatDealContext(context);
-    const tier1Scores = this.extractTier1Scores(context);
+    const tier1Signals = this.extractTier1Signals(context);
     const tier1RedFlags = this.extractTier1RedFlags(context);
     const tier1Synthesis = this.buildTier1Synthesis(context);
     const tier2Data = this.extractTier2Data(context);
@@ -395,8 +391,8 @@ ${dealContext}
 
 ---
 
-## SCORES BRUTS TIER 1 (12 agents) — À AJUSTER avec Tier 2/3
-${tier1Scores}
+## SIGNAUX TIER 1 (12 agents)
+${tier1Signals}
 
 ---
 
@@ -442,41 +438,17 @@ ${this.formatFactStoreData(context)}
 
 ## TA MISSION
 
-1. **CALCULE LE SCORE PONDÉRÉ** avec la formule:
-   Score = Σ(dimension_weight × dimension_score) + adjustments
+1. **SYNTHÉTISE LES SIGNAUX CROSS-TIERS** — consolide les forces et les signaux d'alerte par dimension, chacun SOURCÉ (agent d'origine), après prise en compte de l'expert sectoriel, des contradictions et du devil's advocate.
 
-   Pondérations ADAPTÉES AU STAGE (${dealStage || 'SEED'}) ET AU SECTEUR (${dealSector || 'General'}):
+2. **CROSS-RÉFÉRENCE LA DB** (lorsque la donnée existe) :
+   - Percentile de valorisation vs deals comparables du secteur (métrique observable)
+   - Vérification des claims concurrentiels
 
-${weightsTable}
+3. **CONSTRUIS LA RATIONALE** — 2-3 phrases : signaux favorables vs signaux d'alerte dominants, sourcés. Le bull case et le bear case nourrissent la rationale ; les conditions = points à clarifier.
 
-   **NOTE**: Ces poids ont été ajustés automatiquement selon le stage d'investissement et le secteur.
+4. **LISTE LES NEXT STEPS / QUESTIONS** — actions concrètes d'investigation/clarification (jamais de directive d'action).
 
-2. **AJUSTE SELON LES RED FLAGS**:
-   - CRITICAL: -10 à -20 pts
-   - HIGH: -5 à -10 pts
-   - Incohérences: -5 à -15 pts
-   - Data incomplete: -10 pts
-
-3. **CROSS-RÉFÉRENCE LA DB**:
-   - Percentile valorisation vs sector deals
-   - Position vs median sur chaque dimension
-   - Vérification claims concurrentiels
-
-4. **CONSTRUIS L'INVESTMENT THESIS**:
-   - 3-5 bull points avec sources
-   - 3-5 bear points avec sources
-   - Key assumptions à valider
-
-5. **DONNE LE PROFIL DE SIGNAL**:
-   - 85-100: very_favorable
-   - 70-84: favorable
-   - 55-69: contrasted
-   - 40-54: vigilance
-   - 0-39: alert_dominant
-
-6. **LISTE LES NEXT STEPS** concrets
-
-7. **SEPARE EXPLICITEMENT LES AXES**:
+5. **SEPARE EXPLICITEMENT LES AXES**:
    - Qualite intrinsèque du deal / de la these
    - Investor profile fit (préférences, mandat, ticket, horizon)
    - Deal accessibility (ticket minimum, allocation, structure, liquidité)
@@ -486,20 +458,17 @@ ${weightsTable}
 
 ## RAPPELS CRITIQUES
 
-⚠️ **MONTRE TOUS LES CALCULS** - Le BA doit comprendre comment tu arrives au score
 ⚠️ **SOURCE CHAQUE AFFIRMATION** - Cite l'agent qui a fourni la donnée
-⚠️ **SOIS INFORMATIF** — Profil de signal clair, le BA décide
+⚠️ **SOIS INFORMATIF** — Signaux clairs et sourcés, le BA décide
 ⚠️ **CONSOLIDE LES RED FLAGS** - Ne répète pas, synthétise avec priorité
-⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences dans \`baAlignment\`, les conditions et le narratif, sans confondre cela avec la qualité intrinsèque du deal
-⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les risques critiques ont été ajustés (section COHÉRENCE INTER-AGENTS), ton score DOIT être aligné. Un deal alert_dominant avec scepticisme >80 ne peut pas avoir un score > 40.
-⚠️ **score.value = Σ(breakdown weights × breakdown scores)** — Le score.value DOIT être la moyenne pondérée de ton breakdown. Si ton breakdown donne 50, score.value DOIT être ~50, PAS 2 ou 5. C'est un entier 0-100.
-⚠️ **NE CONFONDS PAS FIT ET QUALITÉ** — ticket minimum, secteur hors mandat BA, ou horizon peu adapté au profil investisseur doivent etre surfaces comme \`baAlignment\` / \`conditions\`, pas comme preuve que la these est faible.
+⚠️ **ADAPTE AU PROFIL BA** - Tiens compte de ses préférences dans les conditions et le narratif, sans confondre cela avec la qualité intrinsèque du deal
+⚠️ **RESPECTE LA COHÉRENCE TIER 3** - Si les risques critiques ont été ajustés (section COHÉRENCE INTER-AGENTS / contradictions), ta synthèse DOIT être alignée : un deal aux signaux d'alerte dominants avec un fort scepticisme ne doit pas être présenté comme favorable.
+⚠️ **NE CONFONDS PAS FIT ET QUALITÉ** — ticket minimum, secteur hors mandat BA, ou horizon peu adapté au profil investisseur doivent etre surfaces comme \`conditions\`, pas comme preuve que la these est faible.
 
 **CONCISION OBLIGATOIRE (JSON sera INVALIDE si tronque):**
-- dimensionScores: 7 items, adjustments: MAX 5, comparableDeals: MAX 3
-- bull/bear: MAX 4 chacun, nextSteps: MAX 5
-- redFlags: MAX 6, questions: MAX 5, keyInsights: MAX 4
-- justification: 1-2 phrases, rationale: 2-3 phrases
+- topStrengths / topWeaknesses: 4-8 chacun (priorisés par importance), conditions: MAX 5
+- redFlags: MAX 6, keyInsights: MAX 4
+- rationale: 2-3 phrases, oneLiner: 15 mots MAX
 - PRIORITE: JSON complet > detail
 
 Produis le JSON complet selon le format spécifié dans le system prompt.`;
@@ -588,7 +557,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
     }
 
     lines.push(`
-**QUESTIONS OBLIGATOIRES pour le scoring** :
+**QUESTIONS OBLIGATOIRES pour l'analyse** :
 1. Pourquoi ce deal arrive a un BA solo plutot qu'un fonds VC ?
 2. Le fondateur a-t-il ete refuse par des VCs ? Si oui, quels retours ?
 3. Combien d'investisseurs ont ete contactes ?
@@ -596,7 +565,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
 **TRAITEMENT ATTENDU** :
 - Utilise ces elements comme contexte de marketability / investor-fit / accessibilite du tour
-- Ne convertis PAS automatiquement ces elements en bonus/malus du score global
+- Ne convertis PAS automatiquement ces elements en signal favorable/defavorable sur la qualite intrinseque
 - Ne les traite comme faiblesse intrinsèque que s'ils revelent un probleme causal documente (ex: refus VC motives par un defaut fondamental verifie)
 
 **AJOUTER DANS topWeaknesses OU topStrengths si pertinent** :
@@ -610,74 +579,45 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
     return lines.join("\n");
   }
 
-  private extractTier1Scores(context: EnrichedAgentContext): string {
+  /**
+   * Chantier descorisation (B2) — injecte les SIGNAUX QUALITATIFS Tier 1 par
+   * dimension (facteurs clés sourcés), SANS aucune note `score.value`/100. Le LLM
+   * de synthèse ne calcule plus de moyenne pondérée : ces signaux nourrissent la
+   * rationale et les forces/faiblesses, l'orientation est dérivée en aval.
+   */
+  private extractTier1Signals(context: EnrichedAgentContext): string {
     const results = context.previousResults ?? {};
-    const scores: string[] = [];
+    const lines: string[] = [];
 
-    // Mapping agent name to their score field
-    const scoreMapping: Record<string, { field: string; dimension: string }> = {
-      "financial-auditor": { field: "score.value", dimension: "Financials" },
-      "team-investigator": { field: "score.value", dimension: "Team" },
-      "competitive-intel": { field: "score.value", dimension: "Competitive" },
-      "market-intelligence": { field: "score.value", dimension: "Market" },
-      "tech-stack-dd": { field: "score.value", dimension: "Tech Stack" },
-      "tech-ops-dd": { field: "score.value", dimension: "Tech Ops" },
-      "legal-regulatory": { field: "score.value", dimension: "Legal" },
-      "cap-table-auditor": { field: "capTableScore", dimension: "Cap Table" },
-      "gtm-analyst": { field: "score.value", dimension: "GTM" },
-      "customer-intel": { field: "score.value", dimension: "Traction" },
-      "deck-forensics": { field: "score.value", dimension: "Deck Quality" },
-      "question-master": { field: "score.value", dimension: "DD Readiness" },
+    const dimensionMapping: Record<string, string> = {
+      "financial-auditor": "Financials",
+      "team-investigator": "Team",
+      "competitive-intel": "Competitive",
+      "market-intelligence": "Market",
+      "tech-stack-dd": "Tech Stack",
+      "tech-ops-dd": "Tech Ops",
+      "legal-regulatory": "Legal",
+      "cap-table-auditor": "Cap Table",
+      "gtm-analyst": "GTM",
+      "customer-intel": "Traction",
+      "deck-forensics": "Deck Quality",
+      "question-master": "DD Readiness",
     };
 
-    for (const [agentName, config] of Object.entries(scoreMapping)) {
+    for (const [agentName, dimension] of Object.entries(dimensionMapping)) {
       const result = results[agentName];
       if (result?.success && "data" in result) {
         const data = result.data as Record<string, unknown>;
-
-        // Try to extract score from nested structure (score.value) or direct field
-        let scoreValue: number | undefined;
-
-        if (config.field.includes(".")) {
-          const [obj, key] = config.field.split(".");
-          const nestedObj = data[obj] as Record<string, unknown> | undefined;
-          if (nestedObj && typeof nestedObj[key] === "number") {
-            scoreValue = nestedObj[key] as number;
-          }
-        } else if (typeof data[config.field] === "number") {
-          scoreValue = data[config.field] as number;
-        }
-
-        // Fallback to common score field names
-        if (scoreValue === undefined) {
-          const fallbackFields = ["overallScore", "score", "finalScore", "capTableScore", "gtmScore"];
-          for (const field of fallbackFields) {
-            if (typeof data[field] === "number") {
-              scoreValue = data[field] as number;
-              break;
-            }
-          }
-        }
-
-        if (scoreValue !== undefined) {
-          // Extract key factors if available
-          const keyFactors = this.extractKeyFactors(data, agentName);
-          scores.push(`### ${agentName} → ${config.dimension}
-- **Score**: ${scoreValue}/100
-- **Facteurs clés**: ${keyFactors || "Non disponible"}`);
-        } else {
-          scores.push(`### ${agentName} → ${config.dimension}
-- **Score**: NON DISPONIBLE (agent n'a pas retourné de score)
-- **Status**: ${result.success ? "Exécuté mais sans score" : "Échec"}`);
-        }
+        const keyFactors = this.extractKeyFactors(data, agentName);
+        lines.push(`### ${agentName} → ${dimension}
+- **Signaux clés**: ${keyFactors || "Analysé — pas de signal saillant extrait"}`);
       } else {
-        scores.push(`### ${agentName} → ${config.dimension}
-- **Score**: NON EXÉCUTÉ
-- **Impact**: Dimension non évaluée, confiance réduite`);
+        lines.push(`### ${agentName} → ${dimension}
+- **Statut**: non exécuté — dimension non couverte`);
       }
     }
 
-    return scores.length > 0 ? scores.join("\n\n") : "Aucun score Tier 1 disponible - analyse impossible.";
+    return lines.length > 0 ? lines.join("\n\n") : "Aucun signal Tier 1 disponible.";
   }
 
   private extractKeyFactors(data: Record<string, unknown>, agentName: string): string {
@@ -698,17 +638,9 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
           }
         }
         break;
-      case "team-investigator":
-        if (data.findings && typeof data.findings === "object") {
-          const findings = data.findings as Record<string, unknown>;
-          if (findings.teamComposition && typeof findings.teamComposition === "object") {
-            const team = findings.teamComposition as Record<string, unknown>;
-            if (team.complementarityScore) factors.push(`Complémentarité: ${team.complementarityScore}/100`);
-          }
-        }
-        break;
       default:
-        // Generic extraction
+        // Generic extraction (team-investigator inclus — descorisation B2 : plus de
+        // sous-note `complementarityScore`/100, on remonte les signaux qualitatifs)
         if (Array.isArray(data.keyStrengths) && data.keyStrengths.length > 0) {
           factors.push(`Forces: ${(data.keyStrengths as string[]).slice(0, 2).join(", ")}`);
         }
@@ -786,7 +718,7 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
   /**
    * Agents contributeurs Tier 1 → dimension de couverture. Liste alignée sur
-   * `extractTier1Scores` (12 dimensions horizontales).
+   * `extractTier1Signals` (12 dimensions horizontales).
    */
   private static readonly COVERAGE_DIMENSIONS: ReadonlyArray<{ agent: string; dimension: string }> = [
     { agent: "financial-auditor", dimension: "Financials" },
@@ -873,12 +805,6 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
 
   private buildTier1Synthesis(context: EnrichedAgentContext): string {
     const results = context.previousResults ?? {};
-    let totalAgents = 0;
-    let successfulAgents = 0;
-    let totalScore = 0;
-    let scoreCount = 0;
-    let lowestScore = { agent: "", score: 100 };
-    let highestScore = { agent: "", score: 0 };
 
     const tier1Agents = [
       "deck-forensics", "financial-auditor", "team-investigator", "market-intelligence",
@@ -886,49 +812,14 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
       "gtm-analyst", "customer-intel", "cap-table-auditor", "question-master"
     ];
 
-    for (const agentName of tier1Agents) {
-      totalAgents++;
-      const result = results[agentName];
-
-      if (result?.success) {
-        successfulAgents++;
-
-        if ("data" in result && result.data) {
-          const data = result.data as Record<string, unknown>;
-          let score: number | undefined;
-
-          // Try to extract score
-          if (typeof data.score === "object" && data.score !== null) {
-            const scoreObj = data.score as Record<string, unknown>;
-            if (typeof scoreObj.value === "number") score = scoreObj.value;
-          } else if (typeof data.overallScore === "number") {
-            score = data.overallScore;
-          } else if (typeof data.capTableScore === "number") {
-            score = data.capTableScore;
-          }
-
-          if (score !== undefined) {
-            totalScore += score;
-            scoreCount++;
-
-            if (score < lowestScore.score) {
-              lowestScore = { agent: agentName, score };
-            }
-            if (score > highestScore.score) {
-              highestScore = { agent: agentName, score };
-            }
-          }
-        }
-      }
-    }
-
-    const avgScore = scoreCount > 0 ? Math.round(totalScore / scoreCount) : 0;
+    // Chantier descorisation (B2) : plus de moyenne/min/max de note Tier 1
+    // (`avgScore`/100 — note de deal agrégée). On conserve uniquement la
+    // complétude OBSERVABLE (agents exécutés), qui qualifie la couverture.
+    const totalAgents = tier1Agents.length;
+    const successfulAgents = tier1Agents.filter((a) => results[a]?.success).length;
     const completeness = Math.round((successfulAgents / totalAgents) * 100);
 
     return `**Agents analysés**: ${successfulAgents}/${totalAgents} (${completeness}% completeness)
-**Score moyen**: ${avgScore}/100
-**Plus haut score**: ${highestScore.agent} (${highestScore.score}/100)
-**Plus bas score**: ${lowestScore.agent} (${lowestScore.score}/100)
 
 ${completeness < 70 ? "⚠️ **ATTENTION**: Données incomplètes, confiance réduite" : "✅ Données suffisantes pour une analyse fiable"}`;
   }
@@ -948,16 +839,14 @@ ${completeness < 70 ? "⚠️ **ATTENTION**: Données incomplètes, confiance r�
       if (result?.success && "data" in result && result.data) {
         const data = result.data as Record<string, unknown>;
 
-        // Extract key info
-        const sectorScore = (data.executiveSummary as Record<string, unknown>)?.sectorScore ??
-                          (data.sectorFit as Record<string, unknown>)?.score ?? "N/A";
+        // Extract key info — descorisation B2 : plus de note sectorielle /100
+        // injectée ; on remonte le verdict qualitatif + forces/concerns sourcés.
         const verdict = (data.executiveSummary as Record<string, unknown>)?.verdict ?? "N/A";
         const topStrengths = (data.executiveSummary as Record<string, unknown>)?.topStrengths ?? [];
         const topConcerns = (data.executiveSummary as Record<string, unknown>)?.topConcerns ?? [];
 
         return `**Expert**: ${expert}
-**Score sectoriel**: ${sectorScore}/100
-**Verdict**: ${verdict}
+**Verdict sectoriel**: ${verdict}
 
 **Top Strengths**:
 ${Array.isArray(topStrengths) ? topStrengths.map((s: string) => `- ${s}`).join("\n") : "N/A"}
@@ -980,15 +869,15 @@ ${Array.isArray(topConcerns) ? topConcerns.map((c: string) => `- ${c}`).join("\n
 
     const data = contradictionResult.data as Record<string, unknown>;
     const contradictions = data.contradictions as Array<Record<string, unknown>> | undefined;
-    const consistencyScore = data.consistencyScore as number | undefined;
 
+    // Descorisation B2 : plus de « Score de cohérence /100 » injecté (le wording
+    // score/100 réactive la forme de sortie retirée). On garde le nombre et le
+    // contenu OBSERVABLES des incohérences détectées.
     if (!contradictions || contradictions.length === 0) {
-      return `**Score de cohérence**: ${consistencyScore ?? "N/A"}/100
-Aucune incohérence majeure détectée entre les agents.`;
+      return "Aucune incohérence majeure détectée entre les agents.";
     }
 
-    let output = `**Score de cohérence**: ${consistencyScore ?? "N/A"}/100
-**${contradictions.length} incohérences détectées**:\n\n`;
+    let output = `**${contradictions.length} incohérences détectées**:\n\n`;
 
     for (const c of contradictions.slice(0, 5)) {
       output += `- **${c.severity}**: ${c.topic}
@@ -1005,7 +894,7 @@ Aucune incohérence majeure détectée entre les agents.`;
     const conditionsResult = results["conditions-analyst"];
 
     if (!conditionsResult?.success || !("data" in conditionsResult) || !conditionsResult.data) {
-      return "Conditions analyst non exécuté. Les conditions ne sont pas intégrées dans le scoring.";
+      return "Conditions analyst non exécuté. Les conditions ne sont pas intégrées dans la synthèse.";
     }
 
     const data = conditionsResult.data as Record<string, unknown>;
