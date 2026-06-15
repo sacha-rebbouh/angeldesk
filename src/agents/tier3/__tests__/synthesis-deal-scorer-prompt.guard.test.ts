@@ -4,8 +4,9 @@
  *
  * Garantit que le prompt système SDS (extrait nominal dans fichier compagnon)
  * ne contient plus la directive bannie "Answer only if you are >90% confident"
- * ni ses variantes, et qu'il instruit le LLM en orientation native (non
- * prescriptive).
+ * ni ses variantes, qu'il ne demande plus de note de deal au LLM (nettoyage
+ * dé-scorisation — machinerie de score retirée), et qu'il conserve la tonalité
+ * non prescriptive.
  *
  * Le source brut entier du fichier compagnon doit être propre des motifs
  * bannis, y compris dans les commentaires (cf. règle A9-helpers de
@@ -71,12 +72,29 @@ describe("SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT — runtime invariant (Phase A v12
     expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/penalised\s+9\s+points/i);
   });
 
-  it("instruit le LLM en orientation native (cf. grille §6)", () => {
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/very_favorable/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/favorable/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/contrasted/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/vigilance/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/alert_dominant/);
+  it("nettoyage dé-scorisation — ne demande plus AUCUNE note de deal au LLM (champs de score retirés)", () => {
+    // La machinerie de score (champs de sortie note/dimension) est retirée du
+    // prompt : `transformResponse` la jetait ; l'orientation et la solidité sont
+    // dérivées DÉTERMINISTIQUEMENT en aval depuis les signaux consolidés.
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/dimensionScores/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/scoreBreakdown/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/marketPosition/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/"score"\s*:/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/"grade"\s*:/);
+    // Plus de grille Score→orientation : l'orientation native n'est plus pilotée
+    // par le LLM (P2 : `verdict`/`action` du LLM déjà ignorés ; ici on cesse de
+    // la demander). Les valeurs d'enum d'orientation ne sont plus instruites.
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/very_favorable/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/alert_dominant/);
+  });
+
+  it("dé-scorisation — demande bien l'analyse qualitative SOURCÉE que transformResponse lit", () => {
+    // Les champs réellement consommés par `transformResponse` restent instruits.
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/topStrengths/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/topWeaknesses/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/recommendation/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/rationale/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/redFlags/);
   });
 
   it("conserve la règle anti-prescriptive (TONALITE — REGLE ABSOLUE)", () => {
@@ -88,13 +106,14 @@ describe("SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT — runtime invariant (Phase A v12
     expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/"GO"\s*\/\s*"NO-GO"\s*\/\s*"Dealbreaker"/);
   });
 
-  it("conserve les 6 dimensions de scoring (dimension Exit retirée — anti-oraculaire)", () => {
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Team\(26%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Financials\(21%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Market\(16%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/GTM\(16%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Product\(16%\)/);
-    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).toMatch(/Competitive\(5%\)/);
+  it("nettoyage dé-scorisation — plus de tables de scoring pondérées par dimension (Exit toujours bannie)", () => {
+    // Les pondérations par dimension (Team(26%)…) + la formule pondérée +
+    // les barèmes 0-100 étaient de la machinerie de score (moyenne pondérée
+    // jetée par transformResponse) → retirés.
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/Team\(\d+%\)/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/Financials\(\d+%\)/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/Score\s*=\s*Σ/);
+    expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/\b85-100\b/);
     // Doctrine anti-oraculaire : la dimension de scoring "Exit" ne doit JAMAIS revenir
     // (l'exit-strategist a été retiré du pipeline ; pas de projection multiple/IRR/exit).
     expect(SYNTHESIS_DEAL_SCORER_SYSTEM_PROMPT).not.toMatch(/Exit\(\d+%\)/);
