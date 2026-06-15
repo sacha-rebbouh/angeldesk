@@ -59,6 +59,7 @@ import {
   deriveScoreIndependentOrientation,
   decideNotExploitable,
   deepStripScoreMentions,
+  DOCTRINE_ORIENTATION_CONFIG,
 } from "@/services/signal-profile";
 import type {
   AnalysisSignalProfile,
@@ -509,7 +510,24 @@ Produis le JSON complet selon le format spécifié dans le system prompt.`;
     // (orientation + signalProfile dérivés des red flags consolidés + couverture
     // + solidité), donc relancer pour ce breakdown n'a plus d'objet. Aligné avec
     // le budget deadline-aware P2-d (un appel borné, pas de seconde génération).
-    const { data } = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt, SYNTHESIS_LLM_CALL_OPTIONS);
+    //
+    // Fallback DÉTERMINISTE (chantier fallback SDS) : si l'appel LLM échoue
+    // (timeout 100s SYNTHESIS_LLM_CALL_OPTIONS / erreur modèle), on ne propage
+    // PAS l'échec (success:false → « analyse partielle » alors que les 12 agents
+    // ont produit des données). On restitue l'orientation scoreless dérivée 100%
+    // du contexte via une synthèse de signaux propre et lisible
+    // (buildFallbackSynthesis). Le log ops permet de surveiller le taux de
+    // fallback. `transformResponse` (chemin nominal) reste hors du try : seul
+    // l'échec de l'APPEL LLM déclenche le repli, pas un bug de transformation.
+    let data: LLMSynthesisResponse;
+    try {
+      ({ data } = await this.llmCompleteJSON<LLMSynthesisResponse>(prompt, SYNTHESIS_LLM_CALL_OPTIONS));
+    } catch (err) {
+      console.warn(
+        `[synthesis-deal-scorer] LLM synthesis call failed (${err instanceof Error ? err.message : String(err)}) — falling back to deterministic signal-derived synthesis`,
+      );
+      return this.buildFallbackSynthesis(context);
+    }
 
     // Transform and validate the response (dérivation 100% scoreless).
     // Chantier P4 — l'ancien bloc F37 (percentile DE SCORE via percentile-calculator
@@ -1319,6 +1337,158 @@ Aucune incohérence majeure détectée entre les agents.`;
     // solidité ni les métriques observables / « X/10 »). Le nettoyage du prompt
     // lui-même reste une micro-étape P4 ultérieure.
     return deepStripScoreMentions(result);
+  }
+
+  /**
+   * Fallback DÉTERMINISTE de synthèse (chantier fallback SDS).
+   *
+   * Déclenché quand l'appel LLM de synthèse échoue (timeout 100s
+   * SYNTHESIS_LLM_CALL_OPTIONS / erreur modèle). Au lieu de propager l'échec
+   * (success:false → analyse « partielle » alors que les 12 agents ont produit
+   * des données), on restitue l'orientation SCORELESS dérivée 100% du contexte :
+   * la MÊME dérivation déterministe que `transformResponse` (red flags
+   * consolidés cross-agent + couverture par dimension + solidité des preuves),
+   * composée en une synthèse propre et lisible — SANS couche éditoriale LLM et
+   * SANS formulation d'échec côté utilisateur (décision produit Sacha A1).
+   *
+   * Conservateur : sans les forces sourcées par le LLM, `favorableSignalCount`
+   * est nul → la branche favorable de `deriveScoreIndependentOrientation` ne peut
+   * PAS qualifier favorable/very_favorable (plafond `contrasted`). La branche
+   * défavorable (intensité des alertes) reste pleinement pilotée par les signaux
+   * consolidés du contexte. Les badges orientation/solidité de la carte et le
+   * détail par dimension (Tier 1/2) restent affichés inchangés.
+   *
+   * `transformResponse` reste INCHANGÉ (byte-équivalence durable du chemin
+   * nominal replayé en stepwise) : méthode SÉPARÉE, la petite dérivation
+   * déterministe est volontairement dupliquée plutôt que d'extraire et toucher
+   * le chemin nominal testé.
+   */
+  private buildFallbackSynthesis(context: EnrichedAgentContext): SynthesisDealScorerData {
+    // Dérivation scoreless — inputs 100% contexte (jamais un score), miroir de
+    // transformResponse mais avec ZÉRO signal favorable (aucune force LLM).
+    const consolidatedFlags = this.buildRedFlagDedup(context).getConsolidated();
+    const criticalFlagCount = consolidatedFlags.filter((f) => f.severity === "CRITICAL").length;
+    const highFlagCount = consolidatedFlags.filter((f) => f.severity === "HIGH").length;
+    const intensity = deriveSynthesisSignalIntensity(criticalFlagCount, highFlagCount);
+
+    const dimensionCoverage = this.buildDimensionCoverage(context);
+    const coveredDimensionCount = dimensionCoverage.filter((d) => d.level === "covered").length;
+    const totalDimensionCount = dimensionCoverage.length;
+
+    const solidity = buildEvidenceSolidityForContext(context);
+
+    const finalVerdict = deriveScoreIndependentOrientation({
+      intensity,
+      favorableSignalCount: 0,
+      coveredDimensionCount,
+      totalDimensionCount,
+      evidenceSolidity: solidity.value,
+    });
+
+    const notExploitable = decideNotExploitable({
+      coveredDimensionCount,
+      totalDimensionCount,
+      evidenceSolidity: solidity.value,
+    });
+
+    const unfavorableSignals = this.buildUnfavorableSignals(consolidatedFlags);
+    const criticalRiskRefs = this.buildCriticalRiskRefs(consolidatedFlags);
+
+    const signalProfile: AnalysisSignalProfile = {
+      orientation: toDoctrineOrientation(finalVerdict, { notExploitable }),
+      evidenceSolidity: solidity.value,
+      evidenceSolidityRationale: solidity.rationale,
+      // Modèle positif explicite : aucune force LLM disponible → signaux
+      // favorables vides ; seuls les signaux défavorables consolidés sont portés.
+      dominantSignals: [...unfavorableSignals],
+      dimensionCoverage,
+      criticalRisks: criticalRiskRefs,
+    };
+
+    // Risques critiques restitués (top-level) — dérivés des flags consolidés
+    // CRITICAL (le LLM n'a fourni aucun redFlags exploitable).
+    const criticalRisks = criticalRiskRefs
+      .map((r) => r.description)
+      .filter((d): d is string => typeof d === "string" && d.trim() !== "")
+      .slice(0, 8);
+
+    const rationale = this.composeFallbackNarrative({
+      orientation: signalProfile.orientation,
+      unfavorableSignals,
+      criticalRiskCount: criticalRisks.length,
+      coveredDimensionCount,
+      totalDimensionCount,
+    });
+
+    const result: SynthesisDealScorerData = {
+      verdict: finalVerdict,
+      investmentRecommendation: {
+        // Déterministe : `action` reflète `finalVerdict` (orientation scoreless),
+        // jamais une valeur LLM (aucune ici).
+        action: finalVerdict,
+        rationale,
+      },
+      keyStrengths: [],
+      // Vide : aucune force/faiblesse éditoriale du LLM. Les lacunes structurantes
+      // sont déjà portées par la couverture par dimension (signalProfile + narratif).
+      keyWeaknesses: [],
+      criticalRisks,
+      signalContribution: this.buildSignalContribution(finalVerdict, context),
+      signalProfile,
+    };
+
+    // Cohérence avec le chemin nominal : scrub final idempotent (aucune note de
+    // deal ne doit subsister, y compris dans les statements de red flags repris).
+    return deepStripScoreMentions(result);
+  }
+
+  /**
+   * Compose un narratif de synthèse DÉTERMINISTE, lisible et anti-prescriptif,
+   * à partir des seuls signaux consolidés (orientation doctrine, signaux
+   * défavorables dominants, risques critiques, couverture). Aucune note de deal,
+   * aucune formulation d'échec : le narratif se lit comme une synthèse normale
+   * (décision produit Sacha A1). Chaque phrase est un constat factuel — l'outil
+   * rapporte les signaux, le BA décide.
+   */
+  private composeFallbackNarrative(input: {
+    orientation: AnalysisSignalProfile["orientation"];
+    unfavorableSignals: DominantSignal[];
+    criticalRiskCount: number;
+    coveredDimensionCount: number;
+    totalDimensionCount: number;
+  }): string {
+    const { orientation, unfavorableSignals, criticalRiskCount, coveredDimensionCount, totalDimensionCount } = input;
+    const coverage = `${coveredDimensionCount}/${totalDimensionCount} dimensions couvertes.`;
+    const detailPointer = "Le détail par dimension est disponible ci-dessous.";
+
+    if (orientation === "not_exploitable") {
+      return `Non exploitable. La base de preuves est insuffisante pour dériver une orientation fiable (${coveredDimensionCount}/${totalDimensionCount} dimensions couvertes). ${detailPointer}`;
+    }
+
+    const parts: string[] = [`${DOCTRINE_ORIENTATION_CONFIG[orientation].label}.`];
+
+    if (unfavorableSignals.length > 0) {
+      const plural = unfavorableSignals.length > 1;
+      const top = unfavorableSignals
+        .slice(0, 3)
+        .map((s) => (s.source ? `${s.statement} (${s.source})` : s.statement))
+        .join(" ; ");
+      parts.push(
+        `L'analyse croisée des ${totalDimensionCount} dimensions fait ressortir ${unfavorableSignals.length} signal${plural ? "aux" : ""} défavorable${plural ? "s" : ""} dominant${plural ? "s" : ""} : ${top}.`,
+      );
+    } else {
+      parts.push(`L'analyse croisée des ${totalDimensionCount} dimensions n'a pas fait ressortir de signal défavorable dominant.`);
+    }
+
+    if (criticalRiskCount > 0) {
+      const plural = criticalRiskCount > 1;
+      parts.push(`${criticalRiskCount} risque${plural ? "s" : ""} critique${plural ? "s" : ""} identifié${plural ? "s" : ""}.`);
+    }
+
+    parts.push(coverage);
+    parts.push(detailPointer);
+
+    return parts.join(" ");
   }
 
   /**

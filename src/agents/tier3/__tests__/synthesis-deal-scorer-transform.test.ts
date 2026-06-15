@@ -15,7 +15,7 @@
  * sans changer la visibilité publique de l'API.
  */
 
-import { describe, expect, it, beforeAll, vi } from "vitest";
+import { describe, expect, it, beforeAll, afterEach, vi } from "vitest";
 
 // Stub OpenRouter API key avant tout import — l'instanciation du singleton
 // SDS charge transitivement `@/services/openrouter/router` qui initialise
@@ -443,5 +443,127 @@ describe("P2 — orientation SCORELESS (poisoned score + modèle positif)", () =
     expect(result.keyStrengths.join(" ")).toContain("Equipe technique");
     expect(result.signalProfile.dominantSignals.some((s) => s.statement.includes("Equipe technique"))).toBe(true);
     expect(result.signalProfile.dominantSignals.some((s) => s.statement.includes("Marge brute faible"))).toBe(true);
+  });
+});
+
+// ===========================================================================
+// Chantier fallback SDS — buildFallbackSynthesis : échec LLM → synthèse
+// déterministe PROPRE (scoreless, conservatrice, sans formulation d'échec)
+// ===========================================================================
+
+// `buildFallbackSynthesis` est private — même pattern de cast que transformResponse.
+type BuildFallbackFn = (context: EnrichedAgentContext) => SynthesisDealScorerData;
+const buildFallbackSynthesis = (
+  synthesisDealScorer as unknown as { buildFallbackSynthesis: BuildFallbackFn }
+).buildFallbackSynthesis.bind(synthesisDealScorer);
+
+describe("buildFallbackSynthesis — repli déterministe sur échec LLM", () => {
+  it("branche défavorable correcte : red flag CRITICAL → verdict 'alert_dominant' / orientation 'alert'", () => {
+    const ctx = makeCoverageContext(10, {
+      "financial-auditor": [{ severity: "CRITICAL", title: "Fraude comptable suspectée", description: "écarts majeurs" }],
+    });
+    const result = buildFallbackSynthesis(ctx);
+    expect(result.verdict).toBe("alert_dominant");
+    expect(result.signalProfile.orientation).toBe("alert");
+  });
+
+  it("conservateur : couverture large SANS forces LLM → plafond 'contrasted' (jamais favorable)", () => {
+    // En repli, favorableSignalCount = 0 (aucune force LLM) → la branche positive
+    // ne peut PAS qualifier favorable/very_favorable, quel que soit le contexte.
+    const ctx = makeCoverageContext(10);
+    const result = buildFallbackSynthesis(ctx);
+    expect(result.verdict).toBe("contrasted");
+    expect(result.signalProfile.orientation).toBe("contrasted");
+  });
+
+  it("aucune couche éditoriale LLM : keyStrengths + keyWeaknesses vides", () => {
+    const ctx = makeCoverageContext(10);
+    const result = buildFallbackSynthesis(ctx);
+    expect(result.keyStrengths).toEqual([]);
+    expect(result.keyWeaknesses).toEqual([]);
+  });
+
+  it("contrat structurel : signalProfile.orientation + dimensionCoverage (12) + cohérence signalContribution", () => {
+    const ctx = makeCoverageContext(7);
+    const result = buildFallbackSynthesis(ctx);
+    expect(typeof result.signalProfile.orientation).toBe("string");
+    expect(result.signalProfile.dimensionCoverage).toHaveLength(12);
+    expect(result.signalContribution.orientation).toBe(result.verdict);
+  });
+
+  it("narratif PROPRE : aucune formulation d'échec/dégradation côté utilisateur", () => {
+    const ctx = makeCoverageContext(10, {
+      "market-intelligence": [{ severity: "HIGH", title: "TAM surestimé" }],
+    });
+    const narrative = buildFallbackSynthesis(ctx).investmentRecommendation.rationale;
+    expect(
+      narrative,
+      "le narratif ne doit contenir aucun langage d'excuse / panne",
+    ).not.toMatch(/n'a pas pu|impossible|échec|echec|erreur|indisponible|timeout|dégrad|degrad|temps imparti|réessay|reessay/i);
+    // Contenu déterministe attendu (constats factuels).
+    expect(narrative).toMatch(/dimensions couvertes/);
+    expect(narrative).toMatch(/signal\w* défavorable\w* dominant/);
+    expect(narrative).toContain("TAM surestimé");
+  });
+
+  it("narratif anti-prescriptif + sans note de deal (X/100, grade)", () => {
+    const ctx = makeCoverageContext(10, {
+      "financial-auditor": [{ severity: "CRITICAL", title: "Valorisation P95 du secteur" }],
+    });
+    const result = buildFallbackSynthesis(ctx);
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toMatch(/\d{1,3}\s*\/\s*100/);
+    expect(serialized).not.toMatch(/\bgrade\s*:?\s*[A-F]\b/i);
+    expect(result.investmentRecommendation.rationale).not.toMatch(/\b(investir|rejeter|passer|go|no-go|dealbreaker)\b/i);
+  });
+
+  it("criticalRisks restitués depuis les flags CRITICAL consolidés", () => {
+    const ctx = makeCoverageContext(8, {
+      "team-investigator": [{ severity: "CRITICAL", title: "Départ du CTO non annoncé", description: "CTO parti" }],
+    });
+    const result = buildFallbackSynthesis(ctx);
+    expect(result.criticalRisks.length).toBeGreaterThanOrEqual(1);
+    expect(result.signalProfile.criticalRisks[0].severity).toBe("CRITICAL");
+  });
+
+  it("non exploitable : contexte vide → orientation 'not_exploitable' + narratif dédié (sans note)", () => {
+    const result = buildFallbackSynthesis(makeMockContext());
+    expect(result.signalProfile.orientation).toBe("not_exploitable");
+    expect(result.investmentRecommendation.rationale).toMatch(/Non exploitable/);
+    expect(result.investmentRecommendation.rationale).not.toMatch(/\d{1,3}\s*\/\s*100/);
+  });
+});
+
+describe("execute — repli sur échec de l'appel LLM (try/catch)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("llmCompleteJSON rejette (timeout) → execute renvoie la synthèse de repli, sans throw", async () => {
+    const ctx = {
+      canonicalDeal: { name: "TestCo", stage: "seed", sector: "saas" },
+      previousResults: makeCoverageContext(10, {
+        "market-intelligence": [{ severity: "HIGH", title: "TAM surestimé" }],
+      }).previousResults,
+    } as unknown as EnrichedAgentContext;
+
+    const spy = vi
+      .spyOn(
+        synthesisDealScorer as unknown as { llmCompleteJSON: (...args: unknown[]) => Promise<unknown> },
+        "llmCompleteJSON",
+      )
+      .mockRejectedValue(new Error("LLM JSON call timed out after 100000ms"));
+
+    type ExecuteFn = (context: EnrichedAgentContext) => Promise<SynthesisDealScorerData>;
+    const execute = (synthesisDealScorer as unknown as { execute: ExecuteFn }).execute.bind(synthesisDealScorer);
+
+    const result = await execute(ctx);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Signature du repli : pas de forces LLM, narratif déterministe.
+    expect(result.keyStrengths).toEqual([]);
+    expect(result.investmentRecommendation.rationale).toMatch(/dimensions couvertes/);
+    // Égalité avec le builder déterministe appelé sur le même contexte.
+    expect(result).toEqual(buildFallbackSynthesis(ctx));
   });
 });
