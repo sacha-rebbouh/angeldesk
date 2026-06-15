@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Synthèse SDS — étape B2 — nettoyage user-prompt mission + builders Tier 1 (scoreless)
+
+### Fichiers
+- `src/agents/tier3/synthesis-deal-scorer.ts` : `execute()` — retrait du calcul de pondérations (+ import `@/scoring/stage-weights`, inutilisé ailleurs) ; section prompt `SCORES BRUTS TIER 1` → `SIGNAUX TIER 1` ; MISSION réécrite (plus de `CALCULE LE SCORE PONDÉRÉ Σ` / table de poids / `AJUSTE -10/-20` / mapping `85-100→very_favorable` / `DONNE LE PROFIL DE SIGNAL`) ; RAPPELS (retrait `MONTRE TOUS LES CALCULS` / `score.value=Σ` / `score>40`) ; CONCISION alignée scoreless. Builders : `extractTier1Scores`→`extractTier1Signals` (facteurs qualitatifs, plus de `score.value/100`), `extractKeyFactors` (team sans `complementarityScore/100`), `buildTier1Synthesis` (complétude observable seule). **Findings Codex** : aussi nettoyés `Score sectoriel/100` (extractTier2Data → verdict qualitatif), `Score de cohérence/100` (extractContradictions → nombre + contenu), `bonus/malus du score global` + `pour le scoring` + description `score pondéré` + `intégrées dans le scoring`.
+
+### Description
+**Fix synthèse SDS, étape B2 (gaté Codex APPROVE après 1 REQUEST_CHANGES).** Complète B1 côté user-prompt : ni la mission, ni les builders n'injectent plus de note/score dans le contexte LLM. Le LLM ne calcule plus de moyenne pondérée (orientation dérivée déterministiquement en aval). **REQUEST_CHANGES Codex (correct, appliqué + arbitrage de scope tranché)** : les injections adjacentes `Score sectoriel/100` et `Score de cohérence/100` devaient être nettoyées DANS B2 (pas en follow-up) — le wording `Score …/100` réactive la forme retirée ; le verdict sectoriel qualitatif + le nombre/contenu des incohérences restent. Grep de contrôle : plus aucune chaîne de score injectée dans le prompt (résidus `/100` = commentaires d'explication). Le prompt alimente toujours `transformResponse` (champs réellement lus). DURABILITÉ : sortie d'agent inchangée, prompt non persisté → pas de bump `STEPWISE_GRAPH_VERSION`. Qualité réelle du JSON à confirmer au re-test E2E payé. tsc 0 ; suite unit complète 4548 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-15 — Synthèse SDS — étape B1 — nettoyage prompt système (retrait machinerie de score)
 
 ### Fichiers
@@ -325,14 +334,5 @@ Décision produit Sacha (AskUserQuestion, Q2 listes) : remplacer la note de deal
 
 ### Description
 Étape 3/4 de tier1-results.tsx : le résumé bascule du score moyen /100 vers le modèle 2 axes verbal (orientation × solidité). Les chips par dimension sont **score-indépendants** (intensité de signal uniquement). **Gate Codex APPROVE après push-back argumenté** : 1er tour REQUEST_CHANGES (le BadgePair de solidité expose `aggregateSolidity`, qui en dernier fallback dérive une solidité verbale depuis `deck-coherence-checker.coherenceScore`). Push-back vérifié contre le codebase et accepté : `coherenceScore` est une métrique de cohérence/fiabilité **documentaire** (signal evidence-first listé par la doctrine pour la solidité), pas la note de deal ; la sortie est verbale, le nombre jamais rendu ; c'est le pattern déjà verrouillé par P3-b (`buildDecisionStripModel` dérive `coherenceBand` de `coherenceScore`, lock `doctrine-runtime-guard.test.ts:310-319`) ; le retirer ferait diverger la solidité du BadgePair de la bande de cohérence du decision-strip (incohérence cross-surface). Nuance de vocabulaire actée : `aggregateSolidity` n'est pas « score-indépendant » au sens strict (peut utiliser ce score documentaire interne), mais reste conforme (pas de note de deal restituée, pas de dérivation d'orientation depuis une note cachée). Reste C4 : cleanup des 4 vars mortes `scoreValue` (induites par C1). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 77 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 9/N (C2) — tier1-results.tsx : sous-scores numériques par dimension retirés
-
-### Fichiers
-- `src/components/deals/tier1-results.tsx` : retrait des sous-scores d'appréciation 0-100 restitués par dimension (anti-pattern `dimensionScores[].score`). (1) Carte équipe : grille 3 tuiles `technicalStrength`/`businessStrength`/`complementarityScore` supprimée (aucun verdict verbal companion). (2) Carte équipe : ligne par fondateur `domainExpertise`/`entrepreneurialExperience` (/100) supprimée. (3) Carte concurrence : barre de progression + `overallMoatStrength`/100 supprimées (la barre visualisait le score) — verdict verbal `moatVerdict` (MOAT_LABELS) **conservé**. (4) Carte deck : grille `storyCoherence`/`professionalismScore`/`transparencyScore` supprimée. (5) Carte customer : `pmfScore`/100 supprimé — verdict verbal `pmfVerdict` (PMF_LABELS) **conservé**. (6) Carte question-master : grille `agentsAnalyzed` affichait `grade` (A-F) + `score` (0-100) coloré par score → retiré ; **conservés** le nom d'agent + le compteur observable `criticalRedFlagsCount`.
-
-### Description
-Étape 2/4 de tier1-results.tsx : suppression des notes d'appréciation par dimension. Principe : retirer les nombres d'appréciation du deal, conserver les verdicts verbaux existants (`moatVerdict`/`pmfVerdict`, pas de re-dérivation depuis un score) et les comptes observables (`criticalRedFlagsCount`), **sans inventer de contenu de remplacement** (choix produit/UX réservé à l'utilisateur, YAGNI). Allowlist conservée : métriques observables (NRR/churn %, ACV, CAC, croissance %, percentiles de métriques, dilution/parts %), confiance ReAct par item (`reactData.confidence.score`%, non une note de deal). **Gate Codex APPROVE** (aucun nit). Hors périmètre, suivront : résumé `avgScore`/`dim.score` (C3) ; 4 vars mortes `scoreValue` induites par C1 (C4 cleanup). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; tests ciblés tier1/doctrine 54 passed.
 
 ---
