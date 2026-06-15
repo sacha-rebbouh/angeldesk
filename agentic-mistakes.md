@@ -26,6 +26,7 @@
 | 2026-06-11 | RECHERCHE | Affirmé "aucun AUTRE chemin n'écrit Deal.growthRate" depuis un grep `growthRate:` (object-literal) sur-filtré ; raté l'assignation par propriété `updateData.growthRate = info.growthRateYoY` (persistence orchestrateur) — Codex l'a trouvée au 1er tour du gate |
 | 2026-06-12 | EXÉCUTION | `codex exec` lancé avec prompt en argument sans TTY → process gelés 0% CPU ~50 min, annoncé « ça tourne » sur la foi du statut `running` ; fix = pattern stdin/-o du gate + vérif CPU/sortie sous 30 s |
 | 2026-06-14 | COMMUNICATION | Proposé des remplacements "score-like" en question produit alors que la directive était « dégager tous les scores » (sur-généralisation Q1/Q2, sur-sollicitation) |
+| 2026-06-15 | VÉRIFICATION | Cru tsc vert via l'exit code d'un `echo` final, pas la sortie réelle (Codex a rattrapé l'échec tsc) |
 
 ---
 
@@ -216,3 +217,11 @@
 - **Comment corrigé** : Sacha a recadré sèchement. Bascule en suppression pure (G1 : retrait des 5 lignes + machinerie route, observables conservés ; gate APPROVE). Plus de question produit pour ce type de cas.
 - **Impact** : 1 aller-retour de friction + agacement utilisateur.
 - **Lesson** : sur un chantier dont le PRINCIPE est « retirer X », le défaut est SUPPRIMER X, pas proposer un substitut. Ne réintroduire un remplacement verbal que s'il existe un slot mono-signal évident (overview BadgePair, chip per-deal) ET sans recréer une lecture score-like (comparaison par dimension, moyenne, distribution = scoring déguisé). Ne poser une question produit que s'il y a une vraie fourche NON déjà tranchée par la directive de fond ; sinon, supprimer et continuer.
+
+### 2026-06-15 — VÉRIFICATION — Cru tsc vert via l'exit code d'un `echo` final, pas via la sortie réelle (Codex a rattrapé l'échec tsc)
+- **Contexte** : P5-a.1 du chantier dé-scorisation. Après avoir retiré les champs de score du cluster chat, j'ai lancé `npx tsc --noEmit 2>&1 | head -40; echo "=== tsc exit: ${PIPESTATUS[0]} ==="` en arrière-plan (`run_in_background`), puis annoncé « tsc passe (exit 0) » sur la foi de la notification de tâche « exit code 0 ».
+- **Erreur** : l'exit code rapporté par la notification de la commande en arrière-plan = celui de la DERNIÈRE commande de la ligne (le `echo`, toujours 0), PAS celui de `tsc`. tsc échouait en réalité (10 erreurs TS2339 dans `chat/[dealId]/route.ts` : le route reconstruisait `canonicalDeal.*Score` depuis un select qui ne les exposait plus). Je n'ai jamais lu le fichier de sortie (le `head -40` aurait montré les erreurs).
+- **Cause racine du raisonnement** : confusion entre l'exit code de la commande COMPOSITE et celui de l'étape qui m'intéresse ; lecture de la notification de statut au lieu de la sortie réelle. `${PIPESTATUS[0]}` était correct dans le texte du `echo`, mais le `echo` lui-même remettait le code de sortie global à 0, et la notification rapporte ce code global. = CLAIM SANS VERIFICATION (verification-before-completion).
+- **Comment corrigé** : Codex (gate P5-a.1) a renvoyé REQUEST_CHANGES « tsc échoue, erreur dans le cluster chat ». Re-run en lisant la sortie réelle (`tsc > f 2>&1; rc=$?; grep -c "error TS" f`) → échec confirmé, fix appliqué (route + FullChatContext + tests).
+- **Impact** : 1 round de gate gaspillé (REQUEST_CHANGES évitable). Aucun commit erroné (le gate a bloqué avant).
+- **Lesson** : pour vérifier une commande dont le STATUT compte (tsc, vitest, build), ne pas terminer la ligne par un `echo` puis lire la notification — soit lire la SORTIE réelle (fichier/stdout) et compter les erreurs, soit capturer l'exit de la commande elle-même (`cmd > f 2>&1; rc=$?`). En arrière-plan, la notification rapporte le code de la commande COMPOSITE, pas de l'étape voulue. Evidence = lire la sortie, jamais un proxy.
