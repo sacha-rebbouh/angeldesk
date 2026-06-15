@@ -215,6 +215,12 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
 
   const handleRelaunch = useCallback(async () => {
     setIsRelaunching(true);
+    // OPTIMISTE : poser le signal de lancement AVANT le POST → le masque (overlay)
+    // s'affiche immédiatement au clic, sans subir la latence de /api/analyze (auth +
+    // checks DB séquentiels + dispatch Inngest, ~30 s à froid). La fenêtre de grâce
+    // couvre le démarrage worker ; on RETIRE le signal seulement si le lancement
+    // échoue réellement (crédits insuffisants / erreur).
+    queryClient.setQueryData(queryKeys.analyses.launchedAt(dealId), Date.now());
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
@@ -225,37 +231,37 @@ export function AnalysisV2Live({ dealName, vm, dealId, hideHeader, initialActive
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         if (res.status === 403 || err.upgradeRequired) {
+          // Lancement refusé (crédits) → rollback du masque optimiste.
+          queryClient.setQueryData(queryKeys.analyses.launchedAt(dealId), 0);
           toast.error(err.error || "Crédits insuffisants pour relancer l'analyse", {
             action: { label: "Acheter des crédits", onClick: () => router.push("/pricing") },
           });
           return;
         }
         if (res.status === 409) {
-          // Analyse déjà en cours pour ce deal : on bascule sur le suivi live — le
-          // polling captera la progression jusqu'au résultat.
+          // Analyse déjà en cours pour ce deal : on garde le masque + bascule sur le
+          // suivi live — le polling captera la progression jusqu'au résultat.
           watchedIdRef.current = null;
           activeSinceRef.current = Date.now();
           setIsActive(true);
           queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
-          // Signal de lancement → l'overlay s'affiche immédiatement (fenêtre de grâce).
-          queryClient.setQueryData(queryKeys.analyses.launchedAt(dealId), Date.now());
           toast.info(err.error || "Une analyse est déjà en cours pour ce deal.");
           return;
         }
         throw new Error(err.error || "Échec du lancement de l'analyse");
       }
 
-      // Succès (QUEUED / RESERVED / RESUMING) : bascule client immédiate sur le suivi,
-      // sans attendre que le worker Inngest crée la ligne RUNNING (évite le trou SSR).
+      // Succès (QUEUED / RESERVED / RESUMING) : le masque est déjà affiché. Bascule
+      // client immédiate sur le suivi, sans attendre que le worker Inngest crée la
+      // ligne RUNNING (évite le trou SSR).
       watchedIdRef.current = null;
       activeSinceRef.current = Date.now();
       setIsActive(true);
       queryClient.invalidateQueries({ queryKey: queryKeys.analyses.latest(dealId) });
-      // Signal de lancement → l'overlay s'affiche immédiatement (fenêtre de grâce), sans
-      // attendre que le worker crée la ligne RUNNING (~90 s).
-      queryClient.setQueryData(queryKeys.analyses.launchedAt(dealId), Date.now());
       toast.success("Analyse relancée — suivez la progression ci-dessous.");
     } catch (error) {
+      // Échec réel du lancement → rollback du masque optimiste.
+      queryClient.setQueryData(queryKeys.analyses.launchedAt(dealId), 0);
       console.error("[AnalysisV2Live] relaunch error:", error);
       toast.error(error instanceof Error ? error.message : "Erreur lors de la relance de l'analyse");
     } finally {

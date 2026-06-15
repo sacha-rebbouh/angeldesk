@@ -49,7 +49,20 @@ export function AnalysisRunningOverlay({
   initialActive: boolean;
 }) {
   const queryClient = useQueryClient();
-  const launchedAt = (queryClient.getQueryData<number>(queryKeys.analyses.launchedAt(dealId)) ?? 0) as number;
+  // `launchedAt` doit être RÉACTIF : le bouton de lancement le pose via
+  // `setQueryData` AVANT la réponse du POST /api/analyze, et l'overlay doit
+  // re-render immédiatement pour afficher le masque au clic. Un `getQueryData`
+  // simple n'est pas réactif (pas de re-render sur `setQueryData`) → on s'abonne
+  // à la clé via un `useQuery` client-only (jamais fetché : la valeur ne vient
+  // que de `setQueryData`).
+  const { data: launchedAt = 0 } = useQuery<number>({
+    queryKey: queryKeys.analyses.launchedAt(dealId),
+    queryFn: () => queryClient.getQueryData<number>(queryKeys.analyses.launchedAt(dealId)) ?? 0,
+    enabled: false,
+    initialData: () => queryClient.getQueryData<number>(queryKeys.analyses.launchedAt(dealId)) ?? 0,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
   // Fenêtre de grâce time-dependent : useSyncExternalStore (l'horloge = source externe) au lieu
   // de Date.now() au render (react-hooks/purity). Un timer programme le re-render à l'expiration.
   const withinGrace = useSyncExternalStore(
