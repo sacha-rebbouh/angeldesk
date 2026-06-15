@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-15 — Dé-scorisation — P5-a.2 — bascule des readers du cluster CANONICAL DEAL-FIELDS off Deal.*Score
+
+### Fichiers
+- `src/services/deals/canonical-read-model.ts` (cœur, −53) : `CanonicalFieldFallbacks` (= `CanonicalDealFields`) 5 champs de score retirés ; `CanonicalDealSignals.analysisScoresByDealId` retiré + son build dans `loadCanonicalDealSignals` (early-return vide + chemin nominal) ; **`extractedInfoByDealId` CONSERVÉ** (live : sector/stage/geo) ; fonction `resolveCanonicalAnalysisScores` SUPPRIMÉE (0 caller) ; `resolveCanonicalDealFields` `const scores` + 5 sorties retirés ; import `type AnalysisScores` retiré.
+- 5 consumers (retrait des args fallback de score lus depuis `deal.*Score` + sorties ; ajout d'un `omit` Prisma des 6 colonnes note global/dimension pour fermer la fuite `include` + spread `...deal`) : `api/deals/route.ts` (utilisait `resolveCanonicalAnalysisScores` + mapping → import retiré), `api/deals/[dealId]/route.ts`, `(dashboard)/deals/page.tsx`, `(dashboard)/deals/[dealId]/page.tsx` (helper `getDeal`, `omit` de 6 — conditionsScore gardé pour a.3), `(dashboard)/dashboard/page.tsx`.
+- `src/components/deals/types.ts` : `CanonicalDealListItem.globalScore` retiré (0 consumer UI post-E).
+- Tests (suppression de couverture de SCORE uniquement) : `canonical-read-model.test.ts` (test obsolète `resolveCanonicalAnalysisScores` supprimé + I/O score retirés du test de résolution), `canonical-read-model-signal-summary.test.ts` (assertions `analysisScoresByDealId` retirées, équivalence cache hit/miss conservée via extractedInfo), `api/deals/route.test.ts` + `api/deals/[dealId]/route.test.ts` (mocks + assertions de score retirés).
+
+### Description
+**Chantier dé-scorisation, P5-a.2 (gaté Codex APPROVE après 1 REQUEST_CHANGES).** 2e micro-step de P5 : le read-model canonique (linchpin partagé par 5 surfaces) ne lit/restitue plus les colonnes de note global/dimension. **REQUEST_CHANGES Codex (correct, vérifié)** : `prisma.deal.findMany({ include })` sans `select` ramène TOUS les scalaires → `...deal` re-restituait `globalScore` etc. dans la réponse API même après retrait des reads explicites → ajout `omit` (6 colonnes) sur les 5 requêtes qui spreadent ; + correction du test détail `api/deals/[dealId]/route.test.ts` (contrat obsolète qui masquait la fuite). **Boundary** : `conditionsScore` = P5-a.3 (lectures explicites onglet Conditions) ; **note Codex pour a.3** : ajouter `conditionsScore` aux `omit` couvrira aussi les requêtes sans lecture explicite. Colonnes encore en schema (tsc vert) ; drop = P5-c → les `omit` seront retirés à ce moment. **Pas de bump `STEPWISE_GRAPH_VERSION`** (hors graphe durable). tsc 0 (lu directement) ; suite unit complète 4506 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-06-15 — Dé-scorisation — P5-a.1 — bascule des readers du cluster CHAT off Deal.*Score (scoreless)
 
 ### Fichiers
@@ -311,13 +323,4 @@ Clôture du sous-chantier PDF. `ScoreCircle`/`recLabel`/`fmtWeight` rendus morts
 
 ### Description
 « Le restitué Tier1 devient signalIntensity » (doctrine) — déjà câblé, donc aucun nouveau label dérivé d'un score (Codex : ne PAS inventer un signal verbal depuis l'ancien score). Conservés (allowlist) : métriques OBSERVABLES (NRR/churn/grossRetention/top10Percent %, benchmarks rétention), confiances/probabilités PAR ITEM (techRisks severity/probability), et `meta.confidenceLevel` par agent (confiance d'un agent sur sa propre analyse, hors `AGENT_DEAL_NOTE_KEYS` du scrubber). Producteurs intacts = P4. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (PDF) étape 4/N — tier2-expert scoreless (retrait sous-scores /100)
-
-### Fichiers
-- `src/lib/pdf/pdf-sections/tier2-expert.tsx` : 5 retraits de note de deal — (1) « Score sectoriel: X/100 » (`data.sectorScore`) ; (2) `SectorFit` « Score fit: X/100 » (`f.score`) + champ type ; (3) `AiExtended` « Score moat: X/100 » (`moat.overallMoatScore`) + champ type ; (4) `PropTechExtended` « Score résilience: X/100 » (`cycle.resilienceScore`) + champ type ; (5) `DataCompleteness` « Score brut vs plafonné: X → Y » (`scoreCapped`/`rawScore`/`cappedScore`) + champs type.
-
-### Description
-Sous-scores /100 retirés (classe `sectorScore`/`sectorFitScore` du scrubber). L'orientation sectorielle reste portée par `ExtendedVerdict` (`getTier2SectorFitLabel`, verbal). Conservés (allowlist — métriques OBSERVABLES + benchmarks/percentiles de métrique observable) : KeyMetrics + benchmarks P25/médiane/P75/topDécile, ValuationAnalysis (multiples x, percentile P, justifiedRange), UnitEconomics (CAC/LTV/ratio), EdTech retention/completion %, Biotech probabilityOfSuccess %, salesCycleMonths, similarDealsFound, nodeCount, monthlyComputeCost, availableDataPoints/expectedDataPoints (comptes), `ExtendedVerdict.confidence` (verbal). Producteurs intacts = P4. PAS de bump `STEPWISE_GRAPH_VERSION` (reste 4). Gate Codex : APPROVE (sans REQUEST_CHANGES). tsc 0 ; tests `src/lib/pdf` 18 passed.
 
