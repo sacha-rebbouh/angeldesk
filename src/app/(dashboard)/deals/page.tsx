@@ -28,16 +28,6 @@ async function getDeals(userId: string) {
       where: { userId },
       orderBy: { updatedAt: "desc" },
       take: DEALS_PAGE_CAP,
-      // P5 dé-scorisation : ne pas charger les colonnes de note (drop = P5-c)
-      omit: {
-        globalScore: true,
-        fundamentalsScore: true,
-        teamScore: true,
-        marketScore: true,
-        productScore: true,
-        financialsScore: true,
-        conditionsScore: true,
-      },
       include: {
         documents: {
           select: { id: true },

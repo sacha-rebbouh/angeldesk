@@ -96,16 +96,6 @@ export async function GET(request: NextRequest, context: RouteContext) {
         id: dealId,
         userId: user.id,
       },
-      // P5 dé-scorisation : ne pas charger les colonnes de note (drop = P5-c)
-      omit: {
-        globalScore: true,
-        fundamentalsScore: true,
-        teamScore: true,
-        marketScore: true,
-        productScore: true,
-        financialsScore: true,
-        conditionsScore: true,
-      },
       include: {
         founders: {
           select: {

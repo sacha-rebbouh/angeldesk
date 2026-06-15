@@ -63,16 +63,6 @@ export async function GET(request: NextRequest) {
       prisma.deal.count({ where }),
       prisma.deal.findMany({
         where,
-        // P5 dé-scorisation : ne pas charger les colonnes de note (drop = P5-c)
-        omit: {
-          globalScore: true,
-          fundamentalsScore: true,
-          teamScore: true,
-          marketScore: true,
-          productScore: true,
-          financialsScore: true,
-          conditionsScore: true,
-        },
         include: {
           founders: {
             select: {

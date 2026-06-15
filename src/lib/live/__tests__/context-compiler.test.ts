@@ -58,11 +58,6 @@ describe("compileDealContext", () => {
       geography: "France",
       description: "Legacy description",
       website: "https://legacy.example",
-      globalScore: 78,
-      teamScore: 80,
-      marketScore: 76,
-      productScore: 74,
-      financialsScore: 72,
       redFlags: [],
       founders: [],
     } as never);

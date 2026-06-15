@@ -58,16 +58,6 @@ async function getDashboardStats(userId: string) {
         where: { userId },
         orderBy: { updatedAt: "desc" },
         take: 5,
-        // P5 dé-scorisation : ne pas charger les colonnes de note (drop = P5-c)
-        omit: {
-          globalScore: true,
-          fundamentalsScore: true,
-          teamScore: true,
-          marketScore: true,
-          productScore: true,
-          financialsScore: true,
-          conditionsScore: true,
-        },
         include: {
           redFlags: {
             where: { status: "OPEN" },

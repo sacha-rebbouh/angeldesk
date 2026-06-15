@@ -52,16 +52,6 @@ async function getDeal(dealId: string, userId: string) {
       id: dealId,
       userId,
     },
-    // P5 dé-scorisation : ne pas charger les colonnes de note (drop = P5-c)
-    omit: {
-      globalScore: true,
-      fundamentalsScore: true,
-      teamScore: true,
-      marketScore: true,
-      productScore: true,
-      financialsScore: true,
-      conditionsScore: true,
-    },
     include: {
       founders: true,
       documents: {
