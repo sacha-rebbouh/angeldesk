@@ -1341,7 +1341,7 @@ Note: Préférences BA non configurées - calcul basé sur 10% du round plafonn�
     // Vérifications en attente basées sur les questions critiques
     const criticalQuestions = questions.filter((q) => q.priority === "CRITICAL");
     for (const q of criticalQuestions.slice(0, 5)) {
-      outstanding.push(`Vérifier: ${q.question.slice(0, 80)}...`);
+      outstanding.push(`Vérifier: ${q.question}`);
     }
 
     // Ajouter les limitations
