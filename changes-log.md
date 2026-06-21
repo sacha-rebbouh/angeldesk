@@ -1,6 +1,15 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-06-21 — Fix — mémo « Due diligence / À compléter » : questions tronquées à 80 car. + « ... »
+
+### Fichiers
+- `src/agents/tier3/memo-generator.ts` (ligne 1344) : `extractOutstandingDD` — `Vérifier: ${q.question.slice(0, 80)}...` → `Vérifier: ${q.question}` (question entière).
+
+### Description
+**Bug remonté par Sacha (screen, deal HelloCoco `cmq5i356n0001jp046gopsuev`).** Dans le bloc « Due diligence » du mémo (analysis-v2, sous-section « À compléter »), chaque ligne « Vérifier: … » était coupée (« l'isolation des donn… », « éviter les bo… »), alors que les lignes « Limitation: … » restaient entières. Cause racine : `memo-generator.extractOutstandingDD` tronquait chaque question CRITICAL à `q.question.slice(0, 80)` + suffixe `"..."` littéral au moment de la **génération du mémo** (donnée stockée pré-tronquée dans `dueDiligence.outstanding`, pas un clip CSS). Diagnostic : données question-master brutes 100 % intactes (220 questions complètes) ; aucune troncature CSS dans les renderers ; seul ce `.slice(0,80)` produisait le symptôme. Ligne 1307 (`Vérifier : ${q.question}`) ne tronquait déjà pas → cohérence rétablie. **Forward-only** : les mémos déjà générés gardent les chaînes tronquées en base ; il faut **ré-analyser** (ou backfill) pour rafraîchir HelloCoco. Fix trivial (suppression d'un slice d'affichage, skip gate Codex per routing UI/petit fix). tsc 0.
+
+---
 ## 2026-06-15 — UX — durée d'analyse en wall-clock (carte « Couverture » affichait « 0 min »)
 
 ### Fichiers
