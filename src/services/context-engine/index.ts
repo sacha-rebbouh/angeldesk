@@ -26,6 +26,7 @@ import type {
   SourceHealth,
 } from "./types";
 import { buildDealIntelligence } from "./deal-intelligence";
+import { filterCompetitorsByCategoryRelevance } from "./competitor-relevance";
 import { crawlWebsite } from "./connectors/website-crawler";
 import { resolveWebsiteUrl } from "./website-resolver";
 import { newsApiConnector } from "./connectors/news-api";
@@ -485,10 +486,15 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
     await fetchSimilarDealsParallel(query, configuredConnectors);
   const { marketData, results: marketResults } =
     await fetchMarketDataParallel(query, configuredConnectors);
-  const { competitors, results: competitorResults } =
+  const { competitors: rawCompetitors, results: competitorResults } =
     await fetchCompetitorsParallel(query, configuredConnectors);
   const { news, results: newsResults } =
     await fetchNewsParallel(query, configuredConnectors);
+
+  // Check de pertinence catégorie AVANT restitution : les connecteurs statiques
+  // matchent par secteur et ne produisent pas de vrais concurrents (cf.
+  // competitor-relevance.ts). Suppression des hors-catégorie, pas de « peut-être ».
+  const competitors = await filterCompetitorsByCategoryRelevance(rawCompetitors, query);
 
   // =========================================================================
   // AGGREGATE METRICS

@@ -78,7 +78,7 @@ function isRetryableOpenRouterError(error: unknown): boolean {
   return false;
 }
 
-async function postOpenRouterCompletion(
+export async function postOpenRouterCompletion(
   apiKey: string,
   requestTitle: string,
   payload: Record<string, unknown>

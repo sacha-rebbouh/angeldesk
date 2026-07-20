@@ -180,6 +180,12 @@ export interface Competitor {
   // Positioning
   positioning: string; // How they position themselves
   overlap: "direct" | "partial" | "adjacent";
+  /**
+   * Justification d'overlap catégorie produite par le juge de pertinence
+   * (competitor-relevance.ts). Absente = candidat jamais évalué (legacy ou
+   * fallback déterministe) — ne pas traiter comme concurrent établi.
+   */
+  overlapJustification?: string;
 
   // Metrics (if available)
   estimatedRevenue?: number;

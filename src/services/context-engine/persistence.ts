@@ -8,6 +8,7 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { sanitizeDealIntelligence } from "./deal-intelligence";
+import { sanitizeLegacyCompetitiveLandscape } from "./competitor-relevance";
 import type { DealContext } from "./types";
 
 // Default snapshot validity: 30 days
@@ -183,7 +184,9 @@ export async function loadContextSnapshot(
         snapshot.dealIntelligence as unknown as DealContext["dealIntelligence"]
       ),
       marketData: snapshot.marketData as unknown as DealContext["marketData"],
-      competitiveLandscape: snapshot.competitiveLandscape as unknown as DealContext["competitiveLandscape"],
+      competitiveLandscape: sanitizeLegacyCompetitiveLandscape(
+        snapshot.competitiveLandscape as unknown as DealContext["competitiveLandscape"]
+      ),
       newsSentiment: snapshot.newsSentiment as unknown as DealContext["newsSentiment"],
       peopleGraph: snapshot.peopleGraph as unknown as DealContext["peopleGraph"],
       websiteContent: snapshot.websiteContent as unknown as DealContext["websiteContent"],

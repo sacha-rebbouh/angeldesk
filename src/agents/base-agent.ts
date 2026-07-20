@@ -1567,7 +1567,13 @@ ${sanitizedDeal.description}
       if (cl.competitors && cl.competitors.length > 0) {
         text += `${cl.competitors.length} concurrents identifies:\n`;
         for (const c of cl.competitors.slice(0, 5)) {
-          text += `- **${c.name}** (${c.overlap}): ${c.positioning}`;
+          text += `- **${c.name}** (${c.overlap}`;
+          if (c.overlapJustification) {
+            text += ` — ${c.overlapJustification}`;
+          } else {
+            text += ` — overlap non evalue, pertinence categorie NON etablie`;
+          }
+          text += `): ${c.positioning}`;
           if (c.totalFunding) {
             text += ` - Funding: ${this.formatMoney(c.totalFunding)}`;
           }

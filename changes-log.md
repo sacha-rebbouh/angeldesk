@@ -1,6 +1,23 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 2 : concurrents hors-catégorie → juge de pertinence + garde d'élévation « omission »
+
+### Fichiers
+- `src/services/context-engine/competitor-relevance.ts` (NOUVEAU) : juge LLM léger (gpt-4o-mini via OpenRouter, 1 appel/compute, temp 0) qui classe l'overlap CATÉGORIE de chaque candidat (`direct`/`partial`/`adjacent`/`none`) avec justification — seuls `direct`/`partial` avec justification NON VIDE restitués comme concurrents ; doute/adjacent/none/sans-verdict/sans-justification → suppression (zéro faux positif). **Fail-closed intégral (finding Codex)** : juge indisponible ou réponse inexploitable → AUCUN concurrent restitué (liste vide explicite, pas de liste non évaluée). + `sanitizeLegacyCompetitiveLandscape()` fail-closed au chargement (seuls les concurrents porteurs d'une justification survivent — un snapshot legacy rend une liste vide) + cap 30 candidats loggé.
+- `src/services/context-engine/types.ts` : `Competitor.overlapJustification?` (absent = jamais évalué).
+- `src/services/context-engine/index.ts` : `computeDealContext` filtre les concurrents par pertinence catégorie après `fetchCompetitorsParallel`.
+- `src/services/context-engine/persistence.ts` : `loadContextSnapshot` sanitize aussi `competitiveLandscape`.
+- `src/services/context-engine/connectors/web-search.ts` : export de `postOpenRouterCompletion` (réutilisé par le juge).
+- `src/agents/tier1/utils/competitor-omission-guard.ts` (NOUVEAU) : `filterMissedCompetitors` (une entité « manquée dans le deck » n'est gardée que si PRÉSENTE dans la liste Context Engine JUGÉE — la vérification Funding DB n'est pas un passe-droit : existence ≠ pertinence catégorie, cf. tour 3 Codex scénario Mistral AI) + `applyOmissionRedFlagGuard` (sévérité d'un red flag « omission de concurrent » plafonnée par la sévérité max des omissions établies restantes ; aucune → suppression du flag ; notes de garde dans `meta.limitations` ; détection du thème sur title+description+evidence).
+- `src/agents/tier1/competitive-intel.ts` : câblage des 2 gardes après la vérification d'entités (F08) ; prompt durci (fournisseur de techno/API ≠ concurrent de catégorie ; même secteur large ≠ overlap ; doute → ne pas inclure ; règle de sévérité CRITICAL sur `competitorsMissedInDeck` ; rappel ZÉRO FAUX POSITIF).
+- `src/agents/base-agent.ts` : renderer concurrents affiche la justification d'overlap, ou « overlap non evalue, pertinence categorie NON etablie ».
+- Tests (NOUVEAUX, 20) : `competitor-relevance.test.ts` (verdicts appliqués — fixture snapshot HelloCoco Mistral/Ankorstore/Dataiku/Yacla supprimés, Support Flow gardé ; fail-closed sans verdict ; parse fences/malformé ; fallback déterministe ; sanitize legacy) + `competitor-omission-guard.test.ts` (Jasper/Anthropic non vérifiés → écartés + red flag CRITICAL « Omission de concurrents massifs » supprimé ; plafonnement CRITICAL→HIGH ; CRITICAL maintenu si omission vérifiée CRITICAL ; flags non-omission intouchés).
+
+### Description
+**Audit externe HelloCoco 2026-07-20, chantier 2.** Cause racine (confirmée sur le `ContextEngineSnapshot`) : les connecteurs statiques matchent par mot-clé de SECTEUR et hardcodent `overlap` sans jamais l'évaluer (seedtable → Mistral AI/Ankorstore `partial`, french-tech → Dataiku `direct`, web-search → tout en `partial`) ; l'agrégation met ces matches en tête et base-agent ne rend que le top 5 → le contradiction-detector a vu « Dataiku, Yacla, Dolead » comme LES concurrents Context Engine (CONT-005 CRITICAL) pendant que les vrais comparables use-case étaient tronqués. Côté competitive-intel, le LLM a inventé Jasper/Anthropic depuis ses connaissances d'entraînement, en attribuant faussement au Context Engine (« Context Engine identifie Jasper et Anthropic ») : le marquage `[NON VERIFIE]` fonctionnait mais ne gâtait PAS la sévérité → red flag CRITICAL « Omission de concurrents massifs » repris dans le memo, alors que le deck listait le bon set concurrentiel. Fix : check de pertinence catégorie avant restitution (juge LLM justifié, suppression sous le seuil — pas de « peut-être ») + règle d'élévation déterministe (CRITICAL seulement si pertinence établie ET sourcée). Coût juge ≈ négligeable (1 appel gpt-4o-mini par compute de contexte, caché 30j). **Gate Codex 3 tours** : tour 1 REQUEST_CHANGES (fallback web_search + sanitize legacy gardaient Yacla → fail-closed intégral ; justification non vide exigée pour direct/partial ; `isOmissionFlag` inspecte aussi `evidence`) ; tour 2 REQUEST_CHANGES (« Funding DB verified » suffisait à garder une omission → une entité DB-vérifiée mais hors liste CE jugée pouvait porter un CRITICAL, ex. Mistral AI ; fix = liste CE jugée seule source de pertinence) ; tour 3 APPROVE. tsc 0 ; 38 tests des modules du chantier verts.
+
+---
 ## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 1 : médiane valo 1.15x fabriquée → jamais de médiane sans échantillon défendable
 
 ### Fichiers
@@ -334,14 +351,4 @@ Directive Sacha : dégager tous les scores. Dashboard scoreless ; métriques por
 
 ### Description
 Directive Sacha (suite AskUserQuestion) : **on dégage tous les scores, pas de remplacement**. La comparaison reste sur les métriques observables. **Gate Codex APPROVE** : comparaison scoreless de bout en bout, aucune note restituée, machinerie morte retirée. Note hors-scope : un `globalScore` subsiste dans `src/components/deals/types.ts` (type interne, à traiter dans le sweep cluster/P5). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; compare route test 2 passed ; doctrine guards 27 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 14/N (D) — suppression des composants score partagés orphelins (clôt la cible du plan)
-
-### Fichiers
-- **Supprimés** (4 fichiers totalement orphelins, 0 consumer runtime, 0 import de test) : `src/components/shared/score-badge.tsx` (`ScoreBadge`, plus aucun consumer après tier1-results C1-C4 + listes E) ; `src/components/deals/score-display.tsx` (`ScoreGrid`, plus aucun consumer après overview F) ; `src/components/deals/delta-indicator.tsx` + `src/components/deals/adjusted-score-badge.tsx` (orphelins préexistants depuis le cluster analysis-panel).
-- **Conservé** : `src/components/ui/score-ring.tsx` — consumer **vivant** `conditions/conditions-analysis-cards.tsx` (via `conditions-tab.tsx`) ; `verdict-panel.tsx` l'importe aussi mais est MORT (aucun importeur).
-
-### Description
-Cleanup des composants de note de deal devenus orphelins après la bascule des consumers (tier1-results, listes, overview). **Gate Codex APPROVE** : 4 suppressions sûres (aucun import runtime restant de `ScoreBadge`/`ScoreGrid`/`DeltaIndicator`/`AdjustedScoreBadge` dans `src` ; occurrences restantes = docs/commentaires) ; conservation de `score-ring.tsx` correcte. **Ceci clôt la cible du plan de relais (« tier1-results puis composants score partagés »).** Restent des sous-chantiers SÉPARÉS hors cible : (1) cluster read-model/delta/compare/score-extraction (`canonical-read-model.ts` expose encore `*Score`, `analysis-delta`, `analysis-variance`, `compare`, `score-extraction`) ; (2) sous-chantier conditions (`conditions-analysis-cards.tsx` rend `ScoreRing(score)`) ; (3) nit futur `getScoreBadgeColor` dans `format-utils.ts` (à nettoyer si plus aucun consumer). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; doctrine guards 40 passed.
 
