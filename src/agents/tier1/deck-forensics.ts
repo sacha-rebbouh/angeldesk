@@ -1,5 +1,6 @@
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -356,7 +357,7 @@ OBLIGATOIRE:
       competitorContext += `${competitors.length} concurrents dans notre base:\n`;
       for (const c of competitors.slice(0, 10)) {
         competitorContext += `- ${c.name}: ${c.positioning}`;
-        if (c.totalFunding) competitorContext += ` (Funding: ${(c.totalFunding / 1000000).toFixed(1)}M€)`;
+        if (c.totalFunding) competitorContext += ` (Funding: ${formatContextMoney(c.totalFunding, c.currency)})`;
         competitorContext += `\n`;
       }
     }

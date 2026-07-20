@@ -1,5 +1,6 @@
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -345,7 +346,7 @@ Le TAM est probablement correct."
 ### Deals Similaires
 ${di.similarDeals?.length ?? 0} deals comparables identifies dans la DB.
 ${di.similarDeals?.slice(0, 10).map(d =>
-  `- ${d.companyName} (${d.sector}, ${d.stage}): ${d.fundingAmount ? `€${(d.fundingAmount/1000000).toFixed(1)}M` : 'N/A'} - ${d.fundingDate ?? 'N/A'}`
+  `- ${d.companyName} (${d.sector}, ${d.stage}): ${d.fundingAmount ? formatContextMoney(d.fundingAmount, d.currency) : 'N/A'} - ${d.fundingDate ?? 'N/A'}`
 ).join('\n') ?? 'Aucun deal comparable'}
 
 ### Contexte Funding

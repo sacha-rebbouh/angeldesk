@@ -5,6 +5,7 @@ import type {
   ReliabilityClassification,
 } from "@/services/fact-store/types";
 import { RELIABILITY_WEIGHTS } from "@/services/fact-store/types";
+import { formatContextMoney } from "./money";
 import type {
   DataSource,
   DealContext,
@@ -343,6 +344,7 @@ function buildCompetitionFacts(
       name: competitor.name,
       totalFunding: competitor.totalFunding ?? null,
       lastRoundAmount: competitor.lastRoundAmount ?? null,
+      currency: competitor.currency ?? null,
       lastRoundDate: competitor.lastRoundDate ?? null,
       stage: competitor.stage ?? null,
       overlap: competitor.overlap,
@@ -357,6 +359,9 @@ function buildCompetitionFacts(
         name: competitor.name,
         overlap: competitor.overlap,
         website: competitor.website ?? null,
+        totalFunding: competitor.totalFunding ?? null,
+        lastRoundAmount: competitor.lastRoundAmount ?? null,
+        currency: competitor.currency ?? null,
         source: competitor.source,
       })),
     }
@@ -402,7 +407,17 @@ function buildCompetitionFacts(
       facts,
       "competition.competitors_funded",
       fundedCompetitors,
-      fundedCompetitors.map((competitor) => competitor.name).join(", "),
+      fundedCompetitors.map((competitor) => {
+        const amounts = [
+          typeof competitor.totalFunding === "number"
+            ? `total ${formatContextMoney(competitor.totalFunding, competitor.currency ?? undefined)}`
+            : null,
+          typeof competitor.lastRoundAmount === "number"
+            ? `dernier tour ${formatContextMoney(competitor.lastRoundAmount, competitor.currency ?? undefined)}`
+            : null,
+        ].filter((amount): amount is string => amount !== null);
+        return `${competitor.name}: ${amounts.join(", ")}`;
+      }).join("; "),
       sourceConfidence,
       reliability,
       `Funded competitors identified: ${fundedCompetitors.map((competitor) => competitor.name).join(", ")}.`,
@@ -489,6 +504,7 @@ function buildDealIntelligenceFacts(
         stage: deal.stage,
         geography: deal.geography,
         fundingAmount: deal.fundingAmount,
+        currency: deal.currency ?? null,
         valuationMultiple: deal.valuationMultiple ?? null,
         fundingDate: deal.fundingDate,
         source: deal.source,

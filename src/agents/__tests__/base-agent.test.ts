@@ -156,6 +156,97 @@ describe("formatContextEngineData", () => {
     expect(rendered).not.toContain("Contexte marche");
     expect(rendered).not.toContain("undefined");
   });
+
+  it("rend un montant Context Engine USD sans symbole euro", () => {
+    const agent = new TestAgent();
+    const rendered = agent.publicFormatContextEngineData({
+      canonicalDeal: { geography: null },
+      contextEngine: {
+        dealIntelligence: {
+          similarDeals: [{
+            companyName: "US Peer",
+            sector: "SaaS",
+            stage: "Series A",
+            geography: "USA",
+            fundingAmount: 12_000_000,
+            currency: "USD",
+            fundingDate: "2026-01-01",
+            investors: [],
+            source: {
+              type: "news_api",
+              name: "US Funding",
+              retrievedAt: "2026-01-02T00:00:00.000Z",
+              confidence: 0.85,
+            },
+          }],
+          fundingContext: { totalDealsInPeriod: 1 },
+        },
+      },
+    } as unknown as EnrichedAgentContext);
+
+    expect(rendered).toContain("$12.0M");
+    expect(rendered).not.toContain("€");
+  });
+
+  it("rend un montant Context Engine sans devise avec une mention neutre", () => {
+    const agent = new TestAgent();
+    const rendered = agent.publicFormatContextEngineData({
+      canonicalDeal: { geography: null },
+      contextEngine: {
+        dealIntelligence: {
+          similarDeals: [{
+            companyName: "Legacy Peer",
+            sector: "SaaS",
+            stage: "Seed",
+            geography: "Europe",
+            fundingAmount: 600_000_000,
+            fundingDate: "2025-01-01",
+            investors: [],
+            source: {
+              type: "database",
+              name: "Legacy Snapshot",
+              retrievedAt: "2025-01-02T00:00:00.000Z",
+              confidence: 0.7,
+            },
+          }],
+          fundingContext: { totalDealsInPeriod: 1 },
+        },
+      },
+    } as unknown as EnrichedAgentContext);
+
+    expect(rendered).toContain("600.0M (devise non précisée)");
+    expect(rendered).not.toContain("€");
+  });
+
+  it("conserve le rendu nominal euro pour un montant Context Engine EUR", () => {
+    const agent = new TestAgent();
+    const rendered = agent.publicFormatContextEngineData({
+      canonicalDeal: { geography: null },
+      contextEngine: {
+        dealIntelligence: {
+          similarDeals: [{
+            companyName: "EU Peer",
+            sector: "SaaS",
+            stage: "Series A",
+            geography: "France",
+            fundingAmount: 12_000_000,
+            currency: "EUR",
+            fundingDate: "2026-01-01",
+            investors: [],
+            source: {
+              type: "news_api",
+              name: "EU Funding",
+              retrievedAt: "2026-01-02T00:00:00.000Z",
+              confidence: 0.85,
+            },
+          }],
+          fundingContext: { totalDealsInPeriod: 1 },
+        },
+      },
+    } as unknown as EnrichedAgentContext);
+
+    expect(rendered).toContain("€12.0M");
+  });
 });
 
 describe("computePromptVersionHash", () => {

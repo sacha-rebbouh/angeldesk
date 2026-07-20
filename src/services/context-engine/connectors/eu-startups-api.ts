@@ -16,6 +16,7 @@ import type {
   SimilarDeal,
   DataSource,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // TYPES
@@ -421,7 +422,7 @@ export const euStartupsApiConnector: Connector = {
     }
 
     return filtered.slice(0, 20).map(deal => ({
-      title: `${deal.companyName} raises ${deal.amount ? `€${(deal.amount / 1_000_000).toFixed(1)}M` : "funding"}`,
+      title: `${deal.companyName} raises ${deal.amount ? formatContextMoney(deal.amount, deal.currency) : "funding"}`,
       description: `${deal.stage || "Funding round"} in ${deal.geography || "Europe"}. Investors: ${deal.investors.join(", ") || "Undisclosed"}`,
       url: deal.url,
       source: "EU-Startups",
@@ -462,6 +463,7 @@ export const euStartupsApiConnector: Connector = {
         sector: deal.sector || query.sector || "tech",
         stage: deal.stage || "Unknown",
         fundingAmount: deal.amount!,
+        currency: deal.currency,
         fundingDate: deal.date,
         investors: deal.investors,
         geography: deal.geography || "Europe",

@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Chantier A2 — devise porteuse sur les montants Context Engine
+
+### Fichiers
+- `src/services/context-engine/{types.ts,money.ts,fact-normalizer.ts}` : `currency?` ajouté à `SimilarDeal`/`Competitor`, formateur compact devise-aware (`EUR`/`USD`/`GBP`/code ISO, mention neutre si absente) et faits concurrents enrichis dans `value`, `displayValue` et `sourceMetadata`.
+- `src/services/context-engine/connectors/{us-funding,yc-companies,funding-db,eldorado,eu-startups-api,maddyness-api,frenchweb-api,tech-eu-api,rss-funding,seedtable}.ts` : propagation des devises connues, RSS strictement limité à la devise détectée, suppression des euros de rendu par défaut ; sources statiques mixtes sans unité conservées sans devise.
+- `src/agents/base-agent.ts` + renderers Tier 1/2/3 : montants Context Engine et Funding DB passés par le formateur, y compris les sérialisations JSON legacy ; les montants EUR du deal analysé restent inchangés.
+- Tests : `base-agent.test.ts`, `fact-normalizer.test.ts`, `money.test.ts` (nouveau), `rss-funding.test.ts` (nouveau), `us-funding.test.ts` (nouveau), `funding-db.test.ts` (nouveau).
+
+### Description
+Les montants comparables circulaient sans unité puis recevaient un symbole euro dans les prompts, y compris pour des rounds USD. Les connecteurs portent désormais la devise qu'ils connaissent sans conversion FX ; une source qui ne la connaît pas reste explicitement neutre au rendu (`600.0M (devise non précisée)`). Les snapshots legacy bénéficient du même comportement via les renderers. Bounce Fable intégré : `funding-db` exclut les comparable deals sans `fundingDate` au lieu de fabriquer la date du jour, et ses benchmarks `Funding Amount` calculés sur `amountUsd` sont étiquetés `USD`. Vérifications : `tsc --noEmit` 0 ; tests ciblés 46/46 ; suite complète 4632 passed / 9 skipped / 0 failed ; greps `fundingAmount|totalFunding|lastRoundAmount` associés à un euro en dur vides ; sweep connecteurs `|| now`/`?? now`/timestamp vide.
+
+---
 ## 2026-07-20 — Chantier A1 — purge des valeurs fabriquées DealIntelligence / DealContext
 
 ### Fichiers
@@ -347,17 +359,3 @@ Les valeurs `stable`, `0 %`, `Last 12 months` et `moderate` n'étaient adossées
 
 ### Description
 Cleanup des vestiges de score rendus orphelins par la dé-scorisation. Tous vérifiés orphelins par `git grep` avant suppression. **Hors-scope laissé (Karpathy)** : `team-management.tsx` garde `getScoreColor`/`getScoreBg` LOCAUX (scores fondateurs `overallFounderScore`/`domainExpertise`…) = surface de score SÉPARÉE vivante → sweep de complétude avant P4. Le source-guard `orientation-solidity-display.test.ts` référence `getScoreColor`/`getScoreLabel` comme chaînes BANNIES (pas de consommation) → non cassé. **Gate Codex APPROVE.** tsc 0 ; doctrine-guard 10 + doctrine-runtime-guard 17 + orientation-solidity 14 + ui-configs 71 verts.
-
----
-## 2026-06-14 — Dé-scorisation — étape G4 — onglet Conditions entièrement scoreless (4 sous-onglets + 2 routes)
-
-### Fichiers
-- `src/components/deals/conditions/conditions-analysis-cards.tsx` : `ConditionsHeroCard` dé-scoré — retrait `ScoreRing` (note /100), `getVerdictConfig(score)` (verdict verbal « Conditions favorables/défavorables » **dérivé du score** = anti-pattern orientation-depuis-score-caché), badge `getScoreLabel`, `MiniBar` + nombres de breakdown par dimension. Layout 2 colonnes → 1 colonne. **Conservé verbal natif** : `narrative.oneLiner` (titre), compteur red flags (observable), justification qualitative par critère (criterion + justification, sans nombre ni poids), valuation quick view (verdict + percentile observable + rationale). `StructuredAssessmentCard` : `ta.score/100` + barre par tranche retirés (label + assessment + risks conservés). Imports `getScoreColor/getScoreBarColor/getScoreLabel/ScoreRing` retirés.
-- `src/components/deals/conditions/conditions-tab.tsx` : prop `score` retiré du hero ; sentinel de présence d'analyse `conditionsScore` → `conditionsAnalysis` (montre la dernière analyse valide même après re-run échoué) ; `isEmpty` idem ; 2 textes empty-state dé-scorés.
-- `src/components/deals/conditions/version-timeline.tsx` (Historique) : badges `Score: X/100` + delta `pts` retirés ; type `VersionWithDelta` (deltaScore) supprimé → lit `TermsVersionData`.
-- `src/components/deals/conditions/percentile-comparator.tsx` (Comparateur) : notes `protections.score`/`governance.score` /100 + barres + `getScoreColor` local retirés → **checklist OBSERVABLE present/absent** (`TermsChecklist`) des protections/gouvernance saisies au formulaire. Conservé : valuation percentile P25/P50/P75, dilution médiane, instrument standard (observables).
-- `src/app/api/deals/[dealId]/terms/versions/route.ts` : dérivation `deltaScore` (delta de note) retirée ; `conditionsScore` conservé en payload (carry interne, → P5).
-- `src/app/api/deals/[dealId]/terms/benchmarks/route.ts` : tally `protectionScore`/`governanceScore` (0-100) → listes `items` present/absent dérivées des mêmes booléens observables du formulaire (terms null → items vides → « Non évalué »).
-
-### Description
-Directive Sacha « dégager tous les scores » + leçon défaut = SUPPRIMER. Toute la surface **Conditions** (4 sous-onglets) ne restitue plus de note de deal. Garde-fou respecté : aucune orientation dérivée d'un vieux score (suppression pure, contenu verbal natif conservé). Agent producteur `conditions-analyst` (score interne) + colonne DB `conditionsScore` **inchangés** = P4/P5 (ordre additif) ; les `conditionsScore` restants côté route = écritures DB + lecture producteur, jamais restitués écran. **Gate Codex APPROVE après 1 REQUEST_CHANGES** (Codex a flaggé version-timeline = même surface non dé-scorée ; corrigé + percentile-comparator dé-scoré proactivement par le même principe). Non-bloquant noté par Codex : select `globalScore` mort dans `/terms` GET → cleanup sweep P5/carry. tsc 0 ; 117 tests verts (doctrine-guard, doctrine-runtime-guard, signal-profile, orientation-solidity-display, conditions-analyst ×3).

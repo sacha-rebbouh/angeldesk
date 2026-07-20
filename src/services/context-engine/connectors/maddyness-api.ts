@@ -16,6 +16,7 @@ import type {
   SimilarDeal,
   DataSource,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // TYPES
@@ -380,7 +381,7 @@ export const maddynessApiConnector: Connector = {
     }
 
     return filtered.slice(0, 15).map(deal => ({
-      title: `${deal.companyName} lève €${(deal.amount! / 1_000_000).toFixed(1)}M`,
+      title: `${deal.companyName} lève ${formatContextMoney(deal.amount!, deal.currency)}`,
       description: deal.description || `${deal.stage || "Levée"} - ${deal.sector || "tech"}`,
       url: deal.url,
       source: "Maddyness",
@@ -411,6 +412,7 @@ export const maddynessApiConnector: Connector = {
       sector: deal.sector || query.sector || "tech",
       stage: deal.stage || "Unknown",
       fundingAmount: deal.amount!,
+      currency: deal.currency,
       fundingDate: deal.date,
       investors: deal.investors,
       geography: "France",

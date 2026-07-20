@@ -13,6 +13,7 @@
  */
 
 import { z } from "zod";
+import { formatContextMoney } from "@/services/context-engine/money";
 import type { AgentResult, EnrichedAgentContext } from "../types";
 import { sanitizeForLLM, sanitizeName } from "@/lib/sanitize";
 
@@ -525,8 +526,8 @@ ${context.previousResults ? Object.entries(context.previousResults)
 ## DONNÉES FUNDING DB (Concurrents Sectoriels)
 ${dbCompetitors.length > 0 ? `
 **${dbCompetitors.length} concurrents identifiés dans la DB:**
-${dbCompetitors.slice(0, 10).map((c: { name: string; totalFunding?: number; lastRound?: string; status?: string }) =>
-  `- ${c.name}: ${c.totalFunding ? `${(c.totalFunding / 1_000_000).toFixed(1)}M€ levés` : "funding inconnu"}, ${c.lastRound ?? "stage inconnu"}, ${c.status ?? ""}`
+${dbCompetitors.slice(0, 10).map((c: { name: string; totalFunding?: number; currency?: string; lastRound?: string; status?: string }) =>
+  `- ${c.name}: ${c.totalFunding ? `${formatContextMoney(c.totalFunding, c.currency)} levés` : "funding inconnu"}, ${c.lastRound ?? "stage inconnu"}, ${c.status ?? ""}`
 ).join("\n")}
 ` : "Pas de données concurrentielles disponibles dans la DB"}
 

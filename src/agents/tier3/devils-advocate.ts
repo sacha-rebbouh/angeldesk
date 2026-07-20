@@ -31,6 +31,7 @@
 
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { factCheckDevilsAdvocate } from "@/services/fact-checking";
 import { DEVILS_ADVOCATE_SYSTEM_PROMPT } from "./prompts/devils-advocate-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
@@ -646,7 +647,7 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
     if (competitors && competitors.length > 0) {
       text += "### Concurrents (pour rechercher echecs similaires)\n";
       for (const c of competitors) {
-        text += `- ${c.name}: ${c.totalFunding ? `€${c.totalFunding.toLocaleString()}` : "?"} - Status: ${c.status ?? "unknown"}\n`;
+        text += `- ${c.name}: ${c.totalFunding ? formatContextMoney(c.totalFunding, c.currency) : "?"} - Status: ${c.status ?? "unknown"}\n`;
       }
     }
 

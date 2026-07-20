@@ -9,6 +9,7 @@
 
 import { z } from "zod";
 import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { BaseAgent, AgentResultWithData } from "../base-agent";
 import type { AgentContext, EnrichedAgentContext } from "../types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
@@ -485,7 +486,7 @@ Réponds UNIQUEMENT avec un JSON valide.`;
       for (const deal of deals.slice(0, 5)) {
         text += `- **${deal.companyName}** (${deal.sector}, ${deal.stage}): `;
         if (deal.fundingAmount) {
-          text += `€${(deal.fundingAmount / 1_000_000).toFixed(1)}M`;
+          text += formatContextMoney(deal.fundingAmount, deal.currency);
         }
         if (deal.valuationMultiple) {
           text += ` @ ${deal.valuationMultiple}x`;

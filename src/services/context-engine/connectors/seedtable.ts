@@ -16,6 +16,7 @@ import type {
   DataSource,
   NewsArticle,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // TYPES
@@ -512,7 +513,7 @@ export const seedtableConnector: Connector = {
 
     return filtered.filter(hasKnownFundingDate).slice(0, 15).map(startup => ({
       title: `${startup.name} - ${startup.stage} (${startup.geography})`,
-      description: `${startup.description}. Raised €${startup.fundingAmount ? (startup.fundingAmount / 1_000_000).toFixed(0) : "?"}M. Investors: ${startup.investors.slice(0, 3).join(", ")}`,
+      description: `${startup.description}. Raised ${startup.fundingAmount ? formatContextMoney(startup.fundingAmount) : "an undisclosed amount"}. Investors: ${startup.investors.slice(0, 3).join(", ")}`,
       url: startup.website || "https://seedtable.com",
       source: "Seedtable",
       publishedAt: startup.fundingDate,

@@ -493,6 +493,7 @@ export const ycCompaniesConnector: Connector = {
         stage: c.status === "ipo" ? "IPO" : "SERIES_B+",
         geography: c.location ?? "USA",
         fundingAmount: c.fundingTotal!,
+        currency: "USD",
         valuation: c.lastValuation ?? c.exitValue,
         valuationMultiple: undefined, // Not available
         fundingDate: `20${c.batch.slice(1)}`, // Approximate from batch
@@ -527,6 +528,7 @@ export const ycCompaniesConnector: Connector = {
       description: c.description,
       website: c.website,
       totalFunding: c.fundingTotal,
+      currency: "USD",
       stage: c.status === "ipo" ? "Public" : c.status === "active" ? "Late" : c.status,
       positioning: c.description,
       overlap: c.subSector === query.sector ? "direct" : "adjacent",

@@ -18,6 +18,7 @@ import type {
   NewsArticle,
   DataSource,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // TYPES
@@ -430,6 +431,7 @@ export const eldoradoConnector: Connector = {
       stage: deal.stage,
       geography: "France",
       fundingAmount: deal.amount,
+      currency: "EUR",
       fundingDate: deal.date,
       // Pas de valuationMultiple : aucune donnée ARR réelle dans ce dataset
       // (l'ancien helper retournait une constante 20 fabriquée).
@@ -459,7 +461,7 @@ export const eldoradoConnector: Connector = {
     }
 
     return matches.slice(0, 5).map(deal => ({
-      title: `${deal.companyName} raises €${(deal.amount / 1_000_000).toFixed(1)}M ${deal.stage}`,
+      title: `${deal.companyName} raises ${formatContextMoney(deal.amount, "EUR")} ${deal.stage}`,
       description: `${deal.description || deal.sector}. Investors: ${deal.investors.join(", ")}`,
       url: `https://eldorado.co/company/${normalizeForSearch(deal.companyName)}`,
       source: "Eldorado.co",
@@ -645,6 +647,6 @@ export function assessFundingRound(
     percentile,
     assessment,
     comparables: deals.slice(0, 5).map(d => d.companyName),
-    marketContext: `Based on ${stats.count} ${sector} ${stage} deals in France. Median: €${(stats.medianAmount / 1_000_000).toFixed(1)}M`,
+    marketContext: `Based on ${stats.count} ${sector} ${stage} deals in France. Median: ${formatContextMoney(stats.medianAmount, "EUR")}`,
   };
 }

@@ -34,6 +34,7 @@
  */
 
 import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -978,7 +979,7 @@ ${Array.isArray(topConcerns) ? topConcerns.map((c: string) => `- ${c}`).join("\n
     if (fundingDb.competitors && Array.isArray(fundingDb.competitors) && fundingDb.competitors.length > 0) {
       output += `### Concurrents identifiés (${fundingDb.competitors.length})\n`;
       for (const comp of fundingDb.competitors.slice(0, 5)) {
-        output += `- ${comp.name}: ${comp.totalFunding ? `€${Number(comp.totalFunding).toLocaleString()} levés` : "Funding inconnu"} (${comp.lastRound ?? "stage inconnu"})\n`;
+        output += `- ${comp.name}: ${comp.totalFunding ? `${formatContextMoney(Number(comp.totalFunding), comp.currency)} levés` : "Funding inconnu"} (${comp.lastRound ?? "stage inconnu"})\n`;
       }
       output += "\n";
     }

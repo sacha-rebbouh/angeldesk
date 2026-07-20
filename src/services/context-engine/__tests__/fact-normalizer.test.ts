@@ -101,6 +101,7 @@ describe("extractFactsFromDealContext", () => {
               stage: "Series A",
               geography: "France",
               fundingAmount: 4_000_000,
+              currency: "EUR",
               fundingDate: "2026-01-10",
               investors: ["SeedX"],
               source: {
@@ -116,6 +117,7 @@ describe("extractFactsFromDealContext", () => {
               stage: "Seed",
               geography: "France",
               fundingAmount: 2_500_000,
+              currency: "EUR",
               fundingDate: "2025-11-02",
               investors: ["North"],
               source: {
@@ -192,6 +194,7 @@ describe("extractFactsFromDealContext", () => {
                 confidence: 0.78,
               },
               totalFunding: 20000000,
+              currency: "USD",
               stage: "Series A",
             },
             {
@@ -225,6 +228,20 @@ describe("extractFactsFromDealContext", () => {
     expect(byKey.get("market.tam")?.value).toBe(1000000000);
     expect(byKey.get("competition.main_competitor")?.value).toBe("Rival One");
     expect(byKey.get("competition.competitors_count")?.value).toBe(2);
+    expect(byKey.get("competition.competitors_funded")?.value).toEqual([
+      expect.objectContaining({
+        name: "Rival One",
+        totalFunding: 20_000_000,
+        currency: "USD",
+      }),
+    ]);
+    expect(byKey.get("competition.competitors_funded")?.displayValue).toContain("$20.0M");
+    expect(byKey.get("competition.competitors_funded")?.displayValue).not.toContain("€");
+    const competitorMetadata = byKey.get("competition.competitors_funded")
+      ?.sourceMetadata?.competitors as unknown[];
+    expect(competitorMetadata).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Rival One", currency: "USD" }),
+    ]));
     expect(String(byKey.get("competition.differentiation")?.value)).toContain("Faster onboarding");
     expect(byKey.get("competition.big_tech_threat")?.value).toBe("medium");
     expect(byKey.get("traction.customers_count")?.value).toBe(150);

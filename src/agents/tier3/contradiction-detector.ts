@@ -29,6 +29,7 @@
  */
 
 import { BaseAgent } from "../base-agent";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { severityRank } from "@/services/red-flag-dedup";
 import { CONTRADICTION_DETECTOR_SYSTEM_PROMPT } from "./prompts/contradiction-detector-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
@@ -418,8 +419,11 @@ export class ContradictionDetectorAgent extends BaseAgent<ContradictionDetectorD
     if (fundingContext.competitors && fundingContext.competitors.length > 0) {
       lines.push("\n**Concurrents detectes dans la DB:**");
       for (const c of fundingContext.competitors) {
-        const comp = c as { name: string; totalFunding?: number; lastRound?: string; status?: string };
-        lines.push(`- ${comp.name}: Funding total = €${(comp.totalFunding ?? 0).toLocaleString()} | Status: ${comp.status ?? "active"}`);
+        const comp = c as { name: string; totalFunding?: number; currency?: string; lastRound?: string; status?: string };
+        const totalFunding = typeof comp.totalFunding === "number"
+          ? formatContextMoney(comp.totalFunding, comp.currency)
+          : "inconnu";
+        lines.push(`- ${comp.name}: Funding total = ${totalFunding} | Status: ${comp.status ?? "active"}`);
       }
     } else {
       lines.push("\n**Concurrents detectes dans la DB:** AUCUN (DB peut etre limitee)");

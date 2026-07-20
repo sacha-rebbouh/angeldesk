@@ -23,6 +23,10 @@
  */
 
 import { z } from "zod";
+import {
+  formatCompetitiveLandscapeAmountsForPrompt,
+  formatDealIntelligenceAmountsForPrompt,
+} from "@/services/context-engine/money";
 import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertResult, SectorExpertData, SectorExpertType } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
@@ -510,11 +514,19 @@ function buildMobilityUserPrompt(
   if (context.contextEngine) {
     if (context.contextEngine.dealIntelligence) {
       contextEngineData += `\n### Similar Mobility Deals (from Context Engine):\n`;
-      contextEngineData += JSON.stringify(context.contextEngine.dealIntelligence, null, 2).slice(0, 2000);
+      contextEngineData += JSON.stringify(
+        formatDealIntelligenceAmountsForPrompt(context.contextEngine.dealIntelligence),
+        null,
+        2
+      ).slice(0, 2000);
     }
     if (context.contextEngine.competitiveLandscape) {
       contextEngineData += `\n### Competitive Landscape:\n`;
-      contextEngineData += JSON.stringify(context.contextEngine.competitiveLandscape, null, 2).slice(0, 1500);
+      contextEngineData += JSON.stringify(
+        formatCompetitiveLandscapeAmountsForPrompt(context.contextEngine.competitiveLandscape),
+        null,
+        2
+      ).slice(0, 1500);
     }
   }
 

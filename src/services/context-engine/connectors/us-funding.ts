@@ -20,6 +20,7 @@ import type {
   SimilarDeal,
   DataSource,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // CONFIGURATION
@@ -464,7 +465,7 @@ export const usFundingConnector: Connector = {
     }
 
     return filtered.slice(0, 20).map(deal => ({
-      title: `${deal.companyName} raises $${deal.amount ? (deal.amount / 1_000_000).toFixed(1) : "?"}M`,
+      title: `${deal.companyName} raises ${deal.amount ? formatContextMoney(deal.amount, deal.currency) : "an undisclosed amount"}`,
       description: `${deal.stage || "Funding"} | ${deal.sector || "Tech"} | Investors: ${deal.investors.slice(0, 3).join(", ") || "Undisclosed"}`,
       url: deal.url,
       source: deal.source,
@@ -504,6 +505,7 @@ export const usFundingConnector: Connector = {
         sector: deal.sector || query.sector || "tech",
         stage: deal.stage || "Unknown",
         fundingAmount: deal.amount!,
+        currency: deal.currency,
         fundingDate: deal.date,
         investors: deal.investors,
         geography: deal.geography,

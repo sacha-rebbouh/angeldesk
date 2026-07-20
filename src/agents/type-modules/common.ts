@@ -122,6 +122,7 @@ export interface EnrichedAgentContext extends AgentContext {
     competitors?: Array<{
       name: string;
       totalFunding?: number;
+      currency?: string;
       lastRound?: string;
       status?: string;
     }>;
@@ -145,6 +146,7 @@ export interface EnrichedAgentContext extends AgentContext {
     competitors?: Array<{
       name: string;
       totalFunding?: number;
+      currency?: string;
       lastRound?: string;
       status?: string;
     }>;

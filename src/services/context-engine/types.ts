@@ -20,6 +20,7 @@ export interface SimilarDeal {
   stage: string;
   geography: string;
   fundingAmount: number;
+  currency?: string;
   valuation?: number;
   valuationMultiple?: number; // e.g., 30x ARR
   fundingDate: string;
@@ -174,6 +175,7 @@ export interface Competitor {
   // Funding
   totalFunding?: number;
   lastRoundAmount?: number;
+  currency?: string;
   lastRoundDate?: string;
   stage?: string;
 

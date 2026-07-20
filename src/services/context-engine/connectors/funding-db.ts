@@ -24,6 +24,7 @@ import type {
   SectorBenchmark,
   DataSource,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // NORMALIZATION
@@ -114,6 +115,12 @@ interface InternalDeal {
   fundingDate: Date | null;
   source: string;
   sourceUrl: string | null;
+}
+
+function hasPositiveUsdAmountAndFundingDate(
+  deal: InternalDeal
+): deal is InternalDeal & { amountUsd: number; fundingDate: Date } {
+  return typeof deal.amountUsd === "number" && deal.amountUsd > 0 && deal.fundingDate !== null;
 }
 
 async function findComparableDeals(params: {
@@ -260,7 +267,7 @@ export const fundingDbConnector: Connector = {
       const now = new Date().toISOString();
 
       return deals
-        .filter(d => d.amountUsd && d.amountUsd > 0)
+        .filter(hasPositiveUsdAmountAndFundingDate)
         .map(d => {
           const source: DataSource = {
             name: `Funding Database (${d.source})`,
@@ -275,8 +282,9 @@ export const fundingDbConnector: Connector = {
             sector: d.sector || query.sector || "Unknown",
             stage: d.stage || query.stage || "Unknown",
             geography: d.geography || query.geography || "Unknown",
-            fundingAmount: d.amountUsd || 0,
-            fundingDate: d.fundingDate?.toISOString() || now,
+            fundingAmount: d.amountUsd,
+            currency: "USD",
+            fundingDate: d.fundingDate.toISOString(),
             investors: [], // We don't store investor names in our DB
             source,
           };
@@ -299,7 +307,7 @@ export const fundingDbConnector: Connector = {
         p25: sb.p25,
         median: sb.medianAmount,
         p75: sb.p75,
-        unit: "EUR",
+        unit: "USD",
         sector: query.sector || "all",
         stage: sb.stage,
         source: {
@@ -320,7 +328,7 @@ export const fundingDbConnector: Connector = {
         ? [
             {
               title: `${relevantBenchmark.count} comparable ${query.stage || "stage"} deals`,
-              description: `Based on ${relevantBenchmark.count} funding rounds in our database. Median raise: €${(relevantBenchmark.medianAmount / 1_000_000).toFixed(1)}M`,
+              description: `Based on ${relevantBenchmark.count} funding rounds in our database. Median raise: ${formatContextMoney(relevantBenchmark.medianAmount, "USD")}`,
               impact: "neutral" as const,
               relevance: 0.9,
               source: {
