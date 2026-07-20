@@ -425,6 +425,48 @@ describe("scrubAgentScoreData (P3 — fullData chat)", () => {
     expect(scrubAgentScoreData("x", "raw")).toBe("raw");
     expect(scrubAgentScoreData("x", 42)).toBe(42);
   });
+
+  it("retire alertSignal.recommendation (prescriptif STOP/PROCEED) mais garde hasBlocker/blockerReason/justification", () => {
+    // Audit HelloCoco chantier 3 : le champ compat prescriptif ne doit jamais
+    // atteindre un contexte LLM réinjecté.
+    const out = scrubAgentScoreData("competitive-intel", {
+      alertSignal: {
+        hasBlocker: false,
+        blockerReason: null,
+        recommendation: "STOP",
+        justification: "Analyse basée sur les documents fournis.",
+      },
+      narrative: { summary: "ok" },
+    }) as Record<string, unknown>;
+
+    const alertSignal = out.alertSignal as Record<string, unknown>;
+    expect(alertSignal).not.toHaveProperty("recommendation");
+    expect(alertSignal.hasBlocker).toBe(false);
+    expect(alertSignal.justification).toBe("Analyse basée sur les documents fournis.");
+    expect(JSON.stringify(out)).not.toContain("STOP");
+  });
+
+  it("alertSignal absent ou non-objet → data inchangée", () => {
+    const noSignal = scrubAgentScoreData("gtm-analyst", { narrative: { summary: "x" } }) as Record<string, unknown>;
+    expect(noSignal.narrative).toEqual({ summary: "x" });
+    const weird = scrubAgentScoreData("gtm-analyst", { alertSignal: "STOP" }) as Record<string, unknown>;
+    expect(weird.alertSignal).toBe("STOP");
+  });
+
+  it("scrubAllScoresForLLMContext retire aussi alertSignal.recommendation de chaque agent", () => {
+    const out = scrubAllScoresForLLMContext({
+      "question-master": {
+        agentName: "question-master",
+        success: true,
+        data: {
+          alertSignal: { hasBlocker: true, blockerReason: "Incohérence majeure", recommendation: "STOP", justification: "j" },
+        },
+      } as unknown as import("@/agents/types").AgentResult,
+    });
+    const data = (out["question-master"] as unknown as { data: Record<string, unknown> }).data;
+    expect((data.alertSignal as Record<string, unknown>)).not.toHaveProperty("recommendation");
+    expect((data.alertSignal as Record<string, unknown>).hasBlocker).toBe(true);
+  });
 });
 
 describe("stripDealScoreMentions — scrub de note dans un texte libre", () => {

@@ -61,7 +61,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "critical",
     category: "financial_critical",
     title: "Financial Metrics Below Viability Threshold",
-    descriptionTemplate: "Financial score of {value}/100 indicates fundamental business model issues.",
+    descriptionTemplate: "Aggregated financial signals are below the viability threshold, indicating fundamental business model issues.",
     recommendation: "likely_dealbreaker",
     questionsToAsk: [
       "What explains the weak financial metrics?",
@@ -143,7 +143,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     category: "founder_integrity",
     title: "Team Assessment Critical",
-    descriptionTemplate: "Team score of {value}/100 indicates significant gaps or concerns.",
+    descriptionTemplate: "Aggregated team signals indicate significant gaps or concerns.",
     recommendation: "investigate",
     questionsToAsk: [
       "What are the key team gaps?",
@@ -192,7 +192,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     category: "product_broken",
     title: "Weak Competitive Position",
-    descriptionTemplate: "Competitive score of {value}/100 indicates vulnerable market position.",
+    descriptionTemplate: "Aggregated competitive signals indicate a vulnerable market position.",
     recommendation: "investigate",
   },
 
@@ -241,7 +241,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     category: "deal_structure",
     title: "Problematic Cap Table Structure",
-    descriptionTemplate: "Cap table score of {value}/100 indicates structural issues.",
+    descriptionTemplate: "Aggregated cap table signals indicate structural issues.",
     recommendation: "investigate",
     questionsToAsk: [
       "Can the cap table be cleaned up before investment?",
@@ -305,7 +305,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     category: "founder_integrity",
     title: "Deck Credibility Very Low",
-    descriptionTemplate: "Deck forensics score of {value}/100 — significant inconsistencies or misleading claims detected.",
+    descriptionTemplate: "Deck forensics signals — significant inconsistencies or misleading claims detected.",
     recommendation: "investigate",
     questionsToAsk: [
       "Can you clarify the discrepancies found in the pitch deck?",
@@ -334,7 +334,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     category: "product_broken",
     title: "Critical Tech Stack Issues",
-    descriptionTemplate: "Tech stack score of {value}/100 — fundamental technical concerns.",
+    descriptionTemplate: "Aggregated tech stack signals — fundamental technical concerns.",
     recommendation: "investigate",
     questionsToAsk: [
       "What's the plan to address technical debt?",
@@ -353,7 +353,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     category: "product_broken",
     title: "Critical Tech Operations Issues",
-    descriptionTemplate: "Tech ops score of {value}/100 — security, infrastructure, or team maturity concerns.",
+    descriptionTemplate: "Aggregated tech ops signals — security, infrastructure, or team maturity concerns.",
     recommendation: "investigate",
     questionsToAsk: [
       "What security measures are in place?",
@@ -372,7 +372,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     category: "market_dead",
     title: "Weak Go-To-Market Strategy",
-    descriptionTemplate: "GTM score of {value}/100 — no clear path to market identified.",
+    descriptionTemplate: "Aggregated GTM signals — no clear path to market identified.",
     recommendation: "investigate",
     questionsToAsk: [
       "What's your customer acquisition strategy?",
@@ -415,7 +415,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "high",
     category: "product_broken",
     title: "Extremely High Skepticism Level",
-    descriptionTemplate: "Devil's advocate skepticism at {value}/100 - major concerns identified.",
+    descriptionTemplate: "Devil's advocate signals — major concerns identified.",
     recommendation: "investigate",
   },
 
@@ -441,7 +441,7 @@ const DETECTION_RULES: DetectionRule[] = [
     severity: "critical",
     category: "financial_critical",
     title: "Very Low Overall Score",
-    descriptionTemplate: "Overall synthesis score of {value}/100 indicates significant issues across multiple dimensions.",
+    descriptionTemplate: "Aggregated synthesis signals indicate significant issues across multiple dimensions.",
     recommendation: "likely_dealbreaker",
   },
 ];

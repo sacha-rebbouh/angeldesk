@@ -95,6 +95,25 @@ export function deriveTier1SignalIntensity(input: DeriveTier1SignalIntensityInpu
  *   elevated → PROCEED_WITH_CAUTION
  *   high     → INVESTIGATE_FURTHER
  *   critical → STOP
+ *
+ * Statut doctrinal (audit HelloCoco 2026-07-20, chantier 3) — champ INTERNE
+ * confiné : cet enum prescriptif ne doit JAMAIS être restitué brut ni
+ * réinjecté dans un contexte LLM. Confinement en place : les scrubbers
+ * (`scrubAgentScoreData` / `scrubAllScoresForLLMContext`, signal-profile)
+ * retirent `alertSignal.recommendation` avant toute réinjection ; l'UI et le
+ * PDF le mappent en labels analytiques (`ALERT_SIGNAL_LABELS`,
+ * `resolveTier1SignalIntensity`).
+ *
+ * Note « incohérence » `hasBlocker=false` + `recommendation=STOP` (relevée
+ * par l'audit sur competitive-intel) : les deux champs sont des axes
+ * INDÉPENDANTS — `recommendation` est dérivé des counts de red flags
+ * (≥1 CRITICAL → STOP), `hasBlocker` est la déclaration LLM d'un bloqueur
+ * absolu justifié. Un red flag CRITICAL sans bloqueur absolu est un état
+ * analytique légitime. Le cas observé sur HelloCoco venait d'un red flag
+ * CRITICAL non fondé (« Omission de concurrents massifs », corrigé par le
+ * chantier 2 — garde d'omission) ; la paire redevient cohérente une fois le
+ * faux CRITICAL supprimé. Le LLM ne pilote PAS cette dérivation (invariant
+ * anti-régression round 2 A3) — ne pas la coupler à `hasBlocker`.
  */
 export function signalIntensityToRecommendation(
   intensity: Tier1SignalIntensity,

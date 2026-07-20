@@ -573,12 +573,10 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
   private extractChallengeableElements(agentName: string, data: Record<string, unknown>): string {
     const elements: string[] = [];
 
-    // Extract score if present
-    if (data.score && typeof data.score === "object") {
-      const score = data.score as { value?: number; grade?: string };
-      if (score.value !== undefined) {
-        elements.push(`Score: ${score.value}/100 (${score.grade ?? "N/A"})`);
-      }
+    // Dé-scorisation (audit HelloCoco chantier 3) : plus de « Score: X/100
+    // (Grade) » réinjecté dans le contexte LLM — l'intensité de signal suffit.
+    if (typeof data.signalIntensity === "string") {
+      elements.push(`Intensite des signaux: ${data.signalIntensity}`);
     }
 
     // Extract narrative/summary if present
@@ -603,12 +601,12 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
       }
     }
 
-    // Extract alert signal if present
+    // Extract alert signal if present — dé-scorisation (audit HelloCoco
+    // chantier 3) : l'enum prescriptif `recommendation` (STOP/PROCEED…) ne
+    // doit jamais être réinjecté dans un contexte LLM ; seul `hasBlocker`
+    // (analytique) est transmis.
     if (data.alertSignal && typeof data.alertSignal === "object") {
       const alert = data.alertSignal as { recommendation?: string; hasBlocker?: boolean };
-      if (alert.recommendation) {
-        elements.push(`Recommandation: ${alert.recommendation}`);
-      }
       if (alert.hasBlocker) {
         elements.push(`BLOCKER DETECTE`);
       }
@@ -1040,7 +1038,7 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
             : this.deriveSkepticismVerdict(hasScore ? Math.min(100, Math.max(0, rawScore)) : fallbackScore),
           verdictRationale: data.findings?.skepticismAssessment?.verdictRationale
             ?? (!hasScore
-              ? `Verdict derive defensivement a partir du score ${fallbackScore}/100 et des risques structurels identifies.`
+              ? `Verdict derive defensivement a partir des risques structurels identifies (donnees de scoring absentes).`
               : ""),
         };
       })(),

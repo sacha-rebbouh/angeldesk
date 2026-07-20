@@ -285,12 +285,11 @@ export class ContradictionDetectorAgent extends BaseAgent<ContradictionDetectorD
     const obj = data as Record<string, unknown>;
     const lines: string[] = [`### ${agentName.toUpperCase()} (Tier ${tier})`];
 
-    // Extract score if available
-    if (obj.score && typeof obj.score === "object") {
-      const score = obj.score as { value?: number; grade?: string };
-      if (score.value !== undefined) {
-        lines.push(`Score: ${score.value}/100 (Grade: ${score.grade ?? "N/A"})`);
-      }
+    // Dé-scorisation (audit HelloCoco chantier 3) : plus de « Score: X/100
+    // (Grade: Y) » réinjecté dans le contexte LLM — l'intensité de signal
+    // (mécanique interne autorisée) porte l'information analytique.
+    if (typeof obj.signalIntensity === "string") {
+      lines.push(`Intensite des signaux: ${obj.signalIntensity}`);
     }
 
     // Extract meta if available
@@ -1120,10 +1119,10 @@ Produis un JSON avec cette structure:
         id: `RF-CD-AUTO-${++rfIndex}`,
         category: "analysis_quality",
         severity: "HIGH",
-        title: "Score de consistance insuffisant",
-        description: `Score de consistance de ${consistencyScore}/100 - les incoherences relevees fragilisent la fiabilite des signaux analyses.`,
+        title: "Consistance des donnees insuffisante",
+        description: `Les incoherences relevees entre les sources fragilisent la fiabilite des signaux analyses.`,
         location: "Analyse globale",
-        evidence: `Score: ${consistencyScore}. Contradictions: ${contradictions.length}`,
+        evidence: `${contradictions.length} contradiction(s) detectee(s) entre les sources.`,
         impact: "Les donnees du deal sont trop incoherentes pour etre exploitees telles quelles : une verification s'impose avant de s'appuyer dessus.",
         question: "De nombreuses incoherences ont ete detectees. Pouvez-vous fournir des donnees plus coherentes?",
         redFlagIfBadAnswer: "Ces incoherences limitent la fiabilite des signaux tant qu'elles ne sont pas clarifiees.",

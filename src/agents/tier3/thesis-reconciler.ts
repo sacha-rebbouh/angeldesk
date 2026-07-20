@@ -75,7 +75,6 @@ type DeterministicGuardrails = {
   blockers: Array<{
     agentName: string;
     reason: string;
-    recommendation?: string;
   }>;
   challenges: DeterministicChallenge[];
   verdictFloor?: ThesisVerdict;
@@ -302,9 +301,10 @@ LANGUE: Francais.`;
       const summary: string[] = [];
       summary.push(`### ${agentName}`);
 
-      // Score
-      const score = (data.score as { value?: number } | undefined)?.value;
-      if (typeof score === "number") summary.push(`Score: ${score}/100`);
+      // Dé-scorisation (audit HelloCoco chantier 3) : plus de « Score: X/100 »
+      // réinjecté dans le contexte LLM — l'intensité de signal suffit.
+      const intensity = data.signalIntensity;
+      if (typeof intensity === "string") summary.push(`Intensite des signaux: ${intensity}`);
 
       // Narrative / oneLiner
       const narrative = data.narrative as { oneLiner?: string; summary?: string } | undefined;
@@ -369,7 +369,6 @@ LANGUE: Francais.`;
         blockers.push({
           agentName,
           reason,
-          recommendation: alertSignal.recommendation,
         });
         this.pushDeterministicChallenge(
           challenges,

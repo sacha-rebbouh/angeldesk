@@ -164,6 +164,17 @@ function stripKeys(obj: Record<string, unknown>, keys: readonly string[]): Recor
 }
 
 /**
+ * Retire `alertSignal.recommendation` (enum prescriptif legacy PROCEED/…/STOP,
+ * compat infra dérivée de signalIntensity — audit HelloCoco chantier 3) d'un
+ * `data` d'agent avant réinjection dans un contexte LLM. Conserve
+ * `hasBlocker` / `blockerReason` / `justification` (analytiques). Pur.
+ */
+function stripPrescriptiveAlertSignal(data: Record<string, unknown>): Record<string, unknown> {
+  if (!isRecord(data.alertSignal) || !("recommendation" in data.alertSignal)) return data;
+  return { ...data, alertSignal: stripKeys(data.alertSignal, ["recommendation"]) };
+}
+
+/**
  * Retire les champs de NOTE DE DEAL d'un objet `data` de synthesis-deal-scorer.
  *
  * Pure et IMMUTABLE (n'altère jamais l'entrée — shallow clone + reconstruction
@@ -195,7 +206,7 @@ export function scrubSynthesisScoreData<T>(data: T): T {
   if (isRecord(clone.signalContribution)) {
     clone.signalContribution = stripKeys(clone.signalContribution, ["score", "scoreNote"]);
   }
-  return clone as T;
+  return stripPrescriptiveAlertSignal(clone) as T;
 }
 
 /**
@@ -262,7 +273,7 @@ export function scrubAgentScoreData<T>(agentName: string, data: T): T {
   return (
     agentName === "synthesis-deal-scorer"
       ? scrubSynthesisScoreData(data)
-      : stripKeys(data, AGENT_DEAL_NOTE_KEYS)
+      : stripPrescriptiveAlertSignal(stripKeys(data, AGENT_DEAL_NOTE_KEYS))
   ) as T;
 }
 

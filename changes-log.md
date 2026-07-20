@@ -1,6 +1,25 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 3 : vestiges score/prescriptif hors des contextes LLM et des textes restitués
+
+### Fichiers
+- `src/agents/tier3/contradiction-detector.ts` : `formatAgentOutput` ne réinjecte plus « Score: X/100 (Grade: Y) » dans le prompt (remplacé par `signalIntensity`, mécanique interne autorisée) ; red flag « Score de consistance de X/100 » reformulé sans note.
+- `src/agents/tier3/devils-advocate.ts` : `extractChallengeableElements` idem (plus de Score/Grade dans le prompt) ; justification fallback « à partir du score X/100 » reformulée.
+- `src/agents/tier1/question-master.ts` : agentSummary (previousResults P1/P2) idem.
+- `src/agents/tier3/thesis-reconciler.ts` : résumé agents sans « Score: X/100 » ; champ vestigial `blockers[].recommendation` (STOP) retiré (jamais rendu).
+- `src/agents/tier3/memo-generator.ts` : le prompt ne demande PLUS de `score {value, grade A-F, breakdown}` au LLM (le transform le droppait déjà — production pure supprimée + type nettoyé).
+- `src/agents/tier3/prompts/memo-generator-prompt.ts` (**finding Codex tour 2**) : system prompt runtime réécrit scoreless — « Synthèse des Scores » (agrégation pondérée) → « Synthèse des Signaux » ; table FRAMEWORK 0-100 → grille qualitative ; table « Score | Grade | Orientation » (anti-pattern orientation-depuis-score) → orientation dérivée de l'intensité des signaux uniquement ; exemple « Score 72/100 (Grade B) » purgé ; `alertSignal: hasBlocker, justification`.
+- `src/agents/orchestrator/early-warnings.ts` : 10 `descriptionTemplate` « … score of {value}/100 … » réécrits en signaux agrégés sans note (les seuils `score.value` internes de déclenchement restent — mécanique autorisée §4.1).
+- `src/services/signal-profile/index.ts` : scrubbers étendus — `stripPrescriptiveAlertSignal` retire `alertSignal.recommendation` (enum prescriptif STOP/PROCEED, compat infra) de tout contexte LLM réinjecté (`scrubAgentScoreData`, `scrubAllScoresForLLMContext`, `scrubSynthesisScoreData`) en gardant `hasBlocker`/`blockerReason`/`justification` (analytiques). Couvre chat + board déjà câblés.
+- `src/agents/tier1/utils/derive-alert-signal.ts` : doc — statut « champ interne confiné » de `recommendation` + résolution de l'« incohérence » `hasBlocker=false`+`STOP` (axes indépendants ; le cas HelloCoco venait du faux red flag CRITICAL corrigé au chantier 2 ; le LLM ne pilote pas la dérivation — pas de couplage à `hasBlocker`).
+- `src/agents/__tests__/doctrine-previousresults-guard.test.ts` (NOUVEAU) : source-guard — patterns de réinjection bannis (`Score: ${…}/100`, `(Grade: ${…}`) absents des 5 formatters ; memo sans schema grade ; early-warnings sans `{value}/100` ; textes produits CD/DA sans `${…}/100`.
+- `src/services/signal-profile/__tests__/signal-profile.test.ts` : +3 tests scrubber (STOP retiré, hasBlocker conservé, alertSignal non-objet inchangé).
+
+### Description
+**Audit externe HelloCoco 2026-07-20, chantier 3.** Constat sur les données : 15 agents portent `score.grade` (D/F…) + `alertSignal.recommendation` (10× STOP) dans `analysis.results` ; `previousResults` réinjectait ces notes dans les prompts Tier 3 (« Score: 50/100 (Grade: D) ») ; des textes PRODUITS restitués contenaient « X/100 » (red flag consistance, justification DA, 10 templates early-warnings). Audit des surfaces : UI (`tier1-results` → `ALERT_SIGNAL_LABELS` : STOP→« ANOMALIE MAJEURE ») et PDF (`resolveTier1SignalIntensity`, `RecommendationBadge` 5 valeurs analytiques, `score-breakdown` déjà scoreless) mappent déjà en labels analytiques — le brut ne fuyait que via les contextes LLM et les textes produits, désormais fermés. Traitement conforme au DoD : champs vestiges « explicitement internes ET filtrés par les source-guards » (production `score.value`/`grade` des agents = P4 du plan dé-scorisation, hors périmètre — pas de sur-purge ; `score.value` reste une mécanique interne consommée par `deriveTier1SignalIntensity` et les triggers early-warnings). **Gate Codex 2 tours** : tour 1 REQUEST_CHANGES (system prompt memo encore score-based ; DA réinjectait `Recommandation: ${alert.recommendation}` ; red flag CD encore « Score de consistance » dans titre+evidence) — 3 findings vérifiés exacts, corrigés, guardés ; tour 2 APPROVE (arbitrage confirmé : pas de couplage hasBlocker→dérivation, le LLM ne doit pas piloter la dérivation déterministe). tsc 0 ; 2644 tests agents+services verts.
+
+---
 ## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 2 : concurrents hors-catégorie → juge de pertinence + garde d'élévation « omission »
 
 ### Fichiers
@@ -340,15 +359,4 @@ Directive Sacha : dégager tous les scores. **Vérification chat LLM** : le prom
 
 ### Description
 Directive Sacha : dégager tous les scores. Dashboard scoreless ; métriques portfolio = observables (secteurs couverts, deals suivis). **Gate Codex APPROVE** (nit commentaire stale corrigé). Note hors-scope : `recentDeals` passe encore `globalScore` à `resolveCanonicalDealFields` (input du read-model canonique, **non restitué** par `RecentDealsList` — vérifié) → carry interne, sweep canonical-read-model/P5. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; eslint dashboard clean ; doctrine guards 27 passed.
-
----
-## 2026-06-14 — Dé-scorisation cluster — étape G1 — comparaison de deals : suppression pure des notes /100
-
-### Fichiers
-- `src/components/deals/deal-comparison.tsx` : retrait des 5 lignes de notes /100 (Score Global/Équipe/Marché/Produit/Financier) + `DIMENSION_LABELS` + memo `bestScores` + footnote « Meilleur score » + champs score du type `DealComparisonData` + import `useMemo` devenu inutile. Lignes **observables conservées** : Red Flags, Valorisation, ARR, Croissance.
-- `src/app/api/deals/compare/route.ts` : retrait des 5 `*Score` du select Prisma + de toute la machinerie qui ne servait qu'à extraire les scores (thèses, analyses, `pickCanonicalAnalysis`, `loadResults`, `extractAnalysisScores`, `resultsByAnalysisId`, `analysisScores`, `canFallbackToDealScores`). La route ne charge plus que les current facts (valo/ARR/croissance) + redFlags → simplification + suppression du chargement de blobs `results` multi-MB pour la comparaison.
-- `src/app/api/deals/compare/__tests__/route.test.ts` : réécrit pour le contrat scoreless (assert métriques observables + `redFlagCount`/`criticalRedFlagCount` + assert explicite ABSENCE des champs score = guard anti-régression).
-
-### Description
-Directive Sacha (suite AskUserQuestion) : **on dégage tous les scores, pas de remplacement**. La comparaison reste sur les métriques observables. **Gate Codex APPROVE** : comparaison scoreless de bout en bout, aucune note restituée, machinerie morte retirée. Note hors-scope : un `globalScore` subsiste dans `src/components/deals/types.ts` (type interne, à traiter dans le sweep cluster/P5). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; compare route test 2 passed ; doctrine guards 27 passed.
 
