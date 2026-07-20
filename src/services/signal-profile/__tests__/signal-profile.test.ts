@@ -379,11 +379,15 @@ describe("scrubAllScoresForLLMContext (P2 — condition dure #1)", () => {
     expect((original as unknown as { data: Record<string, unknown> }).data).toHaveProperty("overallScore", 50);
   });
 
-  it("agents sans `data` exploitable → laissés tels quels (par référence)", () => {
+  it("agents sans `data` exploitable → contenu préservé (clone sans clés de trace, jamais muté)", () => {
+    // Depuis l'audit HelloCoco chantier 3, TOUT result est cloné pour dropper
+    // les clés de trace « _ » (y compris agents en échec) — plus de garantie
+    // par référence, mais le contenu non-trace est intégralement préservé.
     const failed = { agentName: "gtm-analyst", success: false, executionTimeMs: 1, cost: 0 } as unknown as AgentResult;
     const results = { "gtm-analyst": failed };
     const out = scrubAllScoresForLLMContext(results);
-    expect(out["gtm-analyst"]).toBe(failed);
+    expect(out["gtm-analyst"]).toStrictEqual(failed);
+    expect(failed).toStrictEqual({ agentName: "gtm-analyst", success: false, executionTimeMs: 1, cost: 0 });
   });
 });
 
@@ -451,6 +455,71 @@ describe("scrubAgentScoreData (P3 — fullData chat)", () => {
     expect(noSignal.narrative).toEqual({ summary: "x" });
     const weird = scrubAgentScoreData("gtm-analyst", { alertSignal: "STOP" }) as Record<string, unknown>;
     expect(weird.alertSignal).toBe("STOP");
+  });
+
+  it("retire les notes IMBRIQUÉES en profondeur (teamAssessment.overallScore du memo, score.grade niché Tier 2)", () => {
+    // Cas réels HelloCoco relevés par scripts/debug/audit-render-quality.ts :
+    // le strip top-level ratait les notes nichées dans des sous-objets.
+    const memoOut = scrubAgentScoreData("memo-generator", {
+      teamAssessment: {
+        founders: [{ name: "X" }],
+        overallScore: 10,
+      },
+      executiveSummary: { recommendation: "alert_dominant" },
+    }) as Record<string, unknown>;
+    expect((memoOut.teamAssessment as Record<string, unknown>)).not.toHaveProperty("overallScore");
+    expect((memoOut.teamAssessment as Record<string, unknown>).founders).toEqual([{ name: "X" }]);
+    // L'orientation analytique 5 valeurs n'est PAS une note — préservée.
+    expect((memoOut.executiveSummary as Record<string, unknown>).recommendation).toBe("alert_dominant");
+
+    const tier2Out = scrubAgentScoreData("ai-expert", {
+      findings: {
+        meta: { confidenceLevel: "90%" },
+        score: { grade: "D", value: 48, breakdown: { dataQuality: 8 } },
+        insights: ["ok"],
+      },
+    }) as Record<string, unknown>;
+    const findings = tier2Out.findings as Record<string, unknown>;
+    expect(findings).not.toHaveProperty("score");
+    expect(findings.insights).toEqual(["ok"]);
+    expect(JSON.stringify(tier2Out)).not.toContain('"grade"');
+  });
+
+  it("droppe _traceFull AUSSI sur un result d'agent en échec sans data (bypass Codex)", () => {
+    const out = scrubAllScoresForLLMContext({
+      "financial-auditor": {
+        agentName: "financial-auditor",
+        success: false,
+        error: "timeout",
+        _traceFull: { llmCalls: [{ response: { parsed: { score: { grade: "F" } } } }] },
+        _traceMetrics: { calls: 1 },
+      } as unknown as import("@/agents/types").AgentResult,
+    });
+    const entry = out["financial-auditor"] as unknown as Record<string, unknown>;
+    expect(entry).not.toHaveProperty("_traceFull");
+    expect(entry).not.toHaveProperty("_traceMetrics");
+    expect(entry.success).toBe(false);
+    expect(JSON.stringify(out)).not.toContain('"grade"');
+  });
+
+  it("scrubAllScoresForLLMContext droppe les champs de trace internes (_traceFull) qui portent la réponse LLM brute", () => {
+    // Cas réel HelloCoco : _traceFull.llmCalls[].response.parsed contient le
+    // score/grade brut pré-transform — jamais destiné à un contexte LLM.
+    const out = scrubAllScoresForLLMContext({
+      "gtm-analyst": {
+        agentName: "gtm-analyst",
+        success: true,
+        data: { narrative: { summary: "ok" } },
+        _traceFull: {
+          llmCalls: [{ response: { parsed: { score: { grade: "D", value: 48 } } } }],
+        },
+        _traceMetrics: { calls: 1 },
+      } as unknown as import("@/agents/types").AgentResult,
+    });
+    const entry = out["gtm-analyst"] as unknown as Record<string, unknown>;
+    expect(entry).not.toHaveProperty("_traceFull");
+    expect(entry).not.toHaveProperty("_traceMetrics");
+    expect(JSON.stringify(out)).not.toContain('"grade"');
   });
 
   it("scrubAllScoresForLLMContext retire aussi alertSignal.recommendation de chaque agent", () => {

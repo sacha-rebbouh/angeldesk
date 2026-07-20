@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Validation finale : script DoD réutilisable + traîne profonde scrubbers + rejeu 3/3 PASS
+
+### Fichiers
+- `scripts/debug/audit-render-quality.ts` (NOUVEAU) : audit lecture-seule des 3 DoD sur une analyse arbitraire (`npx dotenv -e .env.local -- npx tsx scripts/debug/audit-render-quality.ts <dealName>`), sans appel LLM. Rejoue les VRAIES fonctions du pipeline corrigé sur les données stockées (sanitizeDealIntelligence + hasDefensibleMultiples, sanitizeLegacyCompetitiveLandscape + filterMissedCompetitors + applyOmissionRedFlagGuard, scrubAllScoresForLLMContext) — classifie par surface/allowlist (exigence Codex), section INFORMATIVE séparée pour les textes historiques persistés. Exit 0/1.
+- `src/services/signal-profile/index.ts` : le script a révélé 2 trous fermés dans la foulée — (a) `deepStripDealNoteKeys` : les notes IMBRIQUÉES en profondeur (`teamAssessment.overallScore` du memo, `findings.score.grade` Tier 2) échappaient au strip top-level → retrait récursif par NOM de clé (patterns de note §4.1, métriques observables et orientations 5 valeurs préservées) câblé dans `scrubAgentScoreData` + `scrubSynthesisScoreData` ; (b) `scrubAllScoresForLLMContext` droppe désormais les champs de trace internes (`_traceFull`/`_traceMetrics`) qui portent la réponse LLM BRUTE pré-transform (score/grade inclus) au niveau du result, hors `data`.
+- `src/services/signal-profile/__tests__/signal-profile.test.ts` : +2 tests (notes imbriquées memo/Tier 2 ; drop `_traceFull`).
+
+### Description
+**Validation finale de la session audit HelloCoco.** Rejeu sur les données existantes (sans analyse payante) : **3/3 DoD PASS** — DoD1 : médiane 1.15x stockée NEUTRALISÉE (renderers → INDISPONIBLE) ; DoD2 : 21 concurrents snapshot → 0 après sanitize (Mistral AI/Ankorstore/Dataiku/Yacla/Dolead purgés), Jasper/Anthropic écartés de competitorsMissedInDeck, red flag CRITICAL « Omission de concurrents massifs » supprimé au rejeu ; DoD3 : contexte LLM scrubé sans grade/overallScore/recommendation prescriptive. Suite unitaire complète : 4615 passed / 9 skipped / 0 failed ; tsc 0. **Obs annexe résolue en passant (cause évidente, pas de code)** : `_costReport` vide (`totalCalls: 0`) sur les analyses stepwise = le cost-monitor agrège des appels trackés EN MÉMOIRE (`this.analyses` Map par invocation) alors que le pipeline durable étale les steps sur des invocations Inngest séparées — au `endAnalysis` final la Map est vide ; même classe de bug que `totalTimeMs` (fixé 2026-06-15 via wall-clock). Source durable correcte : `LLMCallLog` (81 appels persistés pour HelloCoco). TODO futur : reconstruire le report depuis `LLMCallLog` au endAnalysis. **Vérifiable uniquement avec une nouvelle analyse réelle** : textes régénérés scoreless (memo sans médiane fabriquée ni « Score: X/100 »), qualité du juge de pertinence concurrents en conditions réelles (liste CE avec justifications), comportement fail-closed sur un deal sans use-cases, dérivés alertSignal cohérents post-chantier-2.
+
+---
 ## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 3 : vestiges score/prescriptif hors des contextes LLM et des textes restitués
 
 ### Fichiers
@@ -350,13 +361,4 @@ Directive Sacha « dégager tous les scores » + leçon défaut = SUPPRIMER. Tou
 
 ### Description
 Directive Sacha : dégager tous les scores. **Vérification chat LLM** : le prompt n'expose aucune note (system prompt propre, blocs de contexte scrubés au boundary, historique assistant scrubé, `dealMetrics` mort sans consumer). **Export RGPD** scoreless (les `results` blobs gardent `overallScore` même après le drop DB P5 → scrub explicite requis, fait). **Gate Codex APPROVE après 3 REQUEST_CHANGES** (convergence : summary → agentSummaries/findings/red flags → historique assistant ; chaque vecteur distinct corrigé). Caveat non-bloquant acté : le scrub bloc retire aussi de rares « X/100 » de confiance de thèse (pas une note de deal ; la confiance reste exprimable en %). Internes tolérés (Option B, → P5) : `canonical-read-model.*Score`, `score-extraction`, `dealMetrics`. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; signal-profile 40 + chat/route/chat-context 46 + export 1 tests verts.
-
----
-## 2026-06-14 — Dé-scorisation cluster — étape G2 — dashboard : suppression du KPI « Score moyen » + métriques portfolio observables
-
-### Fichiers
-- `src/app/(dashboard)/dashboard/page.tsx` : (1) carte KPI « Score moyen » (`avgScore/100` + « N deals scorés ») **supprimée**. (2) data : calcul `scores`/`avgScore` retiré ; `sectorDistribution` **découplé de globalScore** (secteurs distincts de tout le portefeuille, observable) ; `dealsWithScoresCount` → `portfolioDealsCount` (= `metricDeals.length`, observable) ; select Prisma `globalScore` retiré de `metricDeals` ; appel mort `loadCanonicalDealSignals(signals)` (servait aux scores) retiré ; commentaire cap portfolio mis à jour. (3) carte « Métriques Portfolio » : gate `avgScore !== null` → `sectorDistribution.length > 0` ; tuile « Deals scorés » → « Deals suivis ». **Conservé** : « Secteurs couverts ».
-
-### Description
-Directive Sacha : dégager tous les scores. Dashboard scoreless ; métriques portfolio = observables (secteurs couverts, deals suivis). **Gate Codex APPROVE** (nit commentaire stale corrigé). Note hors-scope : `recentDeals` passe encore `globalScore` à `resolveCanonicalDealFields` (input du read-model canonique, **non restitué** par `RecentDealsList` — vérifié) → carry interne, sweep canonical-read-model/P5. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; eslint dashboard clean ; doctrine guards 27 passed.
 
