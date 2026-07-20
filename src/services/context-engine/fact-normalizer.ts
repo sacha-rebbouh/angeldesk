@@ -524,10 +524,18 @@ function buildDealIntelligenceFacts(
     );
   }
 
+  const fundingTrend = fundingContext?.trend
+    ? `Funding market is ${fundingContext.trend}${
+        fundingContext.period ? ` over ${fundingContext.period}` : ""
+      } (${fundingContext.totalDealsInPeriod} comparable deals${
+        typeof fundingContext.trendPercentage === "number"
+          ? `, ${fundingContext.trendPercentage >= 0 ? "+" : ""}${fundingContext.trendPercentage}%`
+          : ""
+      }).`
+    : null;
+
   const timingParts = [
-    fundingContext
-      ? `Funding market is ${fundingContext.trend} over ${fundingContext.period} (${fundingContext.totalDealsInPeriod} comparable deals, ${fundingContext.trendPercentage >= 0 ? "+" : ""}${fundingContext.trendPercentage}%).`
-      : null,
+    fundingTrend,
     context.newsSentiment
       ? `News sentiment is ${context.newsSentiment.overallSentiment} (${context.newsSentiment.articles.length} relevant articles).`
       : null,

@@ -495,13 +495,18 @@ Réponds UNIQUEMENT avec un JSON valide.`;
 
       if (contextEngine.dealIntelligence.fundingContext) {
         const fc = contextEngine.dealIntelligence.fundingContext;
-        text += `\n**Contexte marché (${fc.period}):**\n`;
+        text += `\n**Contexte marché${fc.period ? ` (${fc.period})` : ""}:**\n`;
         if (hasDefensibleMultiples(fc)) {
           text += `- Multiple valo: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x (échantillon: ${fc.multiplesSampleSize} deals avec multiple vérifié, stage ${fc.multiplesStage})\n`;
         } else {
           text += `- Multiple valo: INDISPONIBLE (pas d'échantillon suffisant de multiples vérifiés). NE PAS citer de médiane sectorielle de multiple valo/ARR.\n`;
         }
-        text += `- Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
+        if (fc.trend) {
+          const percentage = typeof fc.trendPercentage === "number"
+            ? ` (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)`
+            : "";
+          text += `- Tendance: ${fc.trend}${percentage}\n`;
+        }
       }
 
       return text;

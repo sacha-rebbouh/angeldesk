@@ -1005,13 +1005,18 @@ ${Array.isArray(topConcerns) ? topConcerns.map((c: string) => `- ${c}`).join("\n
     const ce = context.contextEngine;
     if (ce?.dealIntelligence?.fundingContext) {
       const fc = ce.dealIntelligence.fundingContext;
-      output += `\n### Tendance marché (${fc.period})\n`;
+      output += `\n### Contexte marché${fc.period ? ` (${fc.period})` : ""}\n`;
       if (hasDefensibleMultiples(fc)) {
         output += `- Multiple valo: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x (échantillon: ${fc.multiplesSampleSize} deals avec multiple vérifié, stage ${fc.multiplesStage})\n`;
       } else {
         output += `- Multiple valo: INDISPONIBLE (pas d'échantillon suffisant de multiples vérifiés). NE PAS citer de médiane sectorielle de multiple valo/ARR.\n`;
       }
-      output += `- Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
+      if (fc.trend) {
+        const percentage = typeof fc.trendPercentage === "number"
+          ? ` (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)`
+          : "";
+        output += `- Tendance: ${fc.trend}${percentage}\n`;
+      }
       output += `- Deals analysés: ${fc.totalDealsInPeriod}\n`;
     }
 

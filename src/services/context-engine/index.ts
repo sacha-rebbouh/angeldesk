@@ -579,7 +579,7 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
     dealIntelligence,
     marketData: marketData || undefined,
     competitiveLandscape: competitors.length > 0
-      ? { competitors, marketConcentration: "moderate", competitiveAdvantages: [], competitiveRisks: [] }
+      ? { competitors, competitiveAdvantages: [], competitiveRisks: [] }
       : undefined,
     newsSentiment,
     enrichedAt: new Date().toISOString(),

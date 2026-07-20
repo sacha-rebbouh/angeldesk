@@ -1519,14 +1519,19 @@ ${sanitizedDeal.description}
 
       if (di.fundingContext) {
         const fc = di.fundingContext;
-        text += `\nContexte marche (${fc.period}):\n`;
+        text += `\nContexte marche${fc.period ? ` (${fc.period})` : ""}:\n`;
         if (hasDefensibleMultiples(fc)) {
           text += `- Multiple valorisation: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x (echantillon: ${fc.multiplesSampleSize} deals avec multiple verifie, stage ${fc.multiplesStage})\n`;
         } else {
           text += `- Multiple valorisation: INDISPONIBLE (pas d'echantillon suffisant de multiples verifies). NE PAS citer de mediane sectorielle de multiple valo/ARR.\n`;
         }
-        text += `- Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
-        text += `- ${fc.totalDealsInPeriod} deals sur la periode\n`;
+        if (fc.trend) {
+          const percentage = typeof fc.trendPercentage === "number"
+            ? ` (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)`
+            : "";
+          text += `- Tendance: ${fc.trend}${percentage}\n`;
+        }
+        text += `- ${fc.totalDealsInPeriod} deals comparables\n`;
       }
 
       if (di.verdict) {
@@ -1581,7 +1586,9 @@ ${sanitizedDeal.description}
         }
       }
 
-      text += `Concentration marche: ${cl.marketConcentration}\n`;
+      if (cl.marketConcentration) {
+        text += `Concentration marche: ${cl.marketConcentration}\n`;
+      }
     }
 
     // People Graph - Founder backgrounds

@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Chantier A1 — purge des valeurs fabriquées DealIntelligence / DealContext
+
+### Fichiers
+- `src/services/context-engine/{types.ts,deal-intelligence.ts,index.ts,competitor-relevance.ts,persistence.ts,fact-normalizer.ts}` : champs de tendance/concentration optionnels, suppression des défauts plausibles, purge inconditionnelle au chargement des snapshots et fait `market.timing_assessment` limité aux signaux réellement présents.
+- `src/services/context-engine/connectors/seedtable.ts` : exclusion des news et deals similaires sans `fundingDate`, sans substitution par la date du jour.
+- `src/agents/{types.ts,type-modules/common.ts,base-agent.ts}` + renderers Tier 1/2/3 : types alignés et lignes période/tendance/concentration conditionnelles.
+- Tests : `deal-intelligence.test.ts`, `fact-normalizer.test.ts`, `competitor-relevance.test.ts`, `seedtable.test.ts` (nouveau), `base-agent.test.ts`.
+
+### Description
+Les valeurs `stable`, `0 %`, `Last 12 months` et `moderate` n'étaient adossées à aucun calcul réel mais alimentaient les prompts et, pour le timing marché, le Fact Store. Les builders les omettent désormais ; le choke point de persistence les retire aussi de tous les snapshots existants sans matérialiser de `fundingContext` absent. Les données mécaniques ou observées (`totalDealsInPeriod`, taille/stage de l'échantillon de multiples, sentiment calculé depuis des articles) restent intactes. Seedtable ne transforme plus une date inconnue en date courante. Vérifications : `tsc --noEmit` 0 ; tests ciblés 64/64 ; suite complète 4622 passed / 9 skipped / 0 failed ; contrôles grep interdits vides.
+
+---
 ## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Validation finale : script DoD réutilisable + traîne profonde scrubbers + rejeu 3/3 PASS
 
 ### Fichiers
@@ -349,16 +361,3 @@ Cleanup des vestiges de score rendus orphelins par la dé-scorisation. Tous vér
 
 ### Description
 Directive Sacha « dégager tous les scores » + leçon défaut = SUPPRIMER. Toute la surface **Conditions** (4 sous-onglets) ne restitue plus de note de deal. Garde-fou respecté : aucune orientation dérivée d'un vieux score (suppression pure, contenu verbal natif conservé). Agent producteur `conditions-analyst` (score interne) + colonne DB `conditionsScore` **inchangés** = P4/P5 (ordre additif) ; les `conditionsScore` restants côté route = écritures DB + lecture producteur, jamais restitués écran. **Gate Codex APPROVE après 1 REQUEST_CHANGES** (Codex a flaggé version-timeline = même surface non dé-scorée ; corrigé + percentile-comparator dé-scoré proactivement par le même principe). Non-bloquant noté par Codex : select `globalScore` mort dans `/terms` GET → cleanup sweep P5/carry. tsc 0 ; 117 tests verts (doctrine-guard, doctrine-runtime-guard, signal-profile, orientation-solidity-display, conditions-analyst ×3).
-
----
-## 2026-06-14 — Dé-scorisation cluster — étape G3 — export RGPD + contexte LLM chat scoreless (+ scrubber texte libre)
-
-### Fichiers
-- `src/services/signal-profile/index.ts` : nouveaux scrubbers de **texte libre** `stripDealScoreMentions(text)` (retire les patterns de NOTE : `X/100`, `score/note` qualifié deal, `grade A-F` ; préserve les observables %/montants/ratios non-/100 ; idempotent) et `deepStripScoreMentions(value)` (récursif, ne recurse que dans objets simples + arrays, laisse intacts Date/Decimal).
-- `src/app/api/user/export/route.ts` (RGPD) : retrait des 7 `*Score` du select + des champs score par deal + du champ `scores` par analyse + de la machinerie `loadResults`/`extractAnalysisScores` (morte). `analysis.summary` scrubé via `stripDealScoreMentions` ; red flags historiques via `deepStripScoreMentions` (summaries/red flags persistés avant la bascule pouvaient contenir « Score : X/100 »).
-- `src/agents/chat/deal-chat-agent.ts` : **scrub au niveau du bloc de contexte** — `contextPrompt` (l.1158) et `retrievedContextPrompt` (l.1151) passés par `stripDealScoreMentions` (couvre agentSummaries/keyFindings/findings/fallback summary/analysisSummary) ; `buildConversationHistory` scrub les messages **ASSISTANT** historiques (user intact). System prompt déjà sans note, `scrubAgentScoreData` (P3-a) sur les fullData agents conservé.
-- Tests : `signal-profile.test.ts` (+10 cas strip/deep), `user/export/__tests__/route.test.ts` réécrit (assert observables + guard d'ABSENCE de score).
-
-### Description
-Directive Sacha : dégager tous les scores. **Vérification chat LLM** : le prompt n'expose aucune note (system prompt propre, blocs de contexte scrubés au boundary, historique assistant scrubé, `dealMetrics` mort sans consumer). **Export RGPD** scoreless (les `results` blobs gardent `overallScore` même après le drop DB P5 → scrub explicite requis, fait). **Gate Codex APPROVE après 3 REQUEST_CHANGES** (convergence : summary → agentSummaries/findings/red flags → historique assistant ; chaque vecteur distinct corrigé). Caveat non-bloquant acté : le scrub bloc retire aussi de rares « X/100 » de confiance de thèse (pas une note de deal ; la confiance reste exprimable en %). Internes tolérés (Option B, → P5) : `canonical-read-model.*Score`, `score-extraction`, `dealMetrics`. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; signal-profile 40 + chat/route/chat-context 46 + export 1 tests verts.
-

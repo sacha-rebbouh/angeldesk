@@ -6,6 +6,7 @@ import type {
   NewsSentiment,
   PeopleGraph,
   ContextQualityScore,
+  FundingContext,
 } from "@/services/context-engine/types";
 import type { BAPreferences } from "@/services/benchmarks";
 
@@ -133,6 +134,10 @@ export interface EnrichedAgentContext extends AgentContext {
       [key: string]: unknown;
     };
     potentialCompetitors?: Array<Record<string, unknown>>;
+    trend?: FundingContext["trend"];
+    trendPercentage?: FundingContext["trendPercentage"];
+    downRoundCount?: FundingContext["downRoundCount"];
+    period?: FundingContext["period"];
   };
 
   // Alias for fundingContext (used by some agents)
@@ -152,6 +157,10 @@ export interface EnrichedAgentContext extends AgentContext {
       [key: string]: unknown;
     };
     potentialCompetitors?: Array<Record<string, unknown>>;
+    trend?: FundingContext["trend"];
+    trendPercentage?: FundingContext["trendPercentage"];
+    downRoundCount?: FundingContext["downRoundCount"];
+    period?: FundingContext["period"];
   };
 
   // Tier 1 cross-validation results (F34/F39)

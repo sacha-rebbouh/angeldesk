@@ -206,7 +206,6 @@ describe("extractFactsFromDealContext", () => {
               },
             },
           ],
-          marketConcentration: "moderate",
           competitiveAdvantages: ["Faster onboarding", "Deeper workflow automation"],
           competitiveRisks: ["Microsoft could bundle adjacent workflow tooling"],
         },
@@ -268,5 +267,60 @@ describe("extractFactsFromDealContext", () => {
 
     const teamSizeFact = facts.find((fact) => fact.factKey === "team.size");
     expect(teamSizeFact?.value).toBe(11);
+  });
+
+  it("does not create a timing fact when funding trend and news are unavailable", () => {
+    const facts = extractFactsFromDealContext({
+      enrichedAt: "2026-04-19T12:00:00.000Z",
+      completeness: 0.2,
+      dealIntelligence: {
+        similarDeals: [],
+        fundingContext: {
+          totalDealsInPeriod: 12,
+          multiplesSampleSize: 0,
+          multiplesStage: "seed",
+        },
+      },
+    });
+
+    expect(facts.find((fact) => fact.factKey === "market.timing_assessment")).toBeUndefined();
+    expect(facts.map((fact) => fact.extractedText).join(" ")).not.toContain("stable");
+  });
+
+  it("creates a news-only timing fact when funding trend is unavailable", () => {
+    const facts = extractFactsFromDealContext({
+      enrichedAt: "2026-04-19T12:00:00.000Z",
+      completeness: 0.3,
+      dealIntelligence: {
+        similarDeals: [],
+        fundingContext: {
+          totalDealsInPeriod: 12,
+          multiplesSampleSize: 0,
+          multiplesStage: "seed",
+        },
+      },
+      newsSentiment: {
+        articles: [
+          {
+            title: "Acme publishes verified company update",
+            description: "Company update",
+            url: "https://news.example/acme-update",
+            source: "News",
+            publishedAt: "2026-04-18T00:00:00.000Z",
+            sentiment: "positive",
+            relevance: 0.9,
+            category: "company",
+          },
+        ],
+        overallSentiment: "positive",
+        sentimentScore: 0.7,
+        keyTopics: ["company update"],
+      },
+    });
+
+    const timingFact = facts.find((fact) => fact.factKey === "market.timing_assessment");
+    expect(timingFact?.value).toBe("News sentiment is positive (1 relevant articles).");
+    expect(timingFact?.extractedText).not.toContain("Funding market is");
+    expect(timingFact?.extractedText).not.toContain("stable");
   });
 });

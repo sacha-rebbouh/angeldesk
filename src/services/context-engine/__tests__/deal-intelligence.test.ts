@@ -5,7 +5,15 @@ import {
   sanitizeDealIntelligence,
   MIN_MULTIPLE_SAMPLE,
 } from "../deal-intelligence";
-import type { ConnectorQuery, DealIntelligence, SimilarDeal } from "../types";
+import type {
+  ConnectorQuery,
+  DealIntelligence,
+  FundingContext,
+  SimilarDeal,
+} from "../types";
+
+const LEGACY_TREND: NonNullable<FundingContext["trend"]> = "stable";
+const LEGACY_PERIOD = "Last 12 months";
 
 function makeDeal(overrides: Partial<SimilarDeal> = {}): SimilarDeal {
   return {
@@ -43,6 +51,12 @@ describe("buildDealIntelligence", () => {
     expect(di.fundingContext.p75ValuationMultiple).toBeUndefined();
     expect(di.fundingContext.multiplesSampleSize).toBe(0);
     expect(di.fundingContext.totalDealsInPeriod).toBe(67);
+    expect(di.fundingContext.trend).toBeUndefined();
+    expect(di.fundingContext.trendPercentage).toBeUndefined();
+    expect(di.fundingContext.downRoundCount).toBeUndefined();
+    expect(di.fundingContext.period).toBeUndefined();
+    expect(JSON.stringify(di)).not.toContain("stable");
+    expect(JSON.stringify(di)).not.toContain("Last 12 months");
     // Plus aucun verdict / percentile fabriqué sans donnée réelle
     expect(di.verdict).toBeUndefined();
     expect(di.percentileRank).toBeUndefined();
@@ -147,10 +161,10 @@ describe("hasDefensibleMultiples", () => {
         medianValuationMultiple: 1.15,
         p25ValuationMultiple: 0.805,
         p75ValuationMultiple: 1.495,
-        trend: "stable",
+        trend: LEGACY_TREND,
         trendPercentage: 0,
         downRoundCount: 0,
-        period: "Last 12 months",
+        period: LEGACY_PERIOD,
       })
     ).toBe(false);
   });
@@ -165,10 +179,10 @@ describe("hasDefensibleMultiples", () => {
         totalDealsInPeriod: 30,
         medianValuationMultiple: 6,
         multiplesSampleSize: 8,
-        trend: "stable",
+        trend: LEGACY_TREND,
         trendPercentage: 0,
         downRoundCount: 0,
-        period: "Last 12 months",
+        period: LEGACY_PERIOD,
       })
     ).toBe(false);
   });
@@ -187,10 +201,10 @@ describe("sanitizeDealIntelligence", () => {
         medianValuationMultiple: 1.15,
         p25ValuationMultiple: 0.805,
         p75ValuationMultiple: 1.495,
-        trend: "stable",
+        trend: LEGACY_TREND,
         trendPercentage: 0,
         downRoundCount: 0,
-        period: "Last 12 months",
+        period: LEGACY_PERIOD,
       },
       percentileRank: 50,
       fairValueRange: { low: 0, high: 0, currency: "EUR" },
@@ -205,12 +219,18 @@ describe("sanitizeDealIntelligence", () => {
     expect(sanitized!.fundingContext.p75ValuationMultiple).toBeUndefined();
     expect(sanitized!.fundingContext.multiplesSampleSize).toBe(0);
     expect(sanitized!.fundingContext.totalDealsInPeriod).toBe(67);
+    expect(sanitized!.fundingContext.trend).toBeUndefined();
+    expect(sanitized!.fundingContext.trendPercentage).toBeUndefined();
+    expect(sanitized!.fundingContext.downRoundCount).toBeUndefined();
+    expect(sanitized!.fundingContext.period).toBeUndefined();
     expect(sanitized!.percentileRank).toBeUndefined();
     expect(sanitized!.fairValueRange).toBeUndefined();
     expect(sanitized!.verdict).toBeUndefined();
     expect(sanitized!.similarDeals.every((d) => d.valuationMultiple === undefined)).toBe(true);
     // Aucune trace de 1.15 ne doit survivre à un JSON.stringify (bypass Tier 2)
     expect(JSON.stringify(sanitized)).not.toContain("1.15");
+    expect(JSON.stringify(sanitized)).not.toContain("stable");
+    expect(JSON.stringify(sanitized)).not.toContain("Last 12 months");
   });
 
   it("laisse passer intactes des données fraîches défendables", () => {
@@ -225,6 +245,9 @@ describe("sanitizeDealIntelligence", () => {
 
     expect(sanitized).toEqual(fresh);
     expect(sanitized!.fundingContext.medianValuationMultiple).toBeDefined();
+    expect(sanitized!.fundingContext.multiplesSampleSize).toBe(6);
+    expect(sanitized!.fundingContext.multiplesStage).toBe("seed");
+    expect(sanitized!.similarDeals).toEqual(fresh.similarDeals);
   });
 
   it("retire une médiane incomplète sur données récentes (JSON partiel sans quartiles)", () => {
@@ -235,16 +258,29 @@ describe("sanitizeDealIntelligence", () => {
         medianValuationMultiple: 6,
         multiplesSampleSize: 8,
         multiplesStage: "seed",
-        trend: "stable",
+        trend: LEGACY_TREND,
         trendPercentage: 0,
         downRoundCount: 0,
-        period: "Last 12 months",
+        period: LEGACY_PERIOD,
       },
     };
 
     const sanitized = sanitizeDealIntelligence(partial);
 
     expect(sanitized!.fundingContext.medianValuationMultiple).toBeUndefined();
+    expect(sanitized!.fundingContext.trend).toBeUndefined();
+  });
+
+  it("ne matérialise pas de fundingContext absent sur un snapshot JSON", () => {
+    const snapshot = {
+      similarDeals: [],
+    } as unknown as DealIntelligence;
+
+    const sanitized = sanitizeDealIntelligence(snapshot);
+
+    expect(sanitized).toBe(snapshot);
+    expect("fundingContext" in (sanitized as unknown as Record<string, unknown>)).toBe(false);
+    expect((sanitized as unknown as { fundingContext?: unknown }).fundingContext).toBeUndefined();
   });
 
   it("retourne undefined pour une entrée absente", () => {

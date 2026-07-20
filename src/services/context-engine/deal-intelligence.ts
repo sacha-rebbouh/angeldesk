@@ -58,16 +58,12 @@ export function hasDefensibleMultiples(
 }
 
 /**
- * Nettoie un `DealIntelligence` rechargé depuis une persistence legacy
- * (snapshot d'avant le fix « médiane fabriquée », TTL 30j).
+ * Nettoie un `DealIntelligence` persisté avant toute restitution.
  *
- * Un snapshot legacy se reconnaît à l'absence de `multiplesSampleSize` : sa
- * médiane/p25/p75 provenaient d'heuristiques fabriquées (french-tech
- * `valuation/(montant×10)`, eldorado constante 20), son `verdict`/`percentileRank`/
- * `fairValueRange` étaient hardcodés (`fair`/50/0-0), et ses
- * `similarDeals[].valuationMultiple` sortaient des mêmes heuristiques.
- * Tout cela est retiré pour qu'aucun renderer ni `JSON.stringify` de prompt
- * ne puisse restituer un chiffre fabriqué.
+ * Les champs de tendance sont toujours supprimés tant qu'aucun calcul réel ne
+ * les produit. Un contexte sans `multiplesSampleSize` perd aussi les multiples,
+ * verdicts et fourchettes non défendables ; un contexte récent incomplet perd
+ * uniquement ses quartiles.
  */
 export function sanitizeDealIntelligence(
   di: DealIntelligence | undefined | null
@@ -75,22 +71,29 @@ export function sanitizeDealIntelligence(
   if (!di) return undefined;
 
   const fc = di.fundingContext;
-  const isLegacy = fc != null && typeof fc.multiplesSampleSize !== "number";
+  if (fc == null) return di;
+
+  const isLegacy = typeof fc.multiplesSampleSize !== "number";
+  const cleanedFc: FundingContext = { ...fc };
+  delete cleanedFc.trend;
+  delete cleanedFc.trendPercentage;
+  delete cleanedFc.downRoundCount;
+  delete cleanedFc.period;
 
   if (!isLegacy) {
-    // Données produites après le fix : les multiples présents sont réels.
-    // On retire seulement une médiane incomplète (JSON partiel).
-    if (fc && fc.medianValuationMultiple != null && !hasDefensibleMultiples(fc)) {
-      const cleaned: FundingContext = { ...fc };
-      delete cleaned.medianValuationMultiple;
-      delete cleaned.p25ValuationMultiple;
-      delete cleaned.p75ValuationMultiple;
-      return { ...di, fundingContext: cleaned };
+    // Un échantillon identifié peut conserver ses multiples vérifiés ; un
+    // objet partiel sans quartiles reste impropre à la restitution.
+    if (
+      cleanedFc.medianValuationMultiple != null &&
+      !hasDefensibleMultiples(cleanedFc)
+    ) {
+      delete cleanedFc.medianValuationMultiple;
+      delete cleanedFc.p25ValuationMultiple;
+      delete cleanedFc.p75ValuationMultiple;
     }
-    return di;
+    return { ...di, fundingContext: cleanedFc };
   }
 
-  const cleanedFc: FundingContext = { ...fc };
   delete cleanedFc.medianValuationMultiple;
   delete cleanedFc.p25ValuationMultiple;
   delete cleanedFc.p75ValuationMultiple;
@@ -130,10 +133,6 @@ export function buildDealIntelligence(
     totalDealsInPeriod: deals.length,
     multiplesSampleSize: sampleSize,
     multiplesStage: queryStage ?? "all",
-    trend: "stable",
-    trendPercentage: 0,
-    downRoundCount: 0,
-    period: "Last 12 months",
   };
 
   if (sampleSize >= MIN_MULTIPLE_SAMPLE) {

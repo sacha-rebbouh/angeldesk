@@ -330,6 +330,16 @@ Le TAM est probablement correct."
     let fundingDbSection = "";
     if (context.contextEngine?.dealIntelligence) {
       const di = context.contextEngine.dealIntelligence;
+      const fundingPeriodLine = di.fundingContext?.period
+        ? `- Periode: ${di.fundingContext.period}\n`
+        : "";
+      const fundingTrendLine = di.fundingContext?.trend
+        ? `- Tendance: ${di.fundingContext.trend}${
+            typeof di.fundingContext.trendPercentage === "number"
+              ? ` (${di.fundingContext.trendPercentage > 0 ? "+" : ""}${di.fundingContext.trendPercentage}%)`
+              : ""
+          }\n`
+        : "";
       fundingDbSection = `\n## Donnees Funding Database
 
 ### Deals Similaires
@@ -340,9 +350,7 @@ ${di.similarDeals?.slice(0, 10).map(d =>
 
 ### Contexte Funding
 ${di.fundingContext ? `
-- Periode: ${di.fundingContext.period}
-- Tendance: ${di.fundingContext.trend} (${di.fundingContext.trendPercentage > 0 ? '+' : ''}${di.fundingContext.trendPercentage}%)
-- Deals sur la periode: ${di.fundingContext.totalDealsInPeriod}
+${fundingPeriodLine}${fundingTrendLine}- Deals comparables: ${di.fundingContext.totalDealsInPeriod}
 ${hasDefensibleMultiples(di.fundingContext)
   ? `- Valorisation mediane: ${di.fundingContext.medianValuationMultiple}x ARR (echantillon: ${di.fundingContext.multiplesSampleSize} deals avec multiple verifie, stage ${di.fundingContext.multiplesStage})
 - P25: ${di.fundingContext.p25ValuationMultiple}x | P75: ${di.fundingContext.p75ValuationMultiple}x`

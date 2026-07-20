@@ -7,6 +7,10 @@ import {
 } from "../competitor-relevance";
 import type { Competitor, CompetitiveLandscape, DataSource } from "../types";
 
+const LEGACY_CONCENTRATION = "moderate" as NonNullable<
+  CompetitiveLandscape["marketConcentration"]
+>;
+
 function makeSource(type: DataSource["type"], name: string): DataSource {
   return { type, name, retrievedAt: "2026-06-21T00:00:00.000Z", confidence: 0.8 };
 }
@@ -145,7 +149,7 @@ describe("sanitizeLegacyCompetitiveLandscape", () => {
   it("purge TOUS les concurrents legacy sans justification, y compris web_search (snapshot HelloCoco)", () => {
     const legacy: CompetitiveLandscape = {
       competitors: helloCocoCandidates,
-      marketConcentration: "moderate",
+      marketConcentration: LEGACY_CONCENTRATION,
       competitiveAdvantages: [],
       competitiveRisks: [],
     };
@@ -154,6 +158,7 @@ describe("sanitizeLegacyCompetitiveLandscape", () => {
 
     expect(sanitized).toBeDefined();
     expect(sanitized!.competitors).toEqual([]);
+    expect(sanitized!.marketConcentration).toBeUndefined();
   });
 
   it("garde les concurrents jugés (avec overlapJustification), quelle que soit la source", () => {
@@ -173,6 +178,7 @@ describe("sanitizeLegacyCompetitiveLandscape", () => {
 
     const sanitized = sanitizeLegacyCompetitiveLandscape(judged);
     expect(sanitized!.competitors).toHaveLength(1);
+    expect(sanitized!.marketConcentration).toBeUndefined();
   });
 
   it("retourne undefined pour une entrée absente", () => {

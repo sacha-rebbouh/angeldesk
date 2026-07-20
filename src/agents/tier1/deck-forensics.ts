@@ -371,7 +371,12 @@ OBLIGATOIRE:
       } else {
         valuationContext += `Multiples ARR du secteur: INDISPONIBLES (pas d'echantillon suffisant de multiples verifies). NE PAS citer de mediane sectorielle de multiple valo/ARR.\n`;
       }
-      valuationContext += `Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
+      if (fc.trend) {
+        const percentage = typeof fc.trendPercentage === "number"
+          ? ` (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)`
+          : "";
+        valuationContext += `Tendance: ${fc.trend}${percentage}\n`;
+      }
     }
 
     // F75: Pre-LLM FOMO / artificial urgency detection on document content

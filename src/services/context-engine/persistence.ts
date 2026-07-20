@@ -178,8 +178,7 @@ export async function loadContextSnapshot(
     // Rebuild DealContext from snapshot
     // Use unknown first for safe type casting from Prisma JSON
     const context: DealContext = {
-      // Sanitize : les snapshots legacy contiennent des multiples/verdicts
-      // fabriqués par les anciennes heuristiques (cf. deal-intelligence.ts).
+      // Les champs sans calcul réel sont supprimés avant toute restitution.
       dealIntelligence: sanitizeDealIntelligence(
         snapshot.dealIntelligence as unknown as DealContext["dealIntelligence"]
       ),

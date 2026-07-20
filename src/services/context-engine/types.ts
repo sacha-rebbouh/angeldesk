@@ -42,10 +42,10 @@ export interface FundingContext {
   multiplesSampleSize?: number;
   /** Stage normalisé utilisé pour calibrer les multiples ("all" si query sans stage). */
   multiplesStage?: string;
-  trend: "heating" | "stable" | "cooling";
-  trendPercentage: number; // e.g., -15% vs previous quarter
-  downRoundCount: number;
-  period: string; // e.g., "Q4 2025"
+  trend?: "heating" | "stable" | "cooling";
+  trendPercentage?: number; // e.g., -15% vs previous quarter
+  downRoundCount?: number;
+  period?: string; // e.g., "Q4 2025"
 }
 
 export interface DealIntelligence {
@@ -196,7 +196,7 @@ export interface Competitor {
 
 export interface CompetitiveLandscape {
   competitors: Competitor[];
-  marketConcentration: "fragmented" | "moderate" | "concentrated";
+  marketConcentration?: "fragmented" | "moderate" | "concentrated";
   competitiveAdvantages: string[];
   competitiveRisks: string[];
 }

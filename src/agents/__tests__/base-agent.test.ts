@@ -1,6 +1,8 @@
 import { createHash } from "crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import type { EnrichedAgentContext } from "../types";
+import type { DealIntelligence } from "../../services/context-engine/types";
 
 const routerMocks = vi.hoisted(() => ({
   complete: vi.fn(),
@@ -34,6 +36,7 @@ vi.mock("@/lib/logger", () => ({
 }));
 
 const { BaseAgent } = await import("../base-agent");
+const { sanitizeDealIntelligence } = await import("../../services/context-engine/deal-intelligence");
 
 class TestAgent extends BaseAgent<{ ok: boolean }> {
   constructor() {
@@ -74,6 +77,10 @@ class TestAgent extends BaseAgent<{ ok: boolean }> {
   async callJSONStreaming<T>(options: Parameters<TestAgent["llmCompleteJSONStreaming"]>[1] = {}) {
     return this.llmCompleteJSONStreaming<T>("prompt", options);
   }
+
+  publicFormatContextEngineData(context: EnrichedAgentContext): string {
+    return this.formatContextEngineData(context);
+  }
 }
 
 class LLMBackedTestAgent extends BaseAgent<{ ok: boolean }> {
@@ -97,6 +104,59 @@ class LLMBackedTestAgent extends BaseAgent<{ ok: boolean }> {
     return { ok: true };
   }
 }
+
+describe("formatContextEngineData", () => {
+  it("omits unavailable funding trend and market concentration", () => {
+    const agent = new TestAgent();
+    const rendered = agent.publicFormatContextEngineData({
+      canonicalDeal: { geography: null },
+      contextEngine: {
+        dealIntelligence: {
+          similarDeals: [],
+          fundingContext: {
+            totalDealsInPeriod: 12,
+            multiplesSampleSize: 0,
+            multiplesStage: "seed",
+          },
+        },
+        competitiveLandscape: {
+          competitors: [],
+          competitiveAdvantages: [],
+          competitiveRisks: [],
+        },
+      },
+    } as unknown as EnrichedAgentContext);
+
+    expect(rendered).not.toContain("Tendance:");
+    expect(rendered).not.toContain("Concentration marche:");
+    expect(rendered).not.toContain("undefined");
+    expect(rendered).toContain("12 deals comparables");
+  });
+
+  it("n'imprime pas de contexte marche pour un snapshot sans fundingContext", () => {
+    const agent = new TestAgent();
+    const snapshot = {
+      similarDeals: [],
+    } as unknown as DealIntelligence;
+    const sanitized = sanitizeDealIntelligence(snapshot);
+
+    const rendered = agent.publicFormatContextEngineData({
+      canonicalDeal: { geography: null },
+      contextEngine: {
+        dealIntelligence: sanitized,
+        competitiveLandscape: {
+          competitors: [],
+          competitiveAdvantages: [],
+          competitiveRisks: [],
+        },
+      },
+    } as unknown as EnrichedAgentContext);
+
+    expect((sanitized as unknown as { fundingContext?: unknown }).fundingContext).toBeUndefined();
+    expect(rendered).not.toContain("Contexte marche");
+    expect(rendered).not.toContain("undefined");
+  });
+});
 
 describe("computePromptVersionHash", () => {
   it("produit un hash déterministe pour la même entrée", () => {

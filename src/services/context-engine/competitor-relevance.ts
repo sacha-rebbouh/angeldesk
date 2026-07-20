@@ -105,9 +105,8 @@ export function applyRelevanceVerdicts(
 
 /**
  * Sanitize au chargement d'un snapshot persisté : fail-closed — seuls les
- * concurrents porteurs d'une justification d'overlap (donc passés par le
- * juge) sont gardés. Un snapshot legacy (jamais jugé) rend une liste vide ;
- * le prochain compute (post-TTL ou forceRefresh) re-juge des candidats frais.
+ * concurrents porteurs d'une justification d'overlap sont gardés et la
+ * concentration est supprimée tant qu'aucun calcul réel ne la produit.
  */
 export function sanitizeLegacyCompetitiveLandscape(
   cl: CompetitiveLandscape | undefined | null
@@ -116,8 +115,9 @@ export function sanitizeLegacyCompetitiveLandscape(
   const competitors = (cl.competitors ?? []).filter(
     (c) => typeof c.overlapJustification === "string" && c.overlapJustification.trim().length > 0
   );
-  if (competitors.length === (cl.competitors ?? []).length) return cl;
-  return { ...cl, competitors };
+  const sanitized: CompetitiveLandscape = { ...cl, competitors };
+  delete sanitized.marketConcentration;
+  return sanitized;
 }
 
 function buildJudgePrompt(candidates: Competitor[], query: ConnectorQuery): string {

@@ -8,6 +8,7 @@ import type {
   ContextQualityScore,
   SourceHealth,
   DataSource,
+  FundingContext,
 } from "@/services/context-engine/types";
 import type { BAPreferences } from "@/services/benchmarks";
 import type { EvidenceLedger } from "@/services/evidence-ledger";
@@ -224,6 +225,10 @@ export interface EnrichedAgentContext extends AgentContext {
       [key: string]: unknown;
     };
     potentialCompetitors?: Array<Record<string, unknown>>;
+    trend?: FundingContext["trend"];
+    trendPercentage?: FundingContext["trendPercentage"];
+    downRoundCount?: FundingContext["downRoundCount"];
+    period?: FundingContext["period"];
   };
 
   // Alias for fundingContext (used by some agents)
@@ -244,6 +249,10 @@ export interface EnrichedAgentContext extends AgentContext {
       [key: string]: unknown;
     };
     potentialCompetitors?: Array<Record<string, unknown>>;
+    trend?: FundingContext["trend"];
+    trendPercentage?: FundingContext["trendPercentage"];
+    downRoundCount?: FundingContext["downRoundCount"];
+    period?: FundingContext["period"];
   };
 
   // Tier 1 cross-validation results (injected between Tier 1 and Tier 3) (F34/F39)
