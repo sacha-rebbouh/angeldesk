@@ -206,6 +206,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function formatFactContradictionValue(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function toAgentResultsRecord(value: unknown): Record<string, AgentResult> | null {
   return isRecord(value) ? (value as Record<string, AgentResult>) : null;
 }
@@ -6167,6 +6175,15 @@ export class AgentOrchestrator {
         `created=${result.createdCount}, superseded=${result.supersededCount}, ` +
         `ignored=${result.ignoredCount}, pending_review=${result.pendingReviewCount}`
     );
+
+    for (const contradiction of result.contradictions) {
+      logger.warn(
+        `[FactContradiction] dealId=${dealId} factKey=${contradiction.factKey} ` +
+          `significance=${contradiction.significance} ` +
+          `existing=${formatFactContradictionValue(contradiction.existingValue)} ` +
+          `new=${formatFactContradictionValue(contradiction.newValue)}`
+      );
+    }
 
     return {
       factStore: result.currentFacts,

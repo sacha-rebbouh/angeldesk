@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Chantier A3 — statut disputé des faits sur la vue matérialisée
+
+### Fichiers
+- `src/services/fact-store/current-facts.ts` : `getCurrentFactsFromView` charge en une requête groupée les événements `PENDING_REVIEW` des clés présentes dans la vue, puis renseigne `isDisputed` et les `disputeDetails` minimaux ; le chemin computé reconnaît aussi `PENDING_REVIEW` tout en conservant la compatibilité avec l'ancien type `DISPUTED`.
+- `src/agents/orchestrator/index.ts` : chaque contradiction retournée par `persistExtractedFactsWithMatching` produit un log stable `[FactContradiction]` avec deal, clé, significativité, valeur existante et nouvelle valeur.
+- Tests : `current-facts-view.test.ts` (avec/sans dispute + requête groupée), `current-facts-selection.test.ts` (alignement du chemin computé) et `fact-contradiction-logging.test.ts` (contradiction `SIGNIFICANT` et spy logger).
+
+### Description
+La vue matérialisée reste responsable des valeurs courantes, tandis que le statut de contestation est recalculé à la lecture sans N+1. Une panne de cette lecture complémentaire conserve le fallback existant vers le calcul par événements, donc aucun fait ne repasse silencieusement à `isDisputed: false`. Les contradictions non bloquantes ne sont plus perdues après ingestion : elles disposent d'une ligne de log greppable par contradiction. Aucun changement de schéma, de données, d'UI ou de rendu PDF. Vérifications : `npx tsc --noEmit` 0 ; tests ciblés 13/13 ; suite complète 4636 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-07-20 — Chantier A2 — devise porteuse sur les montants Context Engine
 
 ### Fichiers

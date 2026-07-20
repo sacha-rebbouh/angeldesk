@@ -109,6 +109,33 @@ describe("getCurrentFacts source document freshness", () => {
     expect(facts[0]?.currentSource).toBe("BA_OVERRIDE");
   });
 
+  it("marks the current fact as disputed when a pending review exists", async () => {
+    mocks.factEventFindMany.mockResolvedValue([
+      makeFactEvent({
+        id: "event_pending",
+        value: 1400000,
+        displayValue: "1.4M EUR",
+        source: "CONTEXT_ENGINE",
+        eventType: "PENDING_REVIEW",
+        createdAt: new Date("2026-02-01T00:00:00.000Z"),
+      }),
+      makeFactEvent({ id: "event_current" }),
+    ]);
+    mocks.documentFindMany.mockResolvedValue([]);
+
+    const { getCurrentFacts } = await import("../current-facts");
+    const facts = await getCurrentFacts("deal_1");
+
+    expect(facts[0]).toMatchObject({
+      currentValue: 1000000,
+      isDisputed: true,
+      disputeDetails: {
+        conflictingValue: 1400000,
+        conflictingSource: "CONTEXT_ENGINE",
+      },
+    });
+  });
+
   it("canonicalizes legacy alias fact keys when reading current facts", async () => {
     mocks.factEventFindMany.mockResolvedValue([
       makeFactEvent({
