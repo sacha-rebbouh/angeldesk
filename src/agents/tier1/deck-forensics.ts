@@ -1,4 +1,5 @@
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
+import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -365,7 +366,11 @@ OBLIGATOIRE:
     if (context.contextEngine?.dealIntelligence?.fundingContext) {
       const fc = context.contextEngine.dealIntelligence.fundingContext;
       valuationContext = `\n## Benchmarks Valorisation (Context Engine DB)\n`;
-      valuationContext += `Multiples ARR du secteur: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x\n`;
+      if (hasDefensibleMultiples(fc)) {
+        valuationContext += `Multiples ARR du secteur: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x (echantillon: ${fc.multiplesSampleSize} deals avec multiple verifie, stage ${fc.multiplesStage})\n`;
+      } else {
+        valuationContext += `Multiples ARR du secteur: INDISPONIBLES (pas d'echantillon suffisant de multiples verifies). NE PAS citer de mediane sectorielle de multiple valo/ARR.\n`;
+      }
       valuationContext += `Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
     }
 

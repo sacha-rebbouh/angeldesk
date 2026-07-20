@@ -7,6 +7,7 @@
 
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { sanitizeDealIntelligence } from "./deal-intelligence";
 import type { DealContext } from "./types";
 
 // Default snapshot validity: 30 days
@@ -176,7 +177,11 @@ export async function loadContextSnapshot(
     // Rebuild DealContext from snapshot
     // Use unknown first for safe type casting from Prisma JSON
     const context: DealContext = {
-      dealIntelligence: snapshot.dealIntelligence as unknown as DealContext["dealIntelligence"],
+      // Sanitize : les snapshots legacy contiennent des multiples/verdicts
+      // fabriqués par les anciennes heuristiques (cf. deal-intelligence.ts).
+      dealIntelligence: sanitizeDealIntelligence(
+        snapshot.dealIntelligence as unknown as DealContext["dealIntelligence"]
+      ),
       marketData: snapshot.marketData as unknown as DealContext["marketData"],
       competitiveLandscape: snapshot.competitiveLandscape as unknown as DealContext["competitiveLandscape"],
       newsSentiment: snapshot.newsSentiment as unknown as DealContext["newsSentiment"],

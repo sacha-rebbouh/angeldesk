@@ -1,6 +1,22 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 1 : médiane valo 1.15x fabriquée → jamais de médiane sans échantillon défendable
+
+### Fichiers
+- `src/services/context-engine/deal-intelligence.ts` (NOUVEAU) : `buildDealIntelligence` extrait d'`index.ts` + fixé — calibration de stage (multiples d'un stage ≠ query exclus), seuil `MIN_MULTIPLE_SAMPLE=5` sous lequel AUCUNE médiane/p25/p75 n'est produite, `multiplesSampleSize`/`multiplesStage` exposés, suppression des fallbacks fabriqués (`median=20` par défaut, `p25/p75=±30%`, `percentileRank:50`, `verdict:"fair"`, `fairValueRange 0-0` hardcodés). + `hasDefensibleMultiples()` garde-fou de restitution (rejette aussi les snapshots legacy persistés avec médiane fabriquée sans sampleSize — cas HelloCoco).
+- `src/services/context-engine/types.ts` : `FundingContext.medianValuationMultiple/p25/p75` optionnels + `multiplesSampleSize`/`multiplesStage` ; `DealIntelligence.percentileRank/fairValueRange/verdict` optionnels.
+- `src/services/context-engine/index.ts` : ancienne `buildDealIntelligence` privée supprimée, import du nouveau module.
+- `src/services/context-engine/connectors/french-tech.ts` : suppression de l'heuristique `valuation/(montant×10)` (« Rough ARR multiple ») — source exacte du 1.15x (Dataiku : 4.6Md/(400M×10)).
+- `src/services/context-engine/connectors/eldorado.ts` : suppression de `calculateValuationMultiple` (constante 20 fabriquée).
+- Renderers de prompts (garde `hasDefensibleMultiples`, sinon ligne explicite « INDISPONIBLE … NE PAS citer de mediane sectorielle ») : `src/agents/base-agent.ts` (`formatContextEngineData`), `src/agents/tier1/market-intelligence.ts`, `src/agents/tier1/deck-forensics.ts`, `src/agents/tier3/synthesis-deal-scorer.ts`, `src/agents/tier2/marketplace-expert.ts`.
+- `src/services/context-engine/persistence.ts` : `loadContextSnapshot` passe `dealIntelligence` par `sanitizeDealIntelligence()` — point d'étranglement qui purge les snapshots legacy AVANT tout renderer/`JSON.stringify` (couvre aussi les experts Tier 2 qui stringifient `dealIntelligence` brut : mobility/blockchain/fintech/legaltech/creator).
+- `src/services/context-engine/__tests__/deal-intelligence.test.ts` (NOUVEAU) : 14 tests — cas HelloCoco (67 deals, 0 multiple → rien), 1 seul multiple (sous seuil), calibration stage, échantillon suffisant (médiane+quartiles+n), multiples dégénérés (0/négatif/NaN/Infinity), top-10, rejet snapshot legacy, sanitizer (purge snapshot legacy exact HelloCoco incl. `similarDeals[].valuationMultiple` Dataiku@1.15 + assertion `JSON.stringify` sans "1.15", passthrough données fraîches, médiane incomplète retirée, objets partiels).
+
+### Description
+**Audit externe HelloCoco 2026-07-20, chantier 1.** Le memo citait « médiane sectorielle de 1.15x » (vs multiple implicite 6.7x → `valuationAssessment: VERY_AGGRESSIVE`) et le contradiction-detector « 1.15x … sur 67 deals récents ». Cause racine (confirmée sur le `ContextEngineSnapshot` persisté : `median=1.15, p25=0.805=1.15×0.7, p75=1.495=1.15×1.3` → branche fallback ≤3 multiples) : la médiane était calculée sur 1-3 multiples **fabriqués par heuristique** (french-tech `valuation/(montant×10)` : Dataiku Growth/Series E → 1.15 exactement ; eldorado → constante 20), sans calibration de stage (deal Seed comparé à du Growth), pendant que `totalDealsInPeriod=67` (deals SANS multiple) était affiché à côté → conflation LLM « médiane sur 67 deals ». Fix : plus aucun multiple fabriqué à la source ; médiane restituée uniquement si ≥5 multiples vérifiés du bon stage, avec n affiché dans le prompt ; sinon donnée explicitement indisponible (un chiffre faux est pire qu'une absence — 5 directives anti-hallucination). Le garde-fou de restitution neutralise aussi les snapshots legacy en cache (TTL 30j). **Gate Codex tour 1 REQUEST_CHANGES** (3 findings, tous vérifiés puis traités) : (1) `similarDeals[].valuationMultiple` legacy atteignait encore les prompts (`@ 1.15x ARR`) → sanitizer au chargement du snapshot ; (2) 5 experts Tier 2 `JSON.stringify(dealIntelligence)` bypassaient `hasDefensibleMultiples` → même sanitizer au choke point persistence ; (3) `hasDefensibleMultiples` durci (médiane + p25 + p75 + sampleSize requis, plus de `undefinedx`). tsc 0 ; 14 tests deal-intelligence verts.
+
+---
 ## 2026-06-21 — Fix — mémo « Due diligence / À compléter » : questions tronquées à 80 car. + « ... »
 
 ### Fichiers
@@ -329,23 +345,3 @@ Directive Sacha (suite AskUserQuestion) : **on dégage tous les scores, pas de r
 ### Description
 Cleanup des composants de note de deal devenus orphelins après la bascule des consumers (tier1-results, listes, overview). **Gate Codex APPROVE** : 4 suppressions sûres (aucun import runtime restant de `ScoreBadge`/`ScoreGrid`/`DeltaIndicator`/`AdjustedScoreBadge` dans `src` ; occurrences restantes = docs/commentaires) ; conservation de `score-ring.tsx` correcte. **Ceci clôt la cible du plan de relais (« tier1-results puis composants score partagés »).** Restent des sous-chantiers SÉPARÉS hors cible : (1) cluster read-model/delta/compare/score-extraction (`canonical-read-model.ts` expose encore `*Score`, `analysis-delta`, `analysis-variance`, `compare`, `score-extraction`) ; (2) sous-chantier conditions (`conditions-analysis-cards.tsx` rend `ScoreRing(score)`) ; (3) nit futur `getScoreBadgeColor` dans `format-utils.ts` (à nettoyer si plus aucun consumer). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; doctrine guards 40 passed.
 
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 13/N (F) — vue d'ensemble : ScoreGrid /100 → BadgePair orientation × solidité (décision Sacha)
-
-### Fichiers
-- `src/app/(dashboard)/deals/[dealId]/page.tsx` : la carte « Scores » de l'overview rendait un `ScoreGrid` de 7 sous-scores /100 (`global`/`team`/`market`/`product`/`financials` depuis `canonicalDeal.*Score` + `fundamentals`/`conditions` depuis `deal.*Score` — toutes notes de deal bannies). Remplacé par **`BadgePair` (orientation × solidité)**. Orientation/solidité dérivées via `aggregateOrientation`/`aggregateSolidity` sur `latestCompletedResults` (déjà chargé server-side pour le view model analysis-v2 → aucun chargement de blob supplémentaire, pas de régression perf SSR). Gating `showOverviewScores` (globalScore != null) → `showOverviewSignal` (orientation != null && latestThesis && !thesisGated, gating thèse conservé). En-tête « Scores » → « Orientation » ; empty-state « Score masqué/indisponible » → « Orientation masquée/indisponible ». Import `ScoreGrid` retiré (→ `BadgePair` + agrégateurs).
-
-### Description
-Décision produit Sacha (AskUserQuestion, Q1 overview) : remplacer le score grid par le modèle 2 axes verbal. **Gate Codex APPROVE** (« plus de ScoreGrid ni 7 notes /100, BadgePair depuis results déjà chargé, gating thèse préservé, orientation dérivée sans lecture de note de deal »). Mêmes agrégateurs score-indépendants que tier3/investor-view/tier1 (caveat C3 connu : `aggregateSolidity` peut en dernier fallback dériver une solidité verbale depuis `coherenceScore` documentaire — pas la note de deal, nombre jamais rendu). **Périmètre = surface overview uniquement.** Le CLUSTER read-model/delta/compare (`canonical-read-model.ts` expose encore `*Score`, `analysis-delta` scoreDelta, `analysis-variance`, `compare/route.ts`, `score-extraction.ts`) = sous-chantier séparé à venir ; champs DB intacts (= P5). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; eslint page clean ; doctrine guards 54 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 12/N (E) — listes de deals : note /100 → compteur de signaux (décision Sacha)
-
-### Fichiers
-- `src/components/deals/deals-table.tsx` : les 2 `ScoreBadge score={deal.globalScore}` (note /100, bannie — vue mobile carte + cellule desktop) remplacés par un badge compteur « N signal/signaux » = `deal.redFlags.length` (total des red flags, observable). Branche `thesisGated` → « Thèse d'abord » conservée. En-tête colonne desktop « Score » → « Signaux ». Import `ScoreBadge` retiré.
-- `src/components/deals/deals-kanban.tsx` : même remplacement `ScoreBadge` → compteur « N signaux ». Import `ScoreBadge` retiré. Commentaire `Name + score` → `Name + signals count` (stale, nit Codex).
-
-### Description
-Décision produit Sacha (AskUserQuestion, Q2 listes) : remplacer la note de deal des listes par un **compteur de signaux d'alerte**. Le nouveau badge montre le **total** (toutes sévérités) pour coller à la formulation « N signaux dont M critiques » ; les 3 surfaces affichent **déjà** ailleurs un compteur CRITICAL+HIGH (colonne « Alertes » desktop + tooltip, footers mobile/kanban) → total vs critique = deux lectures distinctes. **Gate Codex APPROVE** (« maintien séparé Signaux total / Alertes critique acceptable, colле à la décision produit » ; nit comment stale corrigé). Plus aucune note de deal (`deal.globalScore`) restituée dans les listes. `score-badge.tsx` devient probablement orphelin (à confirmer/retirer en étape D composants partagés). tsc 0 ; eslint clean ; doctrine guards 40 passed.
-
----

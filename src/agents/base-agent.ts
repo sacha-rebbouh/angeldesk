@@ -19,6 +19,7 @@ import { sanitizeForLLM, sanitizeName, PromptInjectionError } from "@/lib/saniti
 import { logger } from "@/lib/logger";
 import { z } from "zod";
 import { formatGeographyCoverageForPrompt } from "@/services/context-engine/geography-coverage";
+import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
 import { formatThresholdsForPrompt } from "@/agents/config/red-flag-thresholds";
 import { getStageCalibrationBlock } from "@/agents/stage-calibration";
 import {
@@ -1519,7 +1520,11 @@ ${sanitizedDeal.description}
       if (di.fundingContext) {
         const fc = di.fundingContext;
         text += `\nContexte marche (${fc.period}):\n`;
-        text += `- Multiple valorisation: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x\n`;
+        if (hasDefensibleMultiples(fc)) {
+          text += `- Multiple valorisation: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x (echantillon: ${fc.multiplesSampleSize} deals avec multiple verifie, stage ${fc.multiplesStage})\n`;
+        } else {
+          text += `- Multiple valorisation: INDISPONIBLE (pas d'echantillon suffisant de multiples verifies). NE PAS citer de mediane sectorielle de multiple valo/ARR.\n`;
+        }
         text += `- Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
         text += `- ${fc.totalDealsInPeriod} deals sur la periode\n`;
       }

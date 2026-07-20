@@ -384,34 +384,6 @@ function matchesSector(dealSector: string, querySector: string): boolean {
   return false;
 }
 
-function calculateValuationMultiple(
-  amount: number,
-  stage: string
-): number | undefined {
-  // Rough estimate based on typical dilution per stage
-  const dilutionByStage: Record<string, number> = {
-    "pre-seed": 0.15,
-    "seed": 0.20,
-    "series a": 0.20,
-    "series b": 0.15,
-    "series c": 0.12,
-    "series d": 0.10,
-    "series e": 0.08,
-    "series f": 0.06,
-    "growth": 0.05,
-  };
-
-  const stageLower = stage.toLowerCase();
-  const dilution = dilutionByStage[stageLower];
-
-  if (!dilution) return undefined;
-
-  // Post-money valuation = amount / dilution
-  // Assume ARR = post-money / 20 (rough SaaS multiple)
-  // Return the implied ARR multiple
-  return 20; // Simplified - would need actual ARR data
-}
-
 // ============================================================================
 // CONNECTOR IMPLEMENTATION
 // ============================================================================
@@ -459,7 +431,9 @@ export const eldoradoConnector: Connector = {
       geography: "France",
       fundingAmount: deal.amount,
       fundingDate: deal.date,
-      valuationMultiple: calculateValuationMultiple(deal.amount, deal.stage),
+      // Pas de valuationMultiple : aucune donnée ARR réelle dans ce dataset
+      // (l'ancien helper retournait une constante 20 fabriquée).
+      valuationMultiple: undefined,
       investors: deal.investors,
       source: {
         ...eldoradoSource,

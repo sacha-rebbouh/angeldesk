@@ -451,9 +451,10 @@ export const frenchTechConnector: Connector = {
       geography: "France",
       fundingDate: company.lastFunding?.date || "2023",
       fundingAmount: company.lastFunding?.amount || 0,
-      valuationMultiple: company.metrics?.valuation && company.lastFunding?.amount
-        ? company.metrics.valuation / (company.lastFunding.amount * 10) // Rough ARR multiple
-        : undefined,
+      // Pas de valuationMultiple : aucune donnée ARR réelle dans ce dataset.
+      // L'ancienne heuristique valuation/(montant×10) fabriquait des multiples
+      // faux (Dataiku → 1.15x) restitués ensuite comme « médiane sectorielle ».
+      valuationMultiple: undefined,
       investors: [],
       source: {
         ...frenchTechSource,

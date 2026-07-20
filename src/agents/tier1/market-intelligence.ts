@@ -1,4 +1,5 @@
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
+import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -342,8 +343,10 @@ ${di.fundingContext ? `
 - Periode: ${di.fundingContext.period}
 - Tendance: ${di.fundingContext.trend} (${di.fundingContext.trendPercentage > 0 ? '+' : ''}${di.fundingContext.trendPercentage}%)
 - Deals sur la periode: ${di.fundingContext.totalDealsInPeriod}
-- Valorisation mediane: ${di.fundingContext.medianValuationMultiple}x ARR
-- P25: ${di.fundingContext.p25ValuationMultiple}x | P75: ${di.fundingContext.p75ValuationMultiple}x
+${hasDefensibleMultiples(di.fundingContext)
+  ? `- Valorisation mediane: ${di.fundingContext.medianValuationMultiple}x ARR (echantillon: ${di.fundingContext.multiplesSampleSize} deals avec multiple verifie, stage ${di.fundingContext.multiplesStage})
+- P25: ${di.fundingContext.p25ValuationMultiple}x | P75: ${di.fundingContext.p75ValuationMultiple}x`
+  : `- Multiples valo/ARR: INDISPONIBLES (pas d'echantillon suffisant de multiples verifies). NE PAS citer de mediane sectorielle.`}
 ` : 'Non disponible'}
 
 ### Verdict Valorisation DB

@@ -30,9 +30,18 @@ export interface SimilarDeal {
 
 export interface FundingContext {
   totalDealsInPeriod: number;
-  medianValuationMultiple: number;
-  p25ValuationMultiple: number;
-  p75ValuationMultiple: number;
+  /**
+   * Multiples valo/ARR : présents UNIQUEMENT si un échantillon suffisant de
+   * multiples vérifiés existe (cf. MIN_MULTIPLE_SAMPLE dans deal-intelligence.ts).
+   * Jamais fabriqués depuis une heuristique. Absents = donnée indisponible.
+   */
+  medianValuationMultiple?: number;
+  p25ValuationMultiple?: number;
+  p75ValuationMultiple?: number;
+  /** Nb de deals avec multiple vérifié utilisés pour la médiane (0 si aucun). Absent sur les snapshots legacy = médiane non défendable. */
+  multiplesSampleSize?: number;
+  /** Stage normalisé utilisé pour calibrer les multiples ("all" si query sans stage). */
+  multiplesStage?: string;
   trend: "heating" | "stable" | "cooling";
   trendPercentage: number; // e.g., -15% vs previous quarter
   downRoundCount: number;
@@ -42,13 +51,14 @@ export interface FundingContext {
 export interface DealIntelligence {
   similarDeals: SimilarDeal[];
   fundingContext: FundingContext;
-  percentileRank: number; // 0-100
-  fairValueRange: {
+  /** Absents tant qu'aucun calcul réel n'existe — jamais de valeur par défaut fabriquée. */
+  percentileRank?: number; // 0-100
+  fairValueRange?: {
     low: number;
     high: number;
     currency: string;
   };
-  verdict: "undervalued" | "fair" | "aggressive" | "very_aggressive";
+  verdict?: "undervalued" | "fair" | "aggressive" | "very_aggressive";
 }
 
 // ============================================================================
