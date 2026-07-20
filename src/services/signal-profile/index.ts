@@ -217,8 +217,8 @@ export function scrubSynthesisScoreData<T>(data: T): T {
   if (isRecord(clone.signalContribution)) {
     clone.signalContribution = stripKeys(clone.signalContribution, ["score", "scoreNote"]);
   }
-  // Traîne profonde (audit HelloCoco chantier 3) : notes imbriquées restantes
-  // + `alertSignal.recommendation`, retirées récursivement par nom de clé.
+  // Le scrub récursif par nom de clé retire les notes imbriquées et
+  // `alertSignal.recommendation` avant toute réinjection dans un contexte LLM.
   return deepStripDealNoteKeys(clone) as T;
 }
 
@@ -274,13 +274,13 @@ const AGENT_DEAL_NOTE_KEYS = [
 ] as const;
 
 /**
- * Clés de NOTE DE DEAL retirées RÉCURSIVEMENT (audit HelloCoco chantier 3) :
- * les notes imbriquées en profondeur (`teamAssessment.overallScore` du memo,
- * `findings.score.grade` des experts Tier 2) échappaient au strip top-level.
- * Le retrait est par NOM de clé — pattern de note (§ 4.1 : bannir les patterns
- * de note, pas tous les nombres) ; les métriques observables (arr, mrr,
- * valuation…) et l'orientation analytique (`recommendation` 5 valeurs hors
- * `alertSignal`) ne portent pas ces noms et sont préservées.
+ * Clés de NOTE DE DEAL retirées RÉCURSIVEMENT : le contrat couvre aussi les
+ * notes imbriquées en profondeur (`teamAssessment.overallScore` du memo,
+ * `findings.score.grade` des experts Tier 2). Le retrait opère par NOM de clé
+ * — pattern de note (§ 4.1 : bannir les patterns de note, pas tous les
+ * nombres) ; les métriques observables (arr, mrr, valuation…) et
+ * l'orientation analytique (`recommendation` 5 valeurs hors `alertSignal`)
+ * ne portent pas ces noms et sont préservées.
  */
 export const DEEP_DEAL_NOTE_KEY_LIST = [...AGENT_DEAL_NOTE_KEYS, "weightedScore"] as const;
 const DEEP_DEAL_NOTE_KEYS = new Set<string>(DEEP_DEAL_NOTE_KEY_LIST);
@@ -321,9 +321,9 @@ export function scrubAllScoresForLLMContext<R extends Record<string, unknown>>(r
       continue;
     }
     // Les champs de trace internes (`_traceFull`, `_traceMetrics`) portent la
-    // réponse LLM BRUTE pré-transform (score/grade inclus — audit HelloCoco
-    // chantier 3) : jamais destinés à un contexte LLM, droppés du clone pour
-    // TOUT result (y compris agents en échec sans `data`).
+    // réponse LLM brute pré-transform, score et grade inclus. Ils ne sont
+    // jamais destinés à un contexte LLM et sont donc retirés de chaque clone,
+    // y compris pour un agent en échec sans `data`.
     const entry: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(result)) {
       if (key.startsWith("_")) continue;

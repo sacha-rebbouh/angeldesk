@@ -574,8 +574,8 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
   private extractChallengeableElements(agentName: string, data: Record<string, unknown>): string {
     const elements: string[] = [];
 
-    // Dé-scorisation (audit HelloCoco chantier 3) : plus de « Score: X/100
-    // (Grade) » réinjecté dans le contexte LLM — l'intensité de signal suffit.
+    // Le contexte LLM exclut toute appréciation numérique agrégée ;
+    // l'intensité de signal suffit pour orienter le challenge analytique.
     if (typeof data.signalIntensity === "string") {
       elements.push(`Intensite des signaux: ${data.signalIntensity}`);
     }
@@ -602,10 +602,9 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
       }
     }
 
-    // Extract alert signal if present — dé-scorisation (audit HelloCoco
-    // chantier 3) : l'enum prescriptif `recommendation` (STOP/PROCEED…) ne
-    // doit jamais être réinjecté dans un contexte LLM ; seul `hasBlocker`
-    // (analytique) est transmis.
+    // Le contexte LLM ne reçoit jamais l'enum prescriptif interne
+    // `recommendation` (STOP/PROCEED…) ; seul `hasBlocker`, qui décrit un
+    // état analytique, peut être transmis.
     if (data.alertSignal && typeof data.alertSignal === "object") {
       const alert = data.alertSignal as { recommendation?: string; hasBlocker?: boolean };
       if (alert.hasBlocker) {

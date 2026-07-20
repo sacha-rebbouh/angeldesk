@@ -1,6 +1,16 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Chantier G — cascade documentaire niveau 2 et commentaires de contrat
+
+### Fichiers
+- `docs-private/{product-overview,exec-summary,pitch-deck,pitch-deck-slides}.md` : réécriture selon la doctrine pivotée — phrase publique canonique, Pauline au centre, restitution verbale orientation × solidité des preuves, effets sourcés avant l'architecture en 4 couches, claims instables marqués `TODO à vérifier`. Ces quatre cibles, annoncées gitignorées dans le chantier, sont actuellement suivies par l'index Git et devront être exclues du futur commit.
+- 10 fichiers `src/` ciblés : 14 références de provenance HelloCoco / audit / chantier converties en contrats intemporels, sans changement de logique.
+
+### Description
+Les documents ne portent plus l'ancienne promesse temporelle, le vocabulaire oraculaire, les appréciations numériques de dossier, les claims de statut commercial ni de compte précis d'agents. L'incohérence de comptage entre la doctrine historique, `CLAUDE.md` et le retrait de `deal-scorer` reste explicitement non tranchée. Vérifications : greps DoD vides ; diff `src/` commentaires/docstrings uniquement ; `npx tsc --noEmit` 0 ; suite complète 4668 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-07-20 — Chantier CF — périmètre de citation, coût durable et observabilité des multiples
 
 ### Fichiers

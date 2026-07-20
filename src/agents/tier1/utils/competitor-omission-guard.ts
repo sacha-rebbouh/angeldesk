@@ -1,14 +1,14 @@
 /**
- * Competitor Omission Guard — règle d'élévation des red flags « omission de
- * concurrent » (audit HelloCoco 2026-07-20, chantier 2).
+ * Competitor Omission Guard — contrat d'élévation des red flags « omission de
+ * concurrent ».
  *
  * Le LLM de competitive-intel peut inventer des « concurrents manqués »
  * depuis ses connaissances d'entraînement (Jasper, Anthropic…) et porter un
  * red flag CRITICAL sur cette base, même quand l'entité n'est ni vérifiée en
  * Funding DB ni présente dans la liste Context Engine jugée. Règle : un red
  * flag « omission » ne peut être CRITICAL que si la pertinence de l'entité
- * est établie ET sourcée ; sinon downgrade ou suppression (zéro faux positif
- * > exhaustivité).
+ * est établie ET sourcée ; sinon downgrade ou suppression. Ce contrat
+ * privilégie l'absence de faux positif à l'exhaustivité.
  */
 
 type Severity = "CRITICAL" | "HIGH" | "MEDIUM";

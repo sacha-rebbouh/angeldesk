@@ -3,216 +3,202 @@
 ## Slide 1 — Couverture
 
 **Angel Desk**
-Le partenaire d'aide à la décision AI-powered dans l'investissement.
+
+> Angel Desk est le copilote analytique des investisseurs privés qui doivent décider avec rigueur, sans infrastructure d'analyse lourde. Il transforme documents, déclarations des fondateurs et échanges en signaux sourcés, contradictions visibles, zones d'incertitude et questions prioritaires. La décision reste à l'investisseur.
 
 *Sacha Rebbouh — Fondateur & CEO*
 *angeldesk.ai*
 
 ---
 
-## Slide 2 — Le paradoxe
+## Slide 2 — Le problème
 
-Les décisions d'investissement portent sur des dizaines de milliers d'euros pour un Business Angel, des millions pour un fonds, des dizaines de millions pour une opération de M&A. Pourtant, la qualité de l'analyse qui les précède est presque toujours insuffisante par rapport à l'enjeu.
+### La rigueur attendue dépasse souvent la capacité analytique interne
 
-Un investisseur individuel n'a ni le temps, ni les outils, ni l'équipe pour mener une due diligence sérieuse. Un fonds minoritaire a un analyste junior débordé qui screen deux cents deals par an. Un département M&A fait appel à des cabinets qui facturent des centaines de milliers d'euros pour des processus longs et rigides.
+Une équipe d'investissement légère doit rapprocher des documents hétérogènes, distinguer faits et projections, repérer les contradictions et préparer des questions défendables — sans armée d'analystes.
 
-Les outils existants — PitchBook, CB Insights, Dealroom — sont des fournisseurs de données, pas des partenaires de décision. Ils renseignent, mais ils n'analysent pas. Ils ne challengent pas. Ils ne coachent pas.
+Les bases de données fournissent du contexte, mais n'organisent pas à elles seules le raisonnement propre au dossier. Une IA généraliste interrogée isolément peut suivre le cadrage fourni, négliger une incertitude ou produire une affirmation insuffisamment étayée.
 
-Et ceux qui se tournent vers l'IA conversationnelle obtiennent des réponses enthousiastes, sans contradiction, sans benchmarks, sans garde-fous — et parfois avec des chiffres inventés.
-
----
-
-## Slide 3 — Ce qui manque
-
-Ce qui manque n'est pas un outil d'analyse de plus. C'est un **partenaire de décision** — quelque chose qui ne se contente pas de traiter de la data, mais qui réagit, qui rebondit, qui accompagne l'investisseur tout au long du processus.
-
-**De la première lecture du deck jusqu'à la négociation des termes.**
-
-Angel Desk produit, à partir d'un simple pitch deck, une due diligence complète — le type d'analyse qu'un fonds VC ferait faire à un analyste senior pendant deux jours, mais en une heure, et pour une fraction du coût.
+Le problème n'est pas l'absence d'information. C'est l'absence d'une trace commune qui montre ce qui est établi, contesté, incomplet et prioritaire.
 
 ---
 
-## Slide 4 — Comment ça marche
+## Slide 3 — Pauline au centre
 
-L'analyse se déploie en **quatre couches successives** :
+### Une responsable d'investissement sans infrastructure lourde
 
-**Tier 0 — Extraction** : Chaque donnée du deck est extraite et classifiée par niveau de fiabilité — de l'information auditée jusqu'à la projection invérifiable. Six niveaux de classification.
+**Pauline**, 34 ans, travaille dans un micro-fonds ou dirige un syndicat structuré. Elle traite 100 à 200 dossiers par an et doit produire des mémos défendables devant associés, co-investisseurs ou LPs.
 
-**Tier 1 — Analyse** : Treize agents lancés en parallèle — audit financier, investigation équipe, cartographie concurrentielle, analyse de marché, due diligence technique, risques juridiques, stratégie de sortie, et six autres.
+Elle porte le besoin, pilote l'essai et défend l'achat auprès de l'équipe qui arbitre. Son enjeu : augmenter la capacité d'analyse sans abandonner le jugement ni la responsabilité.
 
-**Tier 2 — Expertise sectorielle** : Un expert parmi vingt-deux spécialités — SaaS, FinTech, HealthTech, AI, Climate, Biotech, et seize autres — évalue le deal contre les benchmarks spécifiques de son industrie. Aucun analyste humain n'est expert dans vingt-deux secteurs simultanément.
+Le cœur stratégique inclut aussi les angel clubs, family offices directs, petits fonds et équipes M&A légères.
 
-**Tier 3 — Synthèse** : Détection de contradictions entre agents, scoring multi-dimensionnel, scénarios de valorisation, devil's advocate qui challenge la thèse haussière, et génération d'un mémo d'investissement complet.
-
-Quarante-quatre agents. Quatre tiers. Un résultat sourcé, challengé, auditable.
+**Marie**, Business Angel expérimenté, reste une porte d'entrée secondaire via un parcours Starter. Le Business Angel novice à usage très occasionnel n'est pas le centre de conception.
 
 ---
 
-## Slide 5 — La sublimation
+## Slide 4 — Le copilote analytique
 
-L'IA ne se dépasse que lorsqu'elle est contrainte.
+### Raisonner sous incertitude, sur une base défendable
 
-Un modèle de langage interrogé seul produit une réponse probable — enthousiaste, biaisée, parfois fausse. Plusieurs modèles mis en tension produisent une intelligence qualitativement différente. Le terme exact : **sublimation**.
+Angel Desk relie documents, déclarations des fondateurs et échanges pour :
 
-**Le Board AI** met quatre modèles d'IA — Claude, GPT-4o, Gemini, Grok — face à face dans un débat structuré. Ce ne sont pas quatre avis juxtaposés. C'est une délibération : chaque modèle voit les positions des autres, peut changer d'avis s'il est convaincu par les preuves, et doit défendre ses divergences.
+- rattacher les affirmations factuelles critiques à leurs sources, leurs dates et leur fiabilité ;
+- rendre visibles les contradictions entre documents et analyses ;
+- distinguer faits, projections, hypothèses et données manquantes ;
+- hiérarchiser les questions à partir des preuves et incertitudes du dossier ;
+- conserver l'évolution du raisonnement d'une version à l'autre.
 
-La pression du débat élimine la complaisance. Les hallucinations survivent rarement à quatre regards croisés. Le consensus qui en émerge est structurellement plus fiable qu'un avis unique.
-
-C'est la théorie des groupes appliquée à l'IA. Et c'est la réponse directe à la question que tout le monde pose : *"Et si l'IA se trompe ?"*
-
----
-
-## Slide 6 — Le Live Coaching
-
-Angel Desk n'est pas un rapport statique. C'est un **partenaire temps réel**.
-
-Pendant un appel avec un fondateur, l'investisseur reçoit des suggestions en direct :
-- Une contradiction entre ce que le fondateur dit et ce que le deck affirme
-- Un benchmark du marché qui contredit un chiffre annoncé
-- Une question de suivi critique à poser maintenant
-- Une information nouvelle qui change le score d'un agent
-
-Le tout en **moins de huit secondes**, en combinant transcription audio, analyse visuelle des slides partagées, et le contexte complet de la due diligence déjà réalisée.
-
-Après l'appel : un rapport post-call synthétise tout et relance automatiquement les agents impactés par les nouvelles informations. L'analyse évolue. Le deal se précise.
+**Angel Desk augmente le jugement de l'investisseur. Il ne s'y substitue pas.**
 
 ---
 
-## Slide 7 — L'analyse vivante
+## Slide 5 — Deux axes verbaux
 
-L'analyse n'est jamais terminée. C'est un **organisme qui évolue avec le deal**.
+### Séparer la tendance observée de la qualité de son étayage
 
-**V1** — Le deck est uploadé. Quarante-quatre agents produisent la due diligence initiale.
+| Axe | Valeurs |
+|---|---|
+| **Orientation du signal** | favorable / contrasté / alerte / non exploitable |
+| **Solidité des preuves** | solide / partielle / contradictoire / insuffisante |
 
-**V2** — Le fondateur répond aux questions générées. De nouvelles contradictions sont détectées. Les scores sont recalculés. Des red flags apparaissent ou disparaissent.
+Une tendance favorable peu étayée n'est pas confondue avec une alerte solidement documentée. `non exploitable` indique une limite de couverture explicite, jamais une conclusion vague.
 
-**V3** — Le coaching en direct capte des informations inédites. Le rapport post-call relance les agents impactés. L'analyse intègre ce que le fondateur a dit — et ce qu'il n'a pas dit.
-
-PitchBook est un fournisseur de données. Crunchbase est un annuaire. Carta gère des cap tables. Dealroom fait du market intelligence. **Aucun outil existant ne couvre ce cycle.** Analyser, questionner, coacher en direct, négocier, accompagner la décision — c'est une catégorie créée.
+La solidité des preuves est dérivée de façon déterministe à partir de la provenance, de la fraîcheur, des contradictions, de la couverture et de la fiabilité documentaire. Les dimensions, sources, incertitudes et questions restent visibles.
 
 ---
 
-## Slide 8 — Différenciation
+## Slide 6 — Un dossier vivant
 
-**Tout le monde peut appeler une API. Les modèles sont les mêmes pour tout le monde.**
+### La trace évolue avec les preuves
 
-La différence, c'est ce qu'on fait entre l'appel et le résultat :
+**Lecture initiale** — extraction et qualification des documents, analyses transverses, lentille sectorielle et première synthèse.
 
-| | BA + ChatGPT | Concurrent qui réplique | Angel Desk |
+**Après réponses** — les déclarations nouvelles sont rapprochées du dossier ; des contradictions apparaissent, se précisent ou se résolvent ; les questions ouvertes persistent.
+
+**Après appel** — les éléments du post-call rejoignent la trace et peuvent alimenter une nouvelle lecture ciblée.
+
+Chaque évolution doit pouvoir être reliée à une preuve nouvelle ou à une évolution méthodologique tracée.
+
+---
+
+## Slide 7 — Débat multi-modèle
+
+### Des lectures indépendantes, puis confrontées
+
+Des modèles aux profils complémentaires analysent d'abord le dossier séparément. Leurs hypothèses et leurs preuves sont ensuite confrontées dans un débat structuré.
+
+- une convergence indique un recoupement, pas une vérité ;
+- une divergence persistante devient un signal à examiner ;
+- les positions minoritaires et leurs arguments restent visibles ;
+- les zones fragiles du raisonnement remontent avant le comité humain.
+
+Le débat sert le raisonnement sous incertitude. Il ne produit pas une autorité de substitution.
+
+<!-- TODO à vérifier : resynchroniser les modèles citables et les règles de routage avec la configuration runtime avant toute diffusion externe. -->
+
+---
+
+## Slide 8 — Vérification pendant l'appel
+
+### Le contexte du dossier au moment où il devient utile
+
+Pendant l'échange avec un fondateur, Angel Desk peut faire remonter :
+
+- une contradiction entre la présentation et une déclaration ;
+- un benchmark daté à recontextualiser ;
+- une information nouvelle absente des documents initiaux ;
+- une question prioritaire reliée aux preuves du dossier.
+
+L'investisseur conduit la conversation. Un rapport post-call structure ensuite les éléments recueillis et conserve leur provenance.
+
+<!-- TODO à vérifier : mesurer la latence de bout en bout et confirmer les conditions exactes de nouvelle lecture post-call avant toute promesse chiffrée ou formulation d'automatisme. -->
+
+---
+
+## Slide 9 — Architecture de support
+
+### Quatre couches au service de la trace analytique
+
+1. **Extraction et qualification** — documents, provenance, fraîcheur et fiabilité.
+2. **Analyses transverses** — dimensions financière, équipe, marché, concurrence, technologie, opérations, juridique, stratégie commerciale, clients et cap table.
+3. **Expertise sectorielle** — lentille spécialisée lorsque le secteur est couvert, sinon fallback général structuré.
+4. **Synthèse et challenge** — contradictions, hypothèses fragiles, conditions, questions et mémo.
+
+Cette architecture vient étayer la promesse produit ; elle ne la remplace pas.
+
+---
+
+## Slide 10 — Discipline produit
+
+### La différence se joue entre l'entrée et la restitution
+
+| | IA généraliste isolée | Outil documentaire | Angel Desk |
 |---|---|---|---|
-| Profondeur | 1 prompt, 1 réponse | Quelques agents | 44 agents en 4 tiers |
-| Garde-fous | Zéro | Basiques | 5 directives × 60 fichiers, par modèle et par agent |
-| Challenge | Aucun — le LLM dit oui | 1 seul modèle | Sublimation : 4 IAs en débat |
-| Réactivité | Rapport mort | Rapport mort | Analyse vivante V1 → V2 → V3 |
-| Fiabilité | Hallucinations invisibles | Quelques checks | Cross-validation, sources citées, scoring déterministe |
-| Accompagnement | Rien après l'analyse | Rien | Coaching live, négociation chiffrée, suivi |
+| Provenance | Dépend du prompt | Document retrouvable | Affirmations critiques reliées à leurs sources |
+| Incertitude | Souvent implicite | Hors périmètre | Données manquantes et limites exposées |
+| Contradictions | Peu structurées | Recherche textuelle | Contradictions inter-documents et inter-analyses visibles |
+| Désaccords | Lecture unique | Hors périmètre | Lectures indépendantes confrontées |
+| Continuité | Conversation isolée | Corpus statique | Trace qui évolue avec documents, réponses et appels |
 
-**Non seulement ce que le concurrent produit ne sera pas aussi profond — en plus, ça sera faux.**
-
----
-
-## Slide 9 — Le marché
-
-**TAM : 2,5 – 4,5 milliards d'euros** — plateformes d'intelligence d'investissement AI-powered, croissance 18-22% par an.
-
-**SAM : 565 millions d'euros** — Europe, US, UK, Israël. Early adopters institutionnels à 30%.
-
-**SOM Y3 : ~13 millions d'euros ARR** — 5 000 BAs + 100 clubs + 100 VCs/FOs + 20 fonds PE/M&A.
-
-Le positionnement s'adresse à **tout investisseur sérieux** :
-
-| Segment | Nombre | Pain | Angel Desk remplace... |
-|---|---|---|---|
-| Business Angels | 850 000 actifs | Seuls, investissent au feeling | 2 jours d'analyste → 1 heure |
-| Angel Clubs | 900+ réseaux | Justifier devant les membres | L'analyste du club |
-| Family Offices | 10-15 000 structures | Internalisation sans équipes | L'équipe d'analystes |
-| Fonds VC | 8 000+ actifs | Volume de deals à screener | 80% du travail de l'analyste |
-| PE / M&A | 5 000+ entités | Équipes DD à 200-500K€/an | L'accélérateur de process |
-
-En 2025, **41% des professionnels européens du PE** décrivent l'usage de l'IA comme une pratique courante — contre 3% en 2023.
+Les garde-fous de prompt, la qualification documentaire et les contrôles déterministes réduisent certains risques sans promettre l'infaillibilité.
 
 ---
 
-## Slide 10 — Paysage concurrentiel
+## Slide 11 — Marché
 
-Les concurrents les plus capitalisés ne couvrent qu'un fragment du cycle :
+### Une priorité stratégique claire, des hypothèses à documenter
 
-| Acteur | Valorisation | Ce qu'il fait | Ce qu'il ne fait pas |
-|---|---|---|---|
-| **Harmonic** | $1,45B | Sourcing pré-transactionnel | Analyse de docs privés, coaching, négociation |
-| **AlphaSense** | $4B, 400M$ ARR | Intelligence de marché macro | Analyse de startups naissantes, coaching live |
-| **Hebbia** | $700M | Ingestion documentaire institutionnelle | Accessible aux BAs, coaching, Board AI |
-| **PitchBook** | Morningstar | Base de données de deals | Analyse, coaching, scoring, négociation |
-| **ChatGPT** | — | Réponses génériques | Garde-fous, benchmarks, contradiction, fiabilité |
+Le cœur visé est celui des équipes d'investissement légères : chefs de syndicat structurés, angel clubs, micro-fonds, family offices directs, petits fonds et équipes M&A légères.
 
-**Angel Desk est le seul à couvrir le cycle complet : analyser → questionner → coacher → négocier → accompagner.**
+Le volume des Business Angels occasionnels peut soutenir l'acquisition, mais ne définit pas à lui seul le marché cœur. Les organisations déjà dotées d'une infrastructure analytique lourde constituent une extension ultérieure.
 
-5 à 10x moins cher que PitchBook ou CB Insights. Et un résultat plus travaillé : l'analyse, pas seulement la donnée.
+<!-- TODO à vérifier : sourcer et dater avant usage externe les hypothèses historiques de TAM 2,5–4,5 Md€, SAM 565 M€, croissance 18–22 %, volumes par segment et trajectoire à 13 M€ d'ARR en année trois. -->
+
+<!-- TODO à vérifier : documenter par sources primaires toute comparaison de marché ou de concurrence avant de la réintroduire dans le deck. -->
 
 ---
 
-## Slide 11 — Modèle économique
+## Slide 12 — Modèle économique
 
-**Système de crédits avec packs mensuels.** Pas de SaaS rigide, pas de pay-per-task imprévisible.
+### Un cadre à auditer contre les parcours réels
 
-| Pack | Crédits | Prix | Profil |
-|---|---|---|---|
-| Starter | 10 | 49€ | BA occasionnel |
-| Standard | 30 | 99€ | BA actif |
-| Pro | 60 | 179€ | BA sérieux / petit club |
-| Expert | 125 | 329€ | Club structuré |
-| Fund | 300 | 749€ | Fonds |
-| Institutional | Sur mesure | Sur mesure | PE / M&A |
+Le modèle envisagé associe packs et crédits afin d'adapter l'usage au volume de dossiers, de l'entrée Starter aux besoins d'une équipe structurée. Le principe doit rester lisible pour Pauline et compatible avec les coûts réels de chaque parcours.
 
-**1 deal complet** = Deep Dive (5) + Board AI (10) + Live Coaching (8) + Re-analysis (3) = **26 crédits**
+<!-- TODO à vérifier : auditer prix, volumes de crédits, consommation par action, coûts runtime, marges, règles d'essai, expiration et remboursements contre Stripe, la base et les flux actifs. -->
 
-**Marges brutes : 70-85%** selon le mix d'usage. Architecture model-agnostic via OpenRouter — de meilleurs modèles rendent Angel Desk meilleur, pas obsolète.
-
-**Le premier deal est offert** — une analyse complète, sans carte bancaire. L'utilisateur voit la vraie valeur dès la première utilisation.
+<!-- TODO à vérifier : confirmer les bandes de prix par segment avec des entretiens et des données d'usage avant de publier un chiffre. -->
 
 ---
 
-## Slide 12 — Fondateur
+## Slide 13 — Fondateur
 
-**Sacha Rebbouh** — à l'intersection exacte du problème qu'il résout.
+### Sacha Rebbouh — produit IA, logiciel et finance
 
-- **HEC Paris** — Executive MSc Innovation & Entrepreneurship
-- **TheSubtil.ai** — Cofondateur & Head of AI Product. Systèmes IA production-grade.
-- **Deel** ($12B valorisation) — Hypercroissance SaaS de l'intérieur.
-- **Antiopea** — Cofondateur. Startup RegTech/Blockchain.
-- **Sweetwood Capital** — Asset management UHNWI. Comprend les investisseurs parce qu'il a travaillé avec eux.
+- **HEC Paris** — formation en innovation et entrepreneuriat
+- **TheSubtil.ai** — cofondateur et Head of AI Product
+- **Deel** — expérience de l'hypercroissance SaaS
+- **Antiopea** — cofondateur d'une startup RegTech / Blockchain
+- **Sweetwood Capital** — expérience en asset management UHNWI
 
-12 ans d'expérience. Deux startups cofondées. Un stack qui couvre le produit IA, le développement full-stack, la finance, et le business development international.
+Ce parcours relie la construction de systèmes IA, le développement produit, la finance et le développement international.
 
-**Lean by design** : un solo founder augmenté par l'IA qui produit avec la vélocité d'une équipe de cinq.
-
----
-
-## Slide 13 — Statut & Traction
-
-**Le produit est fonctionnel.**
-
-- 44 agents opérationnels avec orchestration complète
-- Board AI — 4 LLMs en délibération
-- Live Coaching v2 — audio + vision + coaching cards + post-call
-- 22 experts sectoriels calibrés
-- 5 directives anti-hallucination dans 60+ fichiers
-- Chat IA contextuel, export PDF professionnel
-- Stratégie de négociation automatisée
-- API v1 (REST + webhooks)
-- Système de crédits opérationnel
-- Base de 1 500+ deals comparables (cible 5 000+)
-
-**Phase de pré-lancement.** Prochaines étapes : beta, enrichissement de la base de deals, go-to-market via clubs d'investissement et communautés d'investisseurs.
+<!-- TODO à vérifier : valider les intitulés, dates et éléments biographiques détaillés avant toute diffusion externe. -->
 
 ---
 
-## Slide 14 — Vision
+## Slide 14 — Cap
 
-Angel Desk ne vend pas de l'IA. Angel Desk vend de **meilleures décisions d'investissement**.
+### Une trace analytique commune pour décider avec rigueur
 
-Chaque deal analysé enrichit la base de comparables. L'analyse vivante crée un historique d'intelligence qui ne se transfère pas. Le track record de précision vérifiable devient un capital de confiance qu'aucun concurrent ne peut fabriquer.
+Angel Desk vise à devenir le copilote analytique des équipes d'investissement légères : un environnement où documents, déclarations, contradictions, incertitudes et questions restent reliés.
 
-L'ambition : devenir le partenaire de référence pour tout investisseur qui prend la qualité de ses décisions au sérieux. Du Business Angel solo au département M&A d'un grand groupe.
+Les validations prioritaires portent sur :
 
-**Angel Desk analyse et guide. L'investisseur décide.**
+- l'utilité du parcours pour Pauline ;
+- la qualité et la traçabilité inter-couches ;
+- la pertinence des comparables et leur fraîcheur ;
+- la mesure des parcours pendant et après l'appel ;
+- la robustesse économique observée, sans extrapolation non sourcée.
+
+**Angel Desk analyse et guide. La décision reste à l'investisseur.**

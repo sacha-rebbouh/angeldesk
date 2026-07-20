@@ -286,9 +286,9 @@ export class ContradictionDetectorAgent extends BaseAgent<ContradictionDetectorD
     const obj = data as Record<string, unknown>;
     const lines: string[] = [`### ${agentName.toUpperCase()} (Tier ${tier})`];
 
-    // Dé-scorisation (audit HelloCoco chantier 3) : plus de « Score: X/100
-    // (Grade: Y) » réinjecté dans le contexte LLM — l'intensité de signal
-    // (mécanique interne autorisée) porte l'information analytique.
+    // Le contexte LLM exclut toute appréciation numérique agrégée ;
+    // l'intensité de signal interne conserve l'information analytique utile à
+    // la recherche de contradictions.
     if (typeof obj.signalIntensity === "string") {
       lines.push(`Intensite des signaux: ${obj.signalIntensity}`);
     }

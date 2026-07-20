@@ -1,12 +1,11 @@
 /**
  * Deal Intelligence — agrégation des deals similaires en contexte de valorisation.
  *
- * Règle d'honnêteté (audit HelloCoco 2026-07-20) : une médiane de multiple
- * valo/ARR n'est restituée QUE si un échantillon suffisant de multiples
- * VÉRIFIÉS existe, calibré sur le stage du deal analysé. En dessous du seuil,
- * la donnée est marquée indisponible — un chiffre faux est pire qu'une absence.
- * Interdiction de fabriquer un multiple depuis une heuristique (ex-bug :
- * french-tech `valuation/(montant×10)` → « médiane sectorielle 1.15x »).
+ * Contrat d'honnêteté : une médiane de multiple valo/ARR n'est restituée QUE
+ * si un échantillon suffisant de multiples VÉRIFIÉS existe et correspond au
+ * stage du deal analysé. Sous le seuil, la donnée reste indisponible. Aucune
+ * heuristique ne peut fabriquer un multiple à partir de la valorisation et du
+ * montant levé, car l'absence de donnée est préférable à un chiffre infondé.
  */
 import type { ConnectorQuery, DealIntelligence, FundingContext, SimilarDeal } from "./types";
 

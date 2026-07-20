@@ -301,8 +301,8 @@ LANGUE: Francais.`;
       const summary: string[] = [];
       summary.push(`### ${agentName}`);
 
-      // Dé-scorisation (audit HelloCoco chantier 3) : plus de « Score: X/100 »
-      // réinjecté dans le contexte LLM — l'intensité de signal suffit.
+      // Le contexte LLM exclut toute appréciation numérique agrégée ;
+      // l'intensité de signal suffit à résumer l'état analytique de l'agent.
       const intensity = data.signalIntensity;
       if (typeof intensity === "string") summary.push(`Intensite des signaux: ${intensity}`);
 

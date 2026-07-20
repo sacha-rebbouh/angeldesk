@@ -929,9 +929,9 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       if (result.success && result.data) {
         const data = result.data;
 
-        // Dé-scorisation (audit HelloCoco chantier 3) : plus de « Score: X/100
-        // (Grade) » réinjecté dans le contexte LLM — l'intensité de signal
-        // (mécanique interne autorisée) porte l'information analytique.
+        // Le contexte LLM exclut toute appréciation numérique agrégée ;
+        // l'intensité de signal interne conserve l'information analytique
+        // nécessaire à la priorisation des questions.
         if (typeof (data as Record<string, unknown>).signalIntensity === "string") {
           agentSummary += `Intensite des signaux: ${(data as Record<string, unknown>).signalIntensity}\n`;
         }

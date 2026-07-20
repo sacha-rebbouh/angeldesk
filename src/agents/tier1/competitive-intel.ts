@@ -638,13 +638,11 @@ RAPPELS:
       ];
     }
 
-    // Garde d'omission (audit HelloCoco, chantier 2) : une entité « manquée
-    // dans le deck » n'est gardée que si elle est présente dans la liste
-    // Context Engine JUGÉE (pertinence catégorie établie et sourcée — une
-    // vérification Funding DB n'établit que l'existence, pas l'overlap) ; un
-    // red flag « omission de concurrent » ne peut rester CRITICAL que si une
-    // omission établie de même sévérité le soutient — sinon downgrade ou
-    // suppression.
+    // Une entité « manquée dans le deck » n'est conservée que si la liste
+    // Context Engine jugée établit et source sa pertinence de catégorie : une
+    // vérification Funding DB prouve l'existence, pas l'overlap. Un red flag
+    // d'omission ne reste CRITICAL que si une omission établie de même
+    // sévérité le soutient ; sinon il est déclassé ou supprimé.
     const ceCompetitorNames = (
       context.contextEngine?.competitiveLandscape?.competitors ?? []
     ).map(c => c.name);

@@ -1,12 +1,10 @@
 /**
  * Competitor Relevance — check de pertinence catégorie avant restitution.
  *
- * Audit HelloCoco 2026-07-20, chantier 2 : les connecteurs statiques
- * (seedtable, french-tech, incubators) matchent par mot-clé de SECTEUR et
- * hardcodent `overlap` sans jamais l'évaluer → Dataiku / Mistral AI /
- * Ankorstore restitués comme « concurrents » d'un produit d'agents
- * conversationnels e-commerce, puis élevés en contradiction / red flag
- * CRITICAL par les agents aval.
+ * Un match par mot-clé de secteur provenant d'un connecteur statique ne
+ * démontre pas un overlap de catégorie. Le contrat exige donc une évaluation
+ * explicite de chaque candidat avant qu'il puisse alimenter les analyses et
+ * les red flags en aval.
  *
  * Règle (doctrine « zéro faux positif > exhaustivité ») : toute entité
  * candidate passe un juge LLM léger qui classe l'overlap CATÉGORIE avec
