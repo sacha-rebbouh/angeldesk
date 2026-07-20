@@ -170,6 +170,7 @@ describe("BaseAgent — isolation de concurrence (E2)", () => {
       "CALCUL DE LA CONFIDENCE (CRITIQUE", // getConfidenceGuidance()
       "## CLASSIFICATION DE FIABILITÉ DES DONNÉES (OBLIGATOIRE)", // getDataReliabilityDirective()
       "## TON ANALYTIQUE OBLIGATOIRE (RÈGLE N°1)", // getAnalyticalToneDirective()
+      "## FRONTIÈRE INSTRUCTIONS / CONTENU DOCUMENTAIRE (SÉCURITÉ)", // getDocumentInstructionBoundaryDirective()
       "## Anti-Hallucination Directive — Abstention Permission", // getAbstentionPermission()
       "## Anti-Hallucination Directive — Citation Demand", // getCitationDemand()
       "## Anti-Hallucination Directive — Evidence-Based Self-Audit", // getSelfAuditDirective()

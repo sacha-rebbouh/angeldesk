@@ -1,6 +1,18 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Chantier E — hardening auth, refunds idempotents et anti-injection documentaire
+
+### Fichiers
+- `src/agents/__tests__/security-hardening-structural.guard.test.ts` (NOUVEAU) : verrouille les 4 conditions des trois bypass locaux (`NODE_ENV`, opt-in explicite, hors production Vercel, hors Vercel), la directive de frontière données/instructions et les deux chemins BaseAgent d'injection documentaire (`formatRetrievedDocumentWindows` puis `sanitizeForLLM`), sans autoriser d'interpolation directe de `doc.extractedText`/`doc.content`.
+- `src/services/credits/usage-gate.ts` : `refundCredits` exige désormais au type un `analysisId` ou un `idempotencyKey` ; suppression du fallback deal + minute et de la branche sans clé. `analysis-compensation.ts`, le type d'event dans `inngest.ts` et les appels de tests ont été alignés ; `refund-credits-types.test.ts` verrouille les deux appels invalides au compilateur.
+- `src/agents/base-agent.ts` : directive système pattern-1 en français séparant strictement données documentaires et instructions adressées à l'IA ; les tentatives trouvées dans un document doivent être ignorées et signalées. Le commentaire de contrat exclut explicitement les agents pattern-3 inline. Le guard d'ordre `base-agent-concurrency.test.ts` inclut la nouvelle section.
+- `src/lib/__tests__/sanitize-adversarial.test.ts` (NOUVEAU) : 5 payloads (EN, FR, homoglyphe cyrillique, base64, flood zero-width), chacun détecté par `detectPromptInjection` et bloqué par `sanitizeForLLM` avec ses options par défaut.
+
+### Description
+Hardening sans refactor des surfaces auth et sans changement du montant/pot des refunds existants. Les appelants runtime de `refundCredits` portent tous une identité stable ; le fallback minute-bucket n'est plus disponible aux futurs appelants. Inventaire séparé de `refundCreditAmount` : ses 14 appels runtime directs fournissent déjà `idempotencyKey`, donc son type partagé reste inchangé. Vérifications : `npx tsc --noEmit` 0 ; tests ciblés 84/84 ; suite unitaire complète 4663 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-07-20 — Chantier A3 — statut disputé des faits sur la vue matérialisée
 
 ### Fichiers
@@ -349,24 +361,3 @@ Les valeurs `stable`, `0 %`, `Last 12 months` et `moderate` n'étaient adossées
 
 ### Description
 **Sweep complétude** : 3 surfaces de restitution de note NON listées dans le RESTE du relais. Producteurs inchangés (P4, ordre additif). **Gate Codex APPROVE.** tsc 0 ; board-orchestrator 2 + doctrine guards 27 = 29 verts. Restitutions écran restantes à classer : thesis « Confiance /100 » (×4 — allowlist per-item confidence vs note ?), react-trace + extraction-audit (qualité extraction/confiance dev = allowlist probable).
-
----
-## 2026-06-15 — Dé-scorisation — sweep complétude — team-management (scores fondateurs)
-
-### Fichiers
-- `src/components/deals/team-management.tsx` : carte fondateur (onglet Équipe) dé-scorée. Avatar : nombre `overallFounderScore` (coloré) → initiale du nom. Grille 4 `ScoreMiniBar` (Domain/Startup XP/Execution/Network /100) **supprimée**. Caveat provenance « Scores estimés depuis le deck » → « Analyse estimée depuis le deck » (sorti du gate scores). Retirés : composant `ScoreMiniBar`, helpers locaux `getScoreColor`/`getScoreBg`, icônes Target/TrendingUp/Zap/Network, consts `scores`/`overallScore` (orphelins). **Conservé verbal natif** : strengths/concerns/redFlags/background/highlights. **Carry interne (Option B, → P4)** : interface `AnalysisScores` + `VerifiedInfo.scores` (data shape team-investigator, plus lue en rendu).
-
-### Description
-**Découverte sweep complétude** : surface de restitution de scores NON listée dans le RESTE du relais. Producteur `team-investigator` inchangé (P4, ordre additif). **Gate Codex APPROVE.** tsc 0 ; doctrine guards 27 verts. Sweep en cours : restent analysis-complete-view (score/100·grade), deck-coherence-report (coherenceScore/100), board thesis-debate (avgSolidity/100) ; thesis « Confiance /100 » à classer (allowlist per-item vs note).
-
----
-## 2026-06-15 — Dé-scorisation — étape G4-b — cleanup composants + helpers de score orphelins
-
-### Fichiers
-- `src/components/deals/verdict-panel.tsx` : **supprimé** (composant MORT, 0 importeur ; panneau de score ScoreRing + dimensions + VERDICT_CONFIG).
-- `src/components/ui/score-ring.tsx` : **supprimé** (orphelin après dé-scorisation G4 de conditions-analysis-cards ; seul consumer restant = verdict-panel supprimé).
-- `src/lib/ui-configs.ts` : retrait section « Score Thresholds » — `getScoreColor` + `getScoreLabel` (ancienne échelle mono-axe Excellent/Solide/…) + `getScoreBarColor` (importeurs = verdict-panel + score-ring seulement). Commentaire périmé « verdict-panel » → « tier3-results & analysis-v2 ».
-- `src/lib/format-utils.ts` : retrait `getScoreColor` (0 importeur, team-management a sa version locale) + `getScoreBadgeColor` (0 ref, orphelin depuis suppression score-badge étape D = le NIT du plan).
-
-### Description
-Cleanup des vestiges de score rendus orphelins par la dé-scorisation. Tous vérifiés orphelins par `git grep` avant suppression. **Hors-scope laissé (Karpathy)** : `team-management.tsx` garde `getScoreColor`/`getScoreBg` LOCAUX (scores fondateurs `overallFounderScore`/`domainExpertise`…) = surface de score SÉPARÉE vivante → sweep de complétude avant P4. Le source-guard `orientation-solidity-display.test.ts` référence `getScoreColor`/`getScoreLabel` comme chaînes BANNIES (pas de consommation) → non cassé. **Gate Codex APPROVE.** tsc 0 ; doctrine-guard 10 + doctrine-runtime-guard 17 + orientation-solidity 14 + ui-configs 71 verts.
