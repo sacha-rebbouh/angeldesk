@@ -13,7 +13,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockPrisma = vi.hoisted(() => ({
   costEvent: { create: vi.fn(), aggregate: vi.fn() },
   deal: { findUnique: vi.fn() },
-  analysis: { update: vi.fn() },
+  analysis: { findUnique: vi.fn(), update: vi.fn() },
+  lLMCallLog: { findMany: vi.fn() },
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -23,7 +24,11 @@ vi.mock("@/lib/prisma", () => ({
       aggregate: (a: unknown) => mockPrisma.costEvent.aggregate(a),
     },
     deal: { findUnique: (a: unknown) => mockPrisma.deal.findUnique(a) },
-    analysis: { update: (a: unknown) => mockPrisma.analysis.update(a) },
+    analysis: {
+      findUnique: (a: unknown) => mockPrisma.analysis.findUnique(a),
+      update: (a: unknown) => mockPrisma.analysis.update(a),
+    },
+    lLMCallLog: { findMany: (a: unknown) => mockPrisma.lLMCallLog.findMany(a) },
   },
 }));
 
@@ -56,7 +61,9 @@ describe("Phase E E4 — CostMonitor par-analyse (attribution concurrente)", () 
     mockPrisma.costEvent.create.mockResolvedValue({});
     mockPrisma.costEvent.aggregate.mockResolvedValue({ _sum: { cost: 0 } });
     mockPrisma.deal.findUnique.mockResolvedValue(null); // getDealCostSummary → null (pas d'alerte deal)
+    mockPrisma.analysis.findUnique.mockResolvedValue(null);
     mockPrisma.analysis.update.mockResolvedValue({});
+    mockPrisma.lLMCallLog.findMany.mockResolvedValue([]);
   });
 
   it("attribue chaque appel à SON analyse, drop l'appel non identifiable, et clôt indépendamment", async () => {
@@ -127,5 +134,89 @@ describe("Phase E E4 — CostMonitor par-analyse (attribution concurrente)", () 
 
     await costMonitor.endAnalysis({ analysisId: "an_solo" });
     consoleWarnSpy.mockRestore();
+  });
+
+  it("reconstruit le rapport depuis LLMCallLog quand l'accumulateur mémoire a disparu", async () => {
+    mockPrisma.lLMCallLog.findMany.mockResolvedValue([
+      { model: "model-a", provider: "openrouter", agentName: "agent-alpha", inputTokens: 100, outputTokens: 50, cost: 0.1 },
+      { model: "model-b", provider: "openrouter", agentName: "agent-beta", inputTokens: 300, outputTokens: 100, cost: 0.4 },
+      { model: "model-a", provider: "openrouter", agentName: "agent-alpha", inputTokens: 200, outputTokens: 50, cost: 0.2 },
+    ]);
+    mockPrisma.analysis.findUnique.mockResolvedValue({
+      dealId: "deal_durable",
+      mode: "full_analysis",
+      type: "FULL_DD",
+      startedAt: new Date(Date.now() - 1_000),
+      createdAt: new Date(Date.now() - 2_000),
+    });
+
+    const report = await costMonitor.endAnalysis({ analysisId: "an_durable" });
+
+    expect(report).not.toBeNull();
+    expect(report?.totalCalls).toBe(3);
+    expect(report?.totalInputTokens).toBe(600);
+    expect(report?.totalOutputTokens).toBe(200);
+    expect(report?.totalCost).toBeCloseTo(0.7, 8);
+    expect(report?.byModel).toEqual([
+      { model: "model-a", calls: 2, inputTokens: 300, outputTokens: 100, cost: 0.30000000000000004 },
+      { model: "model-b", calls: 1, inputTokens: 300, outputTokens: 100, cost: 0.4 },
+    ]);
+    expect(report?.byAgent).toEqual({
+      "agent-alpha": { model: "model-a", calls: 2, inputTokens: 300, outputTokens: 100, cost: 0.30000000000000004 },
+      "agent-beta": { model: "model-b", calls: 1, inputTokens: 300, outputTokens: 100, cost: 0.4 },
+    });
+    expect(mockPrisma.analysis.update.mock.calls[0]?.[0].data.results._costReport).toEqual({
+      totalCalls: 3,
+      totalInputTokens: 600,
+      totalOutputTokens: 200,
+      byModel: report?.byModel,
+      byAgent: report?.byAgent,
+    });
+    expect(mockPrisma.lLMCallLog.findMany).toHaveBeenCalledWith({
+      where: { analysisId: "an_durable" },
+      select: {
+        model: true,
+        provider: true,
+        agentName: true,
+        inputTokens: true,
+        outputTokens: true,
+        cost: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+  });
+
+  it("remplace un accumulateur incomplet par la source durable", async () => {
+    costMonitor.startAnalysis({ analysisId: "an_partial", dealId: "deal_partial", userId: "user_partial", type: "full_analysis" });
+    costMonitor.recordCall({ analysisId: "an_partial", model: "model-a", agent: "agent-a", inputTokens: 10, outputTokens: 5, cost: 0.01 });
+    mockPrisma.lLMCallLog.findMany.mockResolvedValue([
+      { model: "model-a", provider: "openrouter", agentName: "agent-a", inputTokens: 10, outputTokens: 5, cost: 0.01 },
+      { model: "model-b", provider: "openrouter", agentName: "agent-b", inputTokens: 20, outputTokens: 10, cost: 0.02 },
+    ]);
+
+    const report = await costMonitor.endAnalysis({ analysisId: "an_partial" });
+
+    expect(report?.totalCalls).toBe(2);
+    expect(report?.totalCost).toBeCloseTo(0.03, 8);
+    expect(report?.byAgent).toHaveProperty("agent-b");
+    expect(mockPrisma.analysis.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("conserve le chemin mono-invocation sans lecture LLMCallLog", async () => {
+    costMonitor.startAnalysis({ analysisId: "an_mono", dealId: "deal_mono", userId: "user_mono", type: "full_analysis" });
+    costMonitor.recordCall({ model: "model-mono", agent: "agent-mono", inputTokens: 40, outputTokens: 20, cost: 0.04 });
+
+    const report = await costMonitor.endAnalysis();
+
+    expect(report?.totalCalls).toBe(1);
+    expect(report?.totalCost).toBeCloseTo(0.04, 8);
+    expect(mockPrisma.lLMCallLog.findMany).not.toHaveBeenCalled();
+  });
+
+  it("retourne null sans crash pour une analyse sans accumulateur ni appel durable", async () => {
+    await expect(
+      costMonitor.endAnalysis({ analysisId: "an_without_calls" })
+    ).resolves.toBeNull();
+    expect(mockPrisma.analysis.findUnique).not.toHaveBeenCalled();
   });
 });

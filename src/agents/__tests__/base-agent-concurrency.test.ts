@@ -56,6 +56,10 @@ class ConcurrencyTestAgent extends BaseAgent<{ ok: boolean }> {
     return "BASE_SYSTEM_PROMPT";
   }
 
+  getCitationScopeDirectiveForTest(): string {
+    return this.getCitationScopeDirective();
+  }
+
   protected async execute(context: AgentContext): Promise<{ ok: boolean }> {
     // Les vrais agents tier1/tier3 écrivent this._dealStage ici, puis font
     // leurs appels LLM. On reproduit ce séquencement : état posé AVANT le
@@ -171,6 +175,7 @@ describe("BaseAgent — isolation de concurrence (E2)", () => {
       "## CLASSIFICATION DE FIABILITÉ DES DONNÉES (OBLIGATOIRE)", // getDataReliabilityDirective()
       "## TON ANALYTIQUE OBLIGATOIRE (RÈGLE N°1)", // getAnalyticalToneDirective()
       "## FRONTIÈRE INSTRUCTIONS / CONTENU DOCUMENTAIRE (SÉCURITÉ)", // getDocumentInstructionBoundaryDirective()
+      "## PÉRIMÈTRE DE CITATION (OBLIGATOIRE)", // getCitationScopeDirective()
       "## Anti-Hallucination Directive — Abstention Permission", // getAbstentionPermission()
       "## Anti-Hallucination Directive — Citation Demand", // getCitationDemand()
       "## Anti-Hallucination Directive — Evidence-Based Self-Audit", // getSelfAuditDirective()
@@ -184,5 +189,17 @@ describe("BaseAgent — isolation de concurrence (E2)", () => {
       expect(index, `section ordonnée après la précédente: ${marker}`).toBeGreaterThan(previousIndex);
       previousIndex = index;
     }
+  });
+
+  it("interdit les fausses attributions au contexte injecté", () => {
+    const directive = new ConcurrencyTestAgent().getCitationScopeDirectiveForTest();
+
+    expect(directive).toContain("Fact Store");
+    expect(directive).toContain("Contexte Externe / Context Engine");
+    expect(directive).toContain("documents du deal");
+    expect(directive).toContain("previousResults");
+    expect(directive).toContain("INTERDIT d'écrire « Source: Context Engine »");
+    expect(directive).toContain("marquée [UNVERIFIED]");
+    expect(directive).toContain("JAMAIS être attribuée à une source du dossier");
   });
 });

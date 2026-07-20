@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildDealIntelligence,
   hasDefensibleMultiples,
@@ -65,6 +65,7 @@ describe("buildDealIntelligence", () => {
   });
 
   it("échantillon sous le seuil → pas de médiane restituée (un seul multiple)", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const deals = [
       makeDeal({ companyName: "Dataiku", stage: "Seed", valuationMultiple: 1.15 }),
       ...Array.from({ length: 10 }, (_, i) => makeDeal({ companyName: `NoMult${i}` })),
@@ -75,6 +76,11 @@ describe("buildDealIntelligence", () => {
     expect(di.fundingContext.medianValuationMultiple).toBeUndefined();
     expect(di.fundingContext.multiplesSampleSize).toBe(1);
     expect(hasDefensibleMultiples(di.fundingContext)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      `[DealIntelligence] multiples INDISPONIBLES — sampleSize=1 < ${MIN_MULTIPLE_SAMPLE}, stage=seed, totalDeals=11`
+    );
+    warnSpy.mockRestore();
   });
 
   it("calibration de stage : les multiples d'un autre stage sont exclus", () => {
@@ -91,6 +97,7 @@ describe("buildDealIntelligence", () => {
   });
 
   it("échantillon suffisant et stage-calibré → médiane + quartiles + taille d'échantillon", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const multiples = [4, 5, 6, 8, 12, 20, 3];
     const deals = [
       ...multiples.map((m, i) =>
@@ -116,6 +123,8 @@ describe("buildDealIntelligence", () => {
     );
     expect(di.fundingContext.multiplesStage).toBe("seed");
     expect(hasDefensibleMultiples(di.fundingContext)).toBe(true);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it("sans stage dans la query, tous les multiples valides comptent (pas de calibration possible)", () => {

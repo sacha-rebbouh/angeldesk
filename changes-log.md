@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-20 — Chantier CF — périmètre de citation, coût durable et observabilité des multiples
+
+### Fichiers
+- `src/agents/base-agent.ts` + `base-agent-concurrency.test.ts` : ajout au prompt système pattern-1 de la directive « PÉRIMÈTRE DE CITATION », interdisant d'attribuer au dossier une connaissance absente du contexte injecté et imposant `[UNVERIFIED]` aux connaissances d'entraînement ; ordre d'assemblage et interdits verrouillés.
+- `src/services/cost-monitor/index.ts` + `cost-monitor-concurrency.test.ts` : pour un `analysisId` explicite, reconstruction des totaux, appels et ventilations depuis `LLMCallLog` lorsque l'accumulateur mémoire est absent ou incomplet ; métadonnées minimales relues sur `Analysis` si la Map a disparu, avec fallback mémoire inchangé hors pipeline identifié.
+- `src/services/context-engine/deal-intelligence.ts` + `deal-intelligence.test.ts` : une médiane fail-closed sous le seuil émet désormais la ligne stable `[DealIntelligence] multiples INDISPONIBLES` avec taille, seuil, stage et nombre total de deals ; aucun log lorsque l'échantillon suffit.
+
+### Description
+Changements internes et chirurgicaux : aucun schéma, composant UI, PDF ou chat modifié. Le rapport durable conserve la structure `_costReport` existante et les appels sans `analysisId` n'effectuent aucune lecture `LLMCallLog`. Vérifications : `npx tsc --noEmit` 0 ; tests ciblés 24/24 ; suite complète 4668 passed / 9 skipped / 0 failed.
+
+---
 ## 2026-07-20 — Chantier E — hardening auth, refunds idempotents et anti-injection documentaire
 
 ### Fichiers

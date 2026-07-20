@@ -139,6 +139,10 @@ export function buildDealIntelligence(
     fundingContext.medianValuationMultiple = multiples[Math.floor(sampleSize / 2)];
     fundingContext.p25ValuationMultiple = multiples[Math.floor(sampleSize * 0.25)];
     fundingContext.p75ValuationMultiple = multiples[Math.floor(sampleSize * 0.75)];
+  } else {
+    console.warn(
+      `[DealIntelligence] multiples INDISPONIBLES — sampleSize=${sampleSize} < ${MIN_MULTIPLE_SAMPLE}, stage=${queryStage ?? "all"}, totalDeals=${deals.length}`
+    );
   }
 
   return {
