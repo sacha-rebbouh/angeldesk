@@ -118,7 +118,7 @@ Ordre canonique strict :
 3. **Affirmations factuelles critiques sourcées, contradictions détectées, zones d'incertitude, fraîcheur et fiabilité documentaire** (effets)
 4. **Architecture de support** (preuve technique sous le capot)
 
-La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitch deck slide 1 ne mentionne pas le nombre.
+La page d'accueil ne mentionne pas *"41 agents actifs / 42 en analyse complète"* ni *"Evidence Engine"*. Le pitch deck slide 1 ne mentionne pas le nombre.
 
 ---
 
@@ -129,7 +129,7 @@ La page d'accueil ne mentionne pas *"44 agents"* ni *"Evidence Engine"*. Le pitc
 | **Board AI** | *"Sublimation — trouve la vérité"* | *"Modèles indépendants aux profils complémentaires confrontent leurs lectures. Divergences = signaux à examiner, pas des défauts."* |
 | **Live Coaching** | *"IA temps réel — quoi répondre"* | *"Vérification des preuves en temps réel pendant l'appel — fait remonter contradictions présentation/déclarations, benchmarks dépassés, infos nouvelles."* |
 | **22 experts sectoriels** | *"Aucun analyste expert en 22 secteurs"* | *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)."* |
-| **44 agents** | Accroche principale | *"Architecture en 4 couches — 44 agents sous le capot."* |
+| **41 agents actifs / 42 en analyse complète** | Accroche principale | *"Architecture en 4 couches — 41 agents actifs (2 + 12 + 22 + 5), 42 en analyse complète avec thesis-reconciler conditionnel, sous le capot."* |
 | **Scoring** | Score global en hero UI / « score subordonné » | **Aucune note de deal restituée, jamais** (cf. § 4). Orientation × solidité des preuves (verbal) + dimensions + sources + contradictions + questions. |
 
 ---

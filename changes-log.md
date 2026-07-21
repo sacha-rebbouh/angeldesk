@@ -1,6 +1,17 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-21 — Chantier clôture — dé-périmage doctrine et queue PENDING_REVIEW
+
+### Fichiers
+- `CLAUDE.md` + `docs-doctrine/angeldesk-strategic-pivot.md` : convention de comptage ancrée sur les registres (`41` agents actifs, `42` en `full_analysis`), chemins réels de la couche 0, retrait documentaire de `deal-scorer` et statut tracké de `docs-private/`.
+- `PLAN-DESCORING.md` : header daté aligné sur P0→P6.2 livré, statu quo P4 résiduel et P6.3 pending, avec renvoi vers `AUDIT-STATE.md`.
+- `scripts/debug/audit-render-quality.ts` : section informative lecture seule de la queue `FactEvent.PENDING_REVIEW` du deal, sans impact sur les DoD ni l'exit code.
+
+### Description
+Clôture documentaire et extension de la grille d'audit, sans changement de logique produit. Le rejeu `hellococo` affiche la contradiction en attente `competition.competitors_count` et reste à 3/3 DoD PASS. Vérifications : `npx tsc --noEmit` 0 ; suite complète 4668 passed / 9 skipped / 0 failed ; script `audit-render-quality.ts hellococo` exit 0.
+
+---
 ## 2026-07-20 — Chantier G — cascade documentaire niveau 2 et commentaires de contrat
 
 ### Fichiers
@@ -345,40 +356,3 @@ Les valeurs `stable`, `0 %`, `Last 12 months` et `moderate` n'étaient adossées
 
 ### Description
 **Chantier dé-scorisation, P4-b2 (BORNÉE, gaté Codex APPROVE après 2 REQUEST_CHANGES productifs).** 2e producteur P4. Retrait de la **note conditions** (`score.value`/grade) + neutralisation `Deal.conditionsScore`. **Fourche tranchée par Codex = Option B** : la décision G4 « justifs par critère conservées » (hero card) imposait de préserver les justifications verbales qui vivaient dans `score.breakdown` → déplacées vers `findings.dimensionAssessment` (verbal pur), avec fallback legacy `score.breakdown` pour les snapshots historiques. Carve-out du contrat partagé (comme synthesis-deal-scorer en P4-a). **Différé LARGE/P5** : `structuredAssessment.trancheAssessments[].score` (sous-note par tranche, non restituée depuis G4). **Pas de bump `STEPWISE_GRAPH_VERSION`** (contrat évalué à la PRODUCTION, pas au replay ; lecteurs legacy préservés). tsc 0 ; conditions e2e + transform + prompt.guard + schemas + 2 pipelines + doctrine guards = 104+ verts ; suite complète verte dans le payload gate.
-
----
-## 2026-06-15 — Dé-scorisation — P4-b1 — team-investigator : retrait des notes par fondateur
-
-### Fichiers
-- `src/agents/tier1/team-investigator.ts` (−58) : retrait de `founderProfiles[].scores.*` (domainExpertise / entrepreneurialExperience / executionCapability / networkStrength / overallFounderScore = note d'appréciation agrégée par fondateur) — type `LLMTeamInvestigatorResponse`, schéma de sortie du prompt, exemple JSON, ligne du MAUVAIS exemple, et le bloc transform `scores:(()=>{capScore…})()`. Prompt : échelle chiffrée « Score domainExpertise 0-100 » → guidance qualitative (reflétée dans strengths/concerns) ; section « Impact sur les scores » → « Impact sur l'évaluation ». Métriques internes : les 4 dérivées `unit:"score"` (domain_expertise / entrepreneurial_experience / execution_capability / network_strength) + le helper `avg()` retirés ; **conservées** les observables `linkedin_verified_ratio` (%) et `successful_exits` (count). **Top-level `data.score.value` CONSERVÉ** (score agent des 15 standardStructuredAgents = LARGE-déféré per Codex ; désormais dérivé des 2 métriques observables + fallback breakdown LLM).
-- `src/agents/types.ts` + `src/agents/type-modules/tier1.ts` : champ `scores` retiré de `FounderProfile` / `TeamInvestigatorFindings`.
-- `src/agents/tier3/devils-advocate.ts` (−10) : **fuite LLM** retirée — le bloc qui poussait « name: Score N/100 » dans le contexte de challenge (devils-advocate reçoit déjà les founderProfiles complets via previousResults).
-- `src/agents/orchestrator/persistence.ts` (−2) : `scores: profile.scores` retiré de `analysisData` (merge `verifiedInfo`) + champ de type `scores?`.
-- `src/components/deals/team-management.tsx` (−9) : interface morte `AnalysisScores` + champ `scores?` retirés (rendering déjà retiré en `c63620d`).
-
-### Description
-**Chantier dé-scorisation, P4-b1 (périmètre BORNÉE gaté Codex APPROVE).** Premier producteur du périmètre P4 borné. Retrait des notes 0-100 PAR FONDATEUR (appréciation agrégée bannie même interne) + la fuite vers le contexte LLM de devils-advocate + persistence + UI/types. **Laissé intentionnellement** : top-level `data.score.value` de l'agent (carry interne transitoire non rendu, retrait dans le chantier LARGE/P5 per Codex) ; `TEAM_INVESTIGATOR_CRITERIA` (config de pondération du score déféré ; `calculateAgentScore` tolère déjà les métriques absentes) ; PDF `domainExpertise?:string` (dead rendering préexistant, lit un champ inexistant) ; context-engine `networkStrength` enum qualitatif (autre système). **Pas de bump `STEPWISE_GRAPH_VERSION`** (ni topologie ni step-id ni clé durable changés ; contrat partagé toujours satisfait). tsc 0 ; sequential-pipeline + agent-pipeline 45/45 ; suite complète verte dans le payload gate.
-
----
-## 2026-06-15 — Dé-scorisation — P4-a — synthesis-deal-scorer : retrait de la PRODUCTION de note de deal
-
-### Fichiers
-- `src/agents/tier3/synthesis-deal-scorer.ts` (cœur, −296/+67) : `transformResponse` ne produit plus `overallScore` / `confidence` / `dimensionScores` / `scoreBreakdown` / `comparativeRanking`. Supprimés : extraction dimensionScores + calcul overallScore pondéré, caps de cohérence (Rule 1 skepticism, Rule 2 critical), meta-gate thèse (Rule 4), pénalité de score (Rule 3 ; le **relevé** `partialAgents` est conservé pour `keyWeaknesses`), confidence + pénalité, `patchScoreInText`, helper mort `normalizeDimensionWeight`. `execute()` : un SEUL appel LLM (retry « dimensions » retiré, sans objet en scoreless) + **bloc F37 retiré** (percentile DE SCORE via `percentile-calculator` → écriture comparativeRanking + confidence = note de deal bannie). Rationale restituée scrubbée via `stripDealScoreMentions` (remplace le patch). `buildSignalContribution(orientation, context)` ne porte plus `score`. Type `SynthesisDealScorerData` : 5 champs de score rendus **OPTIONNELS** (compat durable snapshots en vol + historiques + lecteurs défensifs `?? null`). Orientation 100% scoreless (`finalVerdict` + `signalProfile`) inchangée.
-- `src/agents/types.ts` + `src/agents/type-modules/tier3.ts` : mêmes 5 champs de score rendus OPTIONNELS dans les copies dupliquées de `SynthesisDealScorerData`.
-- `src/agents/base-agent.ts` : contrat de sortie synthesis SCORELESS. `getRequiredOutputContractFields` → `["verdict", "investmentRecommendation", "keyStrengths", "keyWeaknesses", "criticalRisks", "signalProfile"]` (overallScore/dimensionScores retirés). Bloc de validation synthesis : check structurel `signalProfile.orientation` + `dimensionCoverage` (au lieu de overallScore/dimensionScores/comparativeRanking). Sinon CONTRACT_BROKEN → `success:false`.
-- `src/agents/tier3/__tests__/synthesis-deal-scorer-transform.test.ts` : invariant `signalContribution.score === overallScore` supprimé (les deux champs n'existent plus).
-- `src/agents/tier3/__tests__/synthesis-deal-scorer-llm-budget.guard.test.ts` : `MAX_IN_EXECUTE_CALLS` 2→1 ; assertion count `>=2`→`toBe(1)` (retry retiré) ; doc/worst-case alignés (1×100s, F37 retiré).
-
-### Description
-**Chantier dé-scorisation, P4-a (retrait des scores producteurs, ordre additif).** La synthèse ne RESTITUE plus de note depuis P3 ; ici on retire sa **production** (1er producteur). Ordre ADDITIF : champs de note rendus optionnels (PAS supprimés du type) → snapshots stepwise en vol + analyses historiques + lecteurs défensifs (persistence `if (overallScore != null)`, score-extraction) compilent et tolèrent l'absence. La persistence (`Deal.*Score` gatée sur `overallScore != null`) **skippe** naturellement le write pour les nouveaux runs. **Pas de bump `STEPWISE_GRAPH_VERSION` (reste 4)** : ni topologie ni step-ids changés ; le contrat de sortie n'est validé qu'à la PRODUCTION (pas au replay du snapshot). Clé durable `"synthesis-deal-scorer"` inchangée. Gain collatéral : 1 appel LLM au lieu de 2. **Différé (micro-étapes P4 suivantes)** : prompt LLM (instruit encore score/dimensions, ignorés), purge finale des champs optionnels + write persistence inerte, retrait `percentile-calculator` (P5), type mort `SynthesisDealScorerDataV2`. tsc 0 ; suite unit complète 4515 passed / 9 skipped / 0 failed.
-
----
-## 2026-06-15 — Dé-scorisation — sweep complétude — 3 surfaces (analysis-complete-view, deck-coherence, board thesis-debate)
-
-### Fichiers
-- `src/components/deals/analysis-complete-view.tsx` (vue complète par agent, rendue par analysis-panel + analysis-preview-tabs) : fonction `getScore` + badge `{value}/100 · {grade}` par agent **retirés**. `score` déjà dans `hiddenKeys` (non listé en findings). Reste inchangé.
-- `src/components/deals/deck-coherence-report.tsx` (rapport cohérence deck, via analysis-panel) : header — `GradeBadge` (reliabilityGrade A-F) + badge `coherenceScore/100` retirés ; composant `GradeBadge` + `GRADE_CONFIG` orphelins retirés. Body conservé : `RecommendationBanner` (verbal) + compteurs issues critical/warning/info (observables) + liste issues ; auto-déplie si criticalIssues>0. `coherenceScore`/`reliabilityGrade` restent dans le type producteur (P4).
-- `src/components/deals/board/thesis-debate-view.tsx` (Board Round 0) : `thesisSolidityScore/100` par membre (barre+nombre) + `avgSolidity/100` retirés (axe Solidité en nombre = anti-doctrine, axe-2 doit être verbal). Badge `agreement` (strong_agree…strong_disagree, verbal) conservé par membre ; description → « Thèse débattue par N membres IA, désaccords et critiques exposés » (on-doctrine Board). justification/weakestAssumption/majorCritique/recommandations conservés. Helper `solidityColor` orphelin retiré. `thesisSolidityScore` reste dans le type producteur (P4).
-
-### Description
-**Sweep complétude** : 3 surfaces de restitution de note NON listées dans le RESTE du relais. Producteurs inchangés (P4, ordre additif). **Gate Codex APPROVE.** tsc 0 ; board-orchestrator 2 + doctrine guards 27 = 29 verts. Restitutions écran restantes à classer : thesis « Confiance /100 » (×4 — allowlist per-item confidence vs note ?), react-trace + extraction-audit (qualité extraction/confiance dev = allowlist probable).

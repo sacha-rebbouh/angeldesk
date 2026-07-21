@@ -81,6 +81,10 @@
 | 2026-05-17 | CONTEXT-ENGINE | base-agent labelait FILE sans sourceDate comme "produit le \<uploadedAt\>" (fallback faux sur la date d'upload) |
 | 2026-06-03 | ARCHITECTURE | buildStepState (snapshot stepwise durable) throw sur NaN d'une donnée d'agent → crash du run, Tier 3 sauté (régression vs OFF) ; + 3 couplages annexes |
 | 2026-06-03 | DURABILITÉ | Split d'un graphe stepwise durable EN PLACE alors que le flag est ON → mismatch de step IDs au replay cross-deploy ; bump de version requis |
+| 2026-07-20 | ANTI-HALLUCINATION | Littéraux par défaut assertés comme données marché (trend "stable"/0%/"Last 12 months"/concentration "moderate") + fait timing_assessment fabriqué persisté à chaque analyse |
+| 2026-07-20 | DONNÉES | Montants multi-devises sans devise porteuse rendus en € (USD→€) ; benchmarks funding-db calculés sur amountUsd étiquetés unit:"EUR" |
+| 2026-07-20 | FACT-STORE | Statut disputé perdu sur LES DEUX chemins de lecture (vue : hardcodé false ; computé : matchait un eventType jamais produit) |
+| 2026-07-20 | COST | _costReport vide en stepwise : agrégation mémoire par invocation, la Map est vide à la dernière invocation Inngest |
 
 ---
 
@@ -730,3 +734,34 @@
 - **Ce qui N'A PAS fonctionné** : modifier le graphe v3 en place (1re version → REQUEST_CHANGES Codex).
 - **Lesson** : **toute modification de la FORME du graphe de steps d'un workflow durable (ajout/rename/split de step IDs) EXIGE un bump de version dès que le flag est ON** — des runs de l'ancienne version peuvent être en vol et leur replay doit retrouver SES step IDs. La précondition qui rend le « raffinement en place » sûr est « aucun run de cette version en vol » (= flag OFF, ou drain garanti). Quand le flag bascule ON, cette précondition disparaît : ré-évaluer à CHAQUE changement de graphe, ne pas reconduire le pattern par habitude. Corollaire : router l'ancienne version vers un graphe FROZEN (mêmes IDs) plutôt que de tenter une compat backward sur des IDs partagés.
 
+### 2026-07-20 — ANTI-HALLUCINATION — Littéraux par défaut assertés comme données marché + fait fabriqué persisté
+- **Fichier(s)** : `src/services/context-engine/deal-intelligence.ts`, `index.ts`, `fact-normalizer.ts`, `connectors/seedtable.ts`, 7 renderers agents
+- **Erreur** : `buildDealIntelligence` hardcodait `trend: "stable"`, `trendPercentage: 0`, `downRoundCount: 0`, `period: "Last 12 months"` ; `computeDealContext` hardcodait `marketConcentration: "moderate"` ; seedtable fabriquait la date du jour comme date de funding. Injectés dans les prompts de 7 agents ET persistés comme FAIT `market.timing_assessment` (« Funding market is stable… +0% ») avec label de fiabilité à chaque analyse.
+- **Cause racine** : champs requis par le type remplis avec des défauts « plausibles » à la construction, faute de calcul réel — le défaut devient indistinguable d'une donnée.
+- **Solution validée** (commit `cd8d355`) : champs optionnels, plus jamais émis sans calcul réel ; renderers conditionnels ; fait timing émis seulement si tendance réelle (partie news conservée) ; purge inconditionnelle des champs fabriqués au chargement des snapshots legacy (aucun snapshot n'a jamais eu de valeur réelle) ; exclusion des entrées sans date plutôt que date fabriquée.
+- **Ce qui N'A PAS fonctionné** : 1re livraison matérialisait un `fundingContext: {}` truthy quand il était absent au runtime → « undefined deals comparables » dans les prompts (bounce) ; grep littéral `new Date()` qui a raté la forme variable `|| now` dans funding-db (rattrapé au chantier A2).
+- **Agent/Auteur** : audit Fable×Codex 2026-07-20 (vague A1).
+
+### 2026-07-20 — DONNÉES — Montants multi-devises sans devise porteuse, rendus avec € par défaut
+- **Fichier(s)** : `src/services/context-engine/types.ts`, `connectors/us-funding.ts`, `yc-companies.ts`, `funding-db.ts`, `rss-funding.ts`, `src/agents/base-agent.ts` (formatMoney), renderers
+- **Erreur** : `SimilarDeal`/`Competitor` ne portaient aucune devise ; `formatMoney` préfixait TOUT de `€` → rounds USD (us-funding, YC) assertés en euros dans les prompts ; benchmarks funding-db calculés sur `amountUsd` mais étiquetés `unit: "EUR"`.
+- **Cause racine** : montant modélisé comme `number` nu ; la devise vivait dans le parseur puis était perdue au mapping ; le symbole vivait dans le formatteur.
+- **Solution validée** (commit `8339c68`) : `currency?` porté par les types, posé par connecteur (jamais deviné — dataset mixte sans unité stockée → mention neutre « devise non précisée ») ; formatteur devise-aware ; AUCUNE conversion FX (ce serait fabriquer).
+- **Ce qui N'A PAS fonctionné** : deviner EUR pour les datasets statiques (mixtes France/UK/CH/SE — refusé à la review).
+- **Agent/Auteur** : audit Fable×Codex 2026-07-20 (vague A2).
+
+### 2026-07-20 — FACT-STORE — Statut « disputé » perdu sur les deux chemins de lecture
+- **Fichier(s)** : `src/services/fact-store/current-facts.ts`, `src/agents/orchestrator/index.ts`
+- **Erreur** : le chemin vue matérialisée hardcodait `isDisputed: false` (« View doesn't track disputes yet ») ; le chemin computé cherchait `eventType === 'DISPUTED'` — un type que l'ingestion ne produit JAMAIS (elle écrit `PENDING_REVIEW`). Résultat : aucun fait contesté n'était jamais marqué [DISPUTED], sur aucune surface ; l'orchestrateur jetait en plus le détail des contradictions retourné par l'ingestion.
+- **Cause racine** : enum d'eventType divergent entre écriture (ingestion) et lecture (computed), jamais testé bout en bout ; dégradation « yet » du chemin vue jamais résorbée.
+- **Solution validée** (commit `f8130bb`) : requête groupée PENDING_REVIEW sur le chemin vue ; chemin computé matche PENDING_REVIEW + compat DISPUTED ; log greppable `[FactContradiction]` par contradiction à l'ingestion.
+- **Ce qui N'A PAS fonctionné** : conclure « le chemin computé est OK » en s'arrêtant au site d'usage sans suivre l'enum jusqu'à l'écriture (cf. agentic-mistakes 2026-07-20).
+- **Agent/Auteur** : audit Fable×Codex 2026-07-20 (vague A3) — l'écart computed a été trouvé par Codex à l'implémentation.
+
+### 2026-07-20 — COST — _costReport vide en pipeline stepwise (agrégation mémoire par invocation)
+- **Fichier(s)** : `src/services/cost-monitor/index.ts`
+- **Erreur** : `endAnalysis` agrégeait une Map en mémoire remplie par invocation ; en stepwise Inngest (steps étalés sur des invocations séparées), la Map est vide à la dernière invocation → `_costReport` persisté avec `totalCalls: 0` alors que `LLMCallLog` contient tous les appels (81 pour HelloCoco). Même classe que le bug `totalTimeMs` (fixé 2026-06-15 via wall-clock).
+- **Cause racine** : état d'agrégation supposé vivre le temps de l'analyse alors qu'il vit le temps d'UNE invocation serverless.
+- **Solution validée** (commit `128124d`) : au `endAnalysis(analysisId)`, reconstruction du rapport (totaux, byModel, byAgent) depuis `LLMCallLog` (source durable) quand l'accumulateur mémoire est vide/incomplet ; durée en wall-clock via `startedAt` ; chemin mono-invocation inchangé.
+- **Ce qui N'A PAS fonctionné** : (rien — diagnostic consigné au changes-log du 2026-07-20, fix direct).
+- **Agent/Auteur** : audit Fable×Codex 2026-07-20 (vague F1).
