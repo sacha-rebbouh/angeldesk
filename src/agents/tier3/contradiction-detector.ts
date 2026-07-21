@@ -29,6 +29,7 @@
  */
 
 import { BaseAgent } from "../base-agent";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { severityRank } from "@/services/red-flag-dedup";
 import { CONTRADICTION_DETECTOR_SYSTEM_PROMPT } from "./prompts/contradiction-detector-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
@@ -285,12 +286,11 @@ export class ContradictionDetectorAgent extends BaseAgent<ContradictionDetectorD
     const obj = data as Record<string, unknown>;
     const lines: string[] = [`### ${agentName.toUpperCase()} (Tier ${tier})`];
 
-    // Extract score if available
-    if (obj.score && typeof obj.score === "object") {
-      const score = obj.score as { value?: number; grade?: string };
-      if (score.value !== undefined) {
-        lines.push(`Score: ${score.value}/100 (Grade: ${score.grade ?? "N/A"})`);
-      }
+    // Le contexte LLM exclut toute appréciation numérique agrégée ;
+    // l'intensité de signal interne conserve l'information analytique utile à
+    // la recherche de contradictions.
+    if (typeof obj.signalIntensity === "string") {
+      lines.push(`Intensite des signaux: ${obj.signalIntensity}`);
     }
 
     // Extract meta if available
@@ -419,8 +419,11 @@ export class ContradictionDetectorAgent extends BaseAgent<ContradictionDetectorD
     if (fundingContext.competitors && fundingContext.competitors.length > 0) {
       lines.push("\n**Concurrents detectes dans la DB:**");
       for (const c of fundingContext.competitors) {
-        const comp = c as { name: string; totalFunding?: number; lastRound?: string; status?: string };
-        lines.push(`- ${comp.name}: Funding total = €${(comp.totalFunding ?? 0).toLocaleString()} | Status: ${comp.status ?? "active"}`);
+        const comp = c as { name: string; totalFunding?: number; currency?: string; lastRound?: string; status?: string };
+        const totalFunding = typeof comp.totalFunding === "number"
+          ? formatContextMoney(comp.totalFunding, comp.currency)
+          : "inconnu";
+        lines.push(`- ${comp.name}: Funding total = ${totalFunding} | Status: ${comp.status ?? "active"}`);
       }
     } else {
       lines.push("\n**Concurrents detectes dans la DB:** AUCUN (DB peut etre limitee)");
@@ -1120,10 +1123,10 @@ Produis un JSON avec cette structure:
         id: `RF-CD-AUTO-${++rfIndex}`,
         category: "analysis_quality",
         severity: "HIGH",
-        title: "Score de consistance insuffisant",
-        description: `Score de consistance de ${consistencyScore}/100 - les incoherences relevees fragilisent la fiabilite des signaux analyses.`,
+        title: "Consistance des donnees insuffisante",
+        description: `Les incoherences relevees entre les sources fragilisent la fiabilite des signaux analyses.`,
         location: "Analyse globale",
-        evidence: `Score: ${consistencyScore}. Contradictions: ${contradictions.length}`,
+        evidence: `${contradictions.length} contradiction(s) detectee(s) entre les sources.`,
         impact: "Les donnees du deal sont trop incoherentes pour etre exploitees telles quelles : une verification s'impose avant de s'appuyer dessus.",
         question: "De nombreuses incoherences ont ete detectees. Pouvez-vous fournir des donnees plus coherentes?",
         redFlagIfBadAnswer: "Ces incoherences limitent la fiabilite des signaux tant qu'elles ne sont pas clarifiees.",

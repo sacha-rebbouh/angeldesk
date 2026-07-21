@@ -20,10 +20,37 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+function makeViewRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "event_1",
+    dealId: "deal_1",
+    factKey: "financial.arr",
+    category: "FINANCIAL",
+    value: 1000000,
+    displayValue: "1M EUR",
+    unit: null,
+    source: "PITCH_DECK",
+    sourceDocumentId: null,
+    sourceConfidence: 90,
+    truthConfidence: 90,
+    extractedText: null,
+    sourceMetadata: null,
+    validAt: null,
+    periodType: null,
+    periodLabel: null,
+    reliability: null,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    createdBy: "system",
+    ...overrides,
+  };
+}
+
 describe("current facts materialized view coordination", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    mocks.factEventFindMany.mockResolvedValue([]);
+    mocks.documentFindMany.mockResolvedValue([]);
   });
 
   it("dedupes concurrent refreshes into a single SQL refresh", async () => {
@@ -94,6 +121,54 @@ describe("current facts materialized view coordination", () => {
     expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
     expect(facts).toHaveLength(1);
     expect(facts[0]?.factKey).toBe("financial.arr");
+  });
+
+  it("marks a view fact as disputed when a pending review exists", async () => {
+    mocks.queryRaw.mockResolvedValue([makeViewRow()]);
+    mocks.factEventFindMany.mockResolvedValue([
+      {
+        factKey: "financial.arr",
+        value: 1400000,
+        source: "CONTEXT_ENGINE",
+      },
+    ]);
+
+    const { getCurrentFactsFromView } = await import("../current-facts");
+    const facts = await getCurrentFactsFromView("deal_1");
+
+    expect(mocks.factEventFindMany).toHaveBeenCalledTimes(1);
+    expect(mocks.factEventFindMany).toHaveBeenCalledWith({
+      where: {
+        dealId: "deal_1",
+        eventType: "PENDING_REVIEW",
+        factKey: { in: ["financial.arr"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        factKey: true,
+        value: true,
+        source: true,
+      },
+    });
+    expect(facts[0]).toMatchObject({
+      factKey: "financial.arr",
+      isDisputed: true,
+      disputeDetails: {
+        conflictingValue: 1400000,
+        conflictingSource: "CONTEXT_ENGINE",
+      },
+    });
+  });
+
+  it("keeps a view fact undisputed when no pending review exists", async () => {
+    mocks.queryRaw.mockResolvedValue([makeViewRow()]);
+
+    const { getCurrentFactsFromView } = await import("../current-facts");
+    const facts = await getCurrentFactsFromView("deal_1");
+
+    expect(mocks.factEventFindMany).toHaveBeenCalledTimes(1);
+    expect(facts[0]?.isDisputed).toBe(false);
+    expect(facts[0]?.disputeDetails).toBeUndefined();
   });
 
   it("falls back to computed facts when the materialized view points to a superseded source document", async () => {

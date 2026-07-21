@@ -1,6 +1,148 @@
 # Changes Log - Angel Desk
 
 ---
+## 2026-07-21 — Chantier clôture — dé-périmage doctrine et queue PENDING_REVIEW
+
+### Fichiers
+- `CLAUDE.md` + `docs-doctrine/angeldesk-strategic-pivot.md` : convention de comptage ancrée sur les registres (`41` agents actifs, `42` en `full_analysis`), chemins réels de la couche 0, retrait documentaire de `deal-scorer` et statut tracké de `docs-private/`.
+- `PLAN-DESCORING.md` : header daté aligné sur P0→P6.2 livré, statu quo P4 résiduel et P6.3 pending, avec renvoi vers `AUDIT-STATE.md`.
+- `scripts/debug/audit-render-quality.ts` : section informative lecture seule de la queue `FactEvent.PENDING_REVIEW` du deal, sans impact sur les DoD ni l'exit code.
+
+### Description
+Clôture documentaire et extension de la grille d'audit, sans changement de logique produit. Le rejeu `hellococo` affiche la contradiction en attente `competition.competitors_count` et reste à 3/3 DoD PASS. Vérifications : `npx tsc --noEmit` 0 ; suite complète 4668 passed / 9 skipped / 0 failed ; script `audit-render-quality.ts hellococo` exit 0.
+
+---
+## 2026-07-20 — Chantier G — cascade documentaire niveau 2 et commentaires de contrat
+
+### Fichiers
+- `docs-private/{product-overview,exec-summary,pitch-deck,pitch-deck-slides}.md` : réécriture selon la doctrine pivotée — phrase publique canonique, Pauline au centre, restitution verbale orientation × solidité des preuves, effets sourcés avant l'architecture en 4 couches, claims instables marqués `TODO à vérifier`. Ces quatre cibles, annoncées gitignorées dans le chantier, sont actuellement suivies par l'index Git et devront être exclues du futur commit.
+- 10 fichiers `src/` ciblés : 14 références de provenance HelloCoco / audit / chantier converties en contrats intemporels, sans changement de logique.
+
+### Description
+Les documents ne portent plus l'ancienne promesse temporelle, le vocabulaire oraculaire, les appréciations numériques de dossier, les claims de statut commercial ni de compte précis d'agents. L'incohérence de comptage entre la doctrine historique, `CLAUDE.md` et le retrait de `deal-scorer` reste explicitement non tranchée. Vérifications : greps DoD vides ; diff `src/` commentaires/docstrings uniquement ; `npx tsc --noEmit` 0 ; suite complète 4668 passed / 9 skipped / 0 failed.
+
+---
+## 2026-07-20 — Chantier CF — périmètre de citation, coût durable et observabilité des multiples
+
+### Fichiers
+- `src/agents/base-agent.ts` + `base-agent-concurrency.test.ts` : ajout au prompt système pattern-1 de la directive « PÉRIMÈTRE DE CITATION », interdisant d'attribuer au dossier une connaissance absente du contexte injecté et imposant `[UNVERIFIED]` aux connaissances d'entraînement ; ordre d'assemblage et interdits verrouillés.
+- `src/services/cost-monitor/index.ts` + `cost-monitor-concurrency.test.ts` : pour un `analysisId` explicite, reconstruction des totaux, appels et ventilations depuis `LLMCallLog` lorsque l'accumulateur mémoire est absent ou incomplet ; métadonnées minimales relues sur `Analysis` si la Map a disparu, avec fallback mémoire inchangé hors pipeline identifié.
+- `src/services/context-engine/deal-intelligence.ts` + `deal-intelligence.test.ts` : une médiane fail-closed sous le seuil émet désormais la ligne stable `[DealIntelligence] multiples INDISPONIBLES` avec taille, seuil, stage et nombre total de deals ; aucun log lorsque l'échantillon suffit.
+
+### Description
+Changements internes et chirurgicaux : aucun schéma, composant UI, PDF ou chat modifié. Le rapport durable conserve la structure `_costReport` existante et les appels sans `analysisId` n'effectuent aucune lecture `LLMCallLog`. Vérifications : `npx tsc --noEmit` 0 ; tests ciblés 24/24 ; suite complète 4668 passed / 9 skipped / 0 failed.
+
+---
+## 2026-07-20 — Chantier E — hardening auth, refunds idempotents et anti-injection documentaire
+
+### Fichiers
+- `src/agents/__tests__/security-hardening-structural.guard.test.ts` (NOUVEAU) : verrouille les 4 conditions des trois bypass locaux (`NODE_ENV`, opt-in explicite, hors production Vercel, hors Vercel), la directive de frontière données/instructions et les deux chemins BaseAgent d'injection documentaire (`formatRetrievedDocumentWindows` puis `sanitizeForLLM`), sans autoriser d'interpolation directe de `doc.extractedText`/`doc.content`.
+- `src/services/credits/usage-gate.ts` : `refundCredits` exige désormais au type un `analysisId` ou un `idempotencyKey` ; suppression du fallback deal + minute et de la branche sans clé. `analysis-compensation.ts`, le type d'event dans `inngest.ts` et les appels de tests ont été alignés ; `refund-credits-types.test.ts` verrouille les deux appels invalides au compilateur.
+- `src/agents/base-agent.ts` : directive système pattern-1 en français séparant strictement données documentaires et instructions adressées à l'IA ; les tentatives trouvées dans un document doivent être ignorées et signalées. Le commentaire de contrat exclut explicitement les agents pattern-3 inline. Le guard d'ordre `base-agent-concurrency.test.ts` inclut la nouvelle section.
+- `src/lib/__tests__/sanitize-adversarial.test.ts` (NOUVEAU) : 5 payloads (EN, FR, homoglyphe cyrillique, base64, flood zero-width), chacun détecté par `detectPromptInjection` et bloqué par `sanitizeForLLM` avec ses options par défaut.
+
+### Description
+Hardening sans refactor des surfaces auth et sans changement du montant/pot des refunds existants. Les appelants runtime de `refundCredits` portent tous une identité stable ; le fallback minute-bucket n'est plus disponible aux futurs appelants. Inventaire séparé de `refundCreditAmount` : ses 14 appels runtime directs fournissent déjà `idempotencyKey`, donc son type partagé reste inchangé. Vérifications : `npx tsc --noEmit` 0 ; tests ciblés 84/84 ; suite unitaire complète 4663 passed / 9 skipped / 0 failed.
+
+---
+## 2026-07-20 — Chantier A3 — statut disputé des faits sur la vue matérialisée
+
+### Fichiers
+- `src/services/fact-store/current-facts.ts` : `getCurrentFactsFromView` charge en une requête groupée les événements `PENDING_REVIEW` des clés présentes dans la vue, puis renseigne `isDisputed` et les `disputeDetails` minimaux ; le chemin computé reconnaît aussi `PENDING_REVIEW` tout en conservant la compatibilité avec l'ancien type `DISPUTED`.
+- `src/agents/orchestrator/index.ts` : chaque contradiction retournée par `persistExtractedFactsWithMatching` produit un log stable `[FactContradiction]` avec deal, clé, significativité, valeur existante et nouvelle valeur.
+- Tests : `current-facts-view.test.ts` (avec/sans dispute + requête groupée), `current-facts-selection.test.ts` (alignement du chemin computé) et `fact-contradiction-logging.test.ts` (contradiction `SIGNIFICANT` et spy logger).
+
+### Description
+La vue matérialisée reste responsable des valeurs courantes, tandis que le statut de contestation est recalculé à la lecture sans N+1. Une panne de cette lecture complémentaire conserve le fallback existant vers le calcul par événements, donc aucun fait ne repasse silencieusement à `isDisputed: false`. Les contradictions non bloquantes ne sont plus perdues après ingestion : elles disposent d'une ligne de log greppable par contradiction. Aucun changement de schéma, de données, d'UI ou de rendu PDF. Vérifications : `npx tsc --noEmit` 0 ; tests ciblés 13/13 ; suite complète 4636 passed / 9 skipped / 0 failed.
+
+---
+## 2026-07-20 — Chantier A2 — devise porteuse sur les montants Context Engine
+
+### Fichiers
+- `src/services/context-engine/{types.ts,money.ts,fact-normalizer.ts}` : `currency?` ajouté à `SimilarDeal`/`Competitor`, formateur compact devise-aware (`EUR`/`USD`/`GBP`/code ISO, mention neutre si absente) et faits concurrents enrichis dans `value`, `displayValue` et `sourceMetadata`.
+- `src/services/context-engine/connectors/{us-funding,yc-companies,funding-db,eldorado,eu-startups-api,maddyness-api,frenchweb-api,tech-eu-api,rss-funding,seedtable}.ts` : propagation des devises connues, RSS strictement limité à la devise détectée, suppression des euros de rendu par défaut ; sources statiques mixtes sans unité conservées sans devise.
+- `src/agents/base-agent.ts` + renderers Tier 1/2/3 : montants Context Engine et Funding DB passés par le formateur, y compris les sérialisations JSON legacy ; les montants EUR du deal analysé restent inchangés.
+- Tests : `base-agent.test.ts`, `fact-normalizer.test.ts`, `money.test.ts` (nouveau), `rss-funding.test.ts` (nouveau), `us-funding.test.ts` (nouveau), `funding-db.test.ts` (nouveau).
+
+### Description
+Les montants comparables circulaient sans unité puis recevaient un symbole euro dans les prompts, y compris pour des rounds USD. Les connecteurs portent désormais la devise qu'ils connaissent sans conversion FX ; une source qui ne la connaît pas reste explicitement neutre au rendu (`600.0M (devise non précisée)`). Les snapshots legacy bénéficient du même comportement via les renderers. Bounce Fable intégré : `funding-db` exclut les comparable deals sans `fundingDate` au lieu de fabriquer la date du jour, et ses benchmarks `Funding Amount` calculés sur `amountUsd` sont étiquetés `USD`. Vérifications : `tsc --noEmit` 0 ; tests ciblés 46/46 ; suite complète 4632 passed / 9 skipped / 0 failed ; greps `fundingAmount|totalFunding|lastRoundAmount` associés à un euro en dur vides ; sweep connecteurs `|| now`/`?? now`/timestamp vide.
+
+---
+## 2026-07-20 — Chantier A1 — purge des valeurs fabriquées DealIntelligence / DealContext
+
+### Fichiers
+- `src/services/context-engine/{types.ts,deal-intelligence.ts,index.ts,competitor-relevance.ts,persistence.ts,fact-normalizer.ts}` : champs de tendance/concentration optionnels, suppression des défauts plausibles, purge inconditionnelle au chargement des snapshots et fait `market.timing_assessment` limité aux signaux réellement présents.
+- `src/services/context-engine/connectors/seedtable.ts` : exclusion des news et deals similaires sans `fundingDate`, sans substitution par la date du jour.
+- `src/agents/{types.ts,type-modules/common.ts,base-agent.ts}` + renderers Tier 1/2/3 : types alignés et lignes période/tendance/concentration conditionnelles.
+- Tests : `deal-intelligence.test.ts`, `fact-normalizer.test.ts`, `competitor-relevance.test.ts`, `seedtable.test.ts` (nouveau), `base-agent.test.ts`.
+
+### Description
+Les valeurs `stable`, `0 %`, `Last 12 months` et `moderate` n'étaient adossées à aucun calcul réel mais alimentaient les prompts et, pour le timing marché, le Fact Store. Les builders les omettent désormais ; le choke point de persistence les retire aussi de tous les snapshots existants sans matérialiser de `fundingContext` absent. Les données mécaniques ou observées (`totalDealsInPeriod`, taille/stage de l'échantillon de multiples, sentiment calculé depuis des articles) restent intactes. Seedtable ne transforme plus une date inconnue en date courante. Vérifications : `tsc --noEmit` 0 ; tests ciblés 64/64 ; suite complète 4622 passed / 9 skipped / 0 failed ; contrôles grep interdits vides.
+
+---
+## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Validation finale : script DoD réutilisable + traîne profonde scrubbers + rejeu 3/3 PASS
+
+### Fichiers
+- `scripts/debug/audit-render-quality.ts` (NOUVEAU) : audit lecture-seule des 3 DoD sur une analyse arbitraire (`npx dotenv -e .env.local -- npx tsx scripts/debug/audit-render-quality.ts <dealName>`), sans appel LLM. Rejoue les VRAIES fonctions du pipeline corrigé sur les données stockées (sanitizeDealIntelligence + hasDefensibleMultiples, sanitizeLegacyCompetitiveLandscape + filterMissedCompetitors + applyOmissionRedFlagGuard, scrubAllScoresForLLMContext) — classifie par surface/allowlist (exigence Codex), section INFORMATIVE séparée pour les textes historiques persistés. Exit 0/1.
+- `src/services/signal-profile/index.ts` : le script a révélé 2 trous fermés dans la foulée — (a) `deepStripDealNoteKeys` : les notes IMBRIQUÉES en profondeur (`teamAssessment.overallScore` du memo, `findings.score.grade` Tier 2) échappaient au strip top-level → retrait récursif par NOM de clé (patterns de note §4.1, métriques observables et orientations 5 valeurs préservées) câblé dans `scrubAgentScoreData` + `scrubSynthesisScoreData` ; (b) `scrubAllScoresForLLMContext` droppe désormais les champs de trace internes (`_traceFull`/`_traceMetrics`) qui portent la réponse LLM BRUTE pré-transform (score/grade inclus) au niveau du result, hors `data`.
+- `src/services/signal-profile/__tests__/signal-profile.test.ts` : +2 tests (notes imbriquées memo/Tier 2 ; drop `_traceFull`).
+
+### Description
+**Validation finale de la session audit HelloCoco.** Rejeu sur les données existantes (sans analyse payante) : **3/3 DoD PASS** — DoD1 : médiane 1.15x stockée NEUTRALISÉE (renderers → INDISPONIBLE) ; DoD2 : 21 concurrents snapshot → 0 après sanitize (Mistral AI/Ankorstore/Dataiku/Yacla/Dolead purgés), Jasper/Anthropic écartés de competitorsMissedInDeck, red flag CRITICAL « Omission de concurrents massifs » supprimé au rejeu ; DoD3 : contexte LLM scrubé sans grade/overallScore/recommendation prescriptive. Suite unitaire complète : 4615 passed / 9 skipped / 0 failed ; tsc 0. **Obs annexe résolue en passant (cause évidente, pas de code)** : `_costReport` vide (`totalCalls: 0`) sur les analyses stepwise = le cost-monitor agrège des appels trackés EN MÉMOIRE (`this.analyses` Map par invocation) alors que le pipeline durable étale les steps sur des invocations Inngest séparées — au `endAnalysis` final la Map est vide ; même classe de bug que `totalTimeMs` (fixé 2026-06-15 via wall-clock). Source durable correcte : `LLMCallLog` (81 appels persistés pour HelloCoco). TODO futur : reconstruire le report depuis `LLMCallLog` au endAnalysis. **Vérifiable uniquement avec une nouvelle analyse réelle** : textes régénérés scoreless (memo sans médiane fabriquée ni « Score: X/100 »), qualité du juge de pertinence concurrents en conditions réelles (liste CE avec justifications), comportement fail-closed sur un deal sans use-cases, dérivés alertSignal cohérents post-chantier-2.
+
+---
+## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 3 : vestiges score/prescriptif hors des contextes LLM et des textes restitués
+
+### Fichiers
+- `src/agents/tier3/contradiction-detector.ts` : `formatAgentOutput` ne réinjecte plus « Score: X/100 (Grade: Y) » dans le prompt (remplacé par `signalIntensity`, mécanique interne autorisée) ; red flag « Score de consistance de X/100 » reformulé sans note.
+- `src/agents/tier3/devils-advocate.ts` : `extractChallengeableElements` idem (plus de Score/Grade dans le prompt) ; justification fallback « à partir du score X/100 » reformulée.
+- `src/agents/tier1/question-master.ts` : agentSummary (previousResults P1/P2) idem.
+- `src/agents/tier3/thesis-reconciler.ts` : résumé agents sans « Score: X/100 » ; champ vestigial `blockers[].recommendation` (STOP) retiré (jamais rendu).
+- `src/agents/tier3/memo-generator.ts` : le prompt ne demande PLUS de `score {value, grade A-F, breakdown}` au LLM (le transform le droppait déjà — production pure supprimée + type nettoyé).
+- `src/agents/tier3/prompts/memo-generator-prompt.ts` (**finding Codex tour 2**) : system prompt runtime réécrit scoreless — « Synthèse des Scores » (agrégation pondérée) → « Synthèse des Signaux » ; table FRAMEWORK 0-100 → grille qualitative ; table « Score | Grade | Orientation » (anti-pattern orientation-depuis-score) → orientation dérivée de l'intensité des signaux uniquement ; exemple « Score 72/100 (Grade B) » purgé ; `alertSignal: hasBlocker, justification`.
+- `src/agents/orchestrator/early-warnings.ts` : 10 `descriptionTemplate` « … score of {value}/100 … » réécrits en signaux agrégés sans note (les seuils `score.value` internes de déclenchement restent — mécanique autorisée §4.1).
+- `src/services/signal-profile/index.ts` : scrubbers étendus — `stripPrescriptiveAlertSignal` retire `alertSignal.recommendation` (enum prescriptif STOP/PROCEED, compat infra) de tout contexte LLM réinjecté (`scrubAgentScoreData`, `scrubAllScoresForLLMContext`, `scrubSynthesisScoreData`) en gardant `hasBlocker`/`blockerReason`/`justification` (analytiques). Couvre chat + board déjà câblés.
+- `src/agents/tier1/utils/derive-alert-signal.ts` : doc — statut « champ interne confiné » de `recommendation` + résolution de l'« incohérence » `hasBlocker=false`+`STOP` (axes indépendants ; le cas HelloCoco venait du faux red flag CRITICAL corrigé au chantier 2 ; le LLM ne pilote pas la dérivation — pas de couplage à `hasBlocker`).
+- `src/agents/__tests__/doctrine-previousresults-guard.test.ts` (NOUVEAU) : source-guard — patterns de réinjection bannis (`Score: ${…}/100`, `(Grade: ${…}`) absents des 5 formatters ; memo sans schema grade ; early-warnings sans `{value}/100` ; textes produits CD/DA sans `${…}/100`.
+- `src/services/signal-profile/__tests__/signal-profile.test.ts` : +3 tests scrubber (STOP retiré, hasBlocker conservé, alertSignal non-objet inchangé).
+
+### Description
+**Audit externe HelloCoco 2026-07-20, chantier 3.** Constat sur les données : 15 agents portent `score.grade` (D/F…) + `alertSignal.recommendation` (10× STOP) dans `analysis.results` ; `previousResults` réinjectait ces notes dans les prompts Tier 3 (« Score: 50/100 (Grade: D) ») ; des textes PRODUITS restitués contenaient « X/100 » (red flag consistance, justification DA, 10 templates early-warnings). Audit des surfaces : UI (`tier1-results` → `ALERT_SIGNAL_LABELS` : STOP→« ANOMALIE MAJEURE ») et PDF (`resolveTier1SignalIntensity`, `RecommendationBadge` 5 valeurs analytiques, `score-breakdown` déjà scoreless) mappent déjà en labels analytiques — le brut ne fuyait que via les contextes LLM et les textes produits, désormais fermés. Traitement conforme au DoD : champs vestiges « explicitement internes ET filtrés par les source-guards » (production `score.value`/`grade` des agents = P4 du plan dé-scorisation, hors périmètre — pas de sur-purge ; `score.value` reste une mécanique interne consommée par `deriveTier1SignalIntensity` et les triggers early-warnings). **Gate Codex 2 tours** : tour 1 REQUEST_CHANGES (system prompt memo encore score-based ; DA réinjectait `Recommandation: ${alert.recommendation}` ; red flag CD encore « Score de consistance » dans titre+evidence) — 3 findings vérifiés exacts, corrigés, guardés ; tour 2 APPROVE (arbitrage confirmé : pas de couplage hasBlocker→dérivation, le LLM ne doit pas piloter la dérivation déterministe). tsc 0 ; 2644 tests agents+services verts.
+
+---
+## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 2 : concurrents hors-catégorie → juge de pertinence + garde d'élévation « omission »
+
+### Fichiers
+- `src/services/context-engine/competitor-relevance.ts` (NOUVEAU) : juge LLM léger (gpt-4o-mini via OpenRouter, 1 appel/compute, temp 0) qui classe l'overlap CATÉGORIE de chaque candidat (`direct`/`partial`/`adjacent`/`none`) avec justification — seuls `direct`/`partial` avec justification NON VIDE restitués comme concurrents ; doute/adjacent/none/sans-verdict/sans-justification → suppression (zéro faux positif). **Fail-closed intégral (finding Codex)** : juge indisponible ou réponse inexploitable → AUCUN concurrent restitué (liste vide explicite, pas de liste non évaluée). + `sanitizeLegacyCompetitiveLandscape()` fail-closed au chargement (seuls les concurrents porteurs d'une justification survivent — un snapshot legacy rend une liste vide) + cap 30 candidats loggé.
+- `src/services/context-engine/types.ts` : `Competitor.overlapJustification?` (absent = jamais évalué).
+- `src/services/context-engine/index.ts` : `computeDealContext` filtre les concurrents par pertinence catégorie après `fetchCompetitorsParallel`.
+- `src/services/context-engine/persistence.ts` : `loadContextSnapshot` sanitize aussi `competitiveLandscape`.
+- `src/services/context-engine/connectors/web-search.ts` : export de `postOpenRouterCompletion` (réutilisé par le juge).
+- `src/agents/tier1/utils/competitor-omission-guard.ts` (NOUVEAU) : `filterMissedCompetitors` (une entité « manquée dans le deck » n'est gardée que si PRÉSENTE dans la liste Context Engine JUGÉE — la vérification Funding DB n'est pas un passe-droit : existence ≠ pertinence catégorie, cf. tour 3 Codex scénario Mistral AI) + `applyOmissionRedFlagGuard` (sévérité d'un red flag « omission de concurrent » plafonnée par la sévérité max des omissions établies restantes ; aucune → suppression du flag ; notes de garde dans `meta.limitations` ; détection du thème sur title+description+evidence).
+- `src/agents/tier1/competitive-intel.ts` : câblage des 2 gardes après la vérification d'entités (F08) ; prompt durci (fournisseur de techno/API ≠ concurrent de catégorie ; même secteur large ≠ overlap ; doute → ne pas inclure ; règle de sévérité CRITICAL sur `competitorsMissedInDeck` ; rappel ZÉRO FAUX POSITIF).
+- `src/agents/base-agent.ts` : renderer concurrents affiche la justification d'overlap, ou « overlap non evalue, pertinence categorie NON etablie ».
+- Tests (NOUVEAUX, 20) : `competitor-relevance.test.ts` (verdicts appliqués — fixture snapshot HelloCoco Mistral/Ankorstore/Dataiku/Yacla supprimés, Support Flow gardé ; fail-closed sans verdict ; parse fences/malformé ; fallback déterministe ; sanitize legacy) + `competitor-omission-guard.test.ts` (Jasper/Anthropic non vérifiés → écartés + red flag CRITICAL « Omission de concurrents massifs » supprimé ; plafonnement CRITICAL→HIGH ; CRITICAL maintenu si omission vérifiée CRITICAL ; flags non-omission intouchés).
+
+### Description
+**Audit externe HelloCoco 2026-07-20, chantier 2.** Cause racine (confirmée sur le `ContextEngineSnapshot`) : les connecteurs statiques matchent par mot-clé de SECTEUR et hardcodent `overlap` sans jamais l'évaluer (seedtable → Mistral AI/Ankorstore `partial`, french-tech → Dataiku `direct`, web-search → tout en `partial`) ; l'agrégation met ces matches en tête et base-agent ne rend que le top 5 → le contradiction-detector a vu « Dataiku, Yacla, Dolead » comme LES concurrents Context Engine (CONT-005 CRITICAL) pendant que les vrais comparables use-case étaient tronqués. Côté competitive-intel, le LLM a inventé Jasper/Anthropic depuis ses connaissances d'entraînement, en attribuant faussement au Context Engine (« Context Engine identifie Jasper et Anthropic ») : le marquage `[NON VERIFIE]` fonctionnait mais ne gâtait PAS la sévérité → red flag CRITICAL « Omission de concurrents massifs » repris dans le memo, alors que le deck listait le bon set concurrentiel. Fix : check de pertinence catégorie avant restitution (juge LLM justifié, suppression sous le seuil — pas de « peut-être ») + règle d'élévation déterministe (CRITICAL seulement si pertinence établie ET sourcée). Coût juge ≈ négligeable (1 appel gpt-4o-mini par compute de contexte, caché 30j). **Gate Codex 3 tours** : tour 1 REQUEST_CHANGES (fallback web_search + sanitize legacy gardaient Yacla → fail-closed intégral ; justification non vide exigée pour direct/partial ; `isOmissionFlag` inspecte aussi `evidence`) ; tour 2 REQUEST_CHANGES (« Funding DB verified » suffisait à garder une omission → une entité DB-vérifiée mais hors liste CE jugée pouvait porter un CRITICAL, ex. Mistral AI ; fix = liste CE jugée seule source de pertinence) ; tour 3 APPROVE. tsc 0 ; 38 tests des modules du chantier verts.
+
+---
+## 2026-07-20 — Fix qualité rendu (audit HelloCoco) — Chantier 1 : médiane valo 1.15x fabriquée → jamais de médiane sans échantillon défendable
+
+### Fichiers
+- `src/services/context-engine/deal-intelligence.ts` (NOUVEAU) : `buildDealIntelligence` extrait d'`index.ts` + fixé — calibration de stage (multiples d'un stage ≠ query exclus), seuil `MIN_MULTIPLE_SAMPLE=5` sous lequel AUCUNE médiane/p25/p75 n'est produite, `multiplesSampleSize`/`multiplesStage` exposés, suppression des fallbacks fabriqués (`median=20` par défaut, `p25/p75=±30%`, `percentileRank:50`, `verdict:"fair"`, `fairValueRange 0-0` hardcodés). + `hasDefensibleMultiples()` garde-fou de restitution (rejette aussi les snapshots legacy persistés avec médiane fabriquée sans sampleSize — cas HelloCoco).
+- `src/services/context-engine/types.ts` : `FundingContext.medianValuationMultiple/p25/p75` optionnels + `multiplesSampleSize`/`multiplesStage` ; `DealIntelligence.percentileRank/fairValueRange/verdict` optionnels.
+- `src/services/context-engine/index.ts` : ancienne `buildDealIntelligence` privée supprimée, import du nouveau module.
+- `src/services/context-engine/connectors/french-tech.ts` : suppression de l'heuristique `valuation/(montant×10)` (« Rough ARR multiple ») — source exacte du 1.15x (Dataiku : 4.6Md/(400M×10)).
+- `src/services/context-engine/connectors/eldorado.ts` : suppression de `calculateValuationMultiple` (constante 20 fabriquée).
+- Renderers de prompts (garde `hasDefensibleMultiples`, sinon ligne explicite « INDISPONIBLE … NE PAS citer de mediane sectorielle ») : `src/agents/base-agent.ts` (`formatContextEngineData`), `src/agents/tier1/market-intelligence.ts`, `src/agents/tier1/deck-forensics.ts`, `src/agents/tier3/synthesis-deal-scorer.ts`, `src/agents/tier2/marketplace-expert.ts`.
+- `src/services/context-engine/persistence.ts` : `loadContextSnapshot` passe `dealIntelligence` par `sanitizeDealIntelligence()` — point d'étranglement qui purge les snapshots legacy AVANT tout renderer/`JSON.stringify` (couvre aussi les experts Tier 2 qui stringifient `dealIntelligence` brut : mobility/blockchain/fintech/legaltech/creator).
+- `src/services/context-engine/__tests__/deal-intelligence.test.ts` (NOUVEAU) : 14 tests — cas HelloCoco (67 deals, 0 multiple → rien), 1 seul multiple (sous seuil), calibration stage, échantillon suffisant (médiane+quartiles+n), multiples dégénérés (0/négatif/NaN/Infinity), top-10, rejet snapshot legacy, sanitizer (purge snapshot legacy exact HelloCoco incl. `similarDeals[].valuationMultiple` Dataiku@1.15 + assertion `JSON.stringify` sans "1.15", passthrough données fraîches, médiane incomplète retirée, objets partiels).
+
+### Description
+**Audit externe HelloCoco 2026-07-20, chantier 1.** Le memo citait « médiane sectorielle de 1.15x » (vs multiple implicite 6.7x → `valuationAssessment: VERY_AGGRESSIVE`) et le contradiction-detector « 1.15x … sur 67 deals récents ». Cause racine (confirmée sur le `ContextEngineSnapshot` persisté : `median=1.15, p25=0.805=1.15×0.7, p75=1.495=1.15×1.3` → branche fallback ≤3 multiples) : la médiane était calculée sur 1-3 multiples **fabriqués par heuristique** (french-tech `valuation/(montant×10)` : Dataiku Growth/Series E → 1.15 exactement ; eldorado → constante 20), sans calibration de stage (deal Seed comparé à du Growth), pendant que `totalDealsInPeriod=67` (deals SANS multiple) était affiché à côté → conflation LLM « médiane sur 67 deals ». Fix : plus aucun multiple fabriqué à la source ; médiane restituée uniquement si ≥5 multiples vérifiés du bon stage, avec n affiché dans le prompt ; sinon donnée explicitement indisponible (un chiffre faux est pire qu'une absence — 5 directives anti-hallucination). Le garde-fou de restitution neutralise aussi les snapshots legacy en cache (TTL 30j). **Gate Codex tour 1 REQUEST_CHANGES** (3 findings, tous vérifiés puis traités) : (1) `similarDeals[].valuationMultiple` legacy atteignait encore les prompts (`@ 1.15x ARR`) → sanitizer au chargement du snapshot ; (2) 5 experts Tier 2 `JSON.stringify(dealIntelligence)` bypassaient `hasDefensibleMultiples` → même sanitizer au choke point persistence ; (3) `hasDefensibleMultiples` durci (médiane + p25 + p75 + sampleSize requis, plus de `undefinedx`). tsc 0 ; 14 tests deal-intelligence verts.
+
+---
 ## 2026-06-21 — Fix — mémo « Due diligence / À compléter » : questions tronquées à 80 car. + « ... »
 
 ### Fichiers
@@ -214,138 +356,3 @@
 
 ### Description
 **Chantier dé-scorisation, P4-b2 (BORNÉE, gaté Codex APPROVE après 2 REQUEST_CHANGES productifs).** 2e producteur P4. Retrait de la **note conditions** (`score.value`/grade) + neutralisation `Deal.conditionsScore`. **Fourche tranchée par Codex = Option B** : la décision G4 « justifs par critère conservées » (hero card) imposait de préserver les justifications verbales qui vivaient dans `score.breakdown` → déplacées vers `findings.dimensionAssessment` (verbal pur), avec fallback legacy `score.breakdown` pour les snapshots historiques. Carve-out du contrat partagé (comme synthesis-deal-scorer en P4-a). **Différé LARGE/P5** : `structuredAssessment.trancheAssessments[].score` (sous-note par tranche, non restituée depuis G4). **Pas de bump `STEPWISE_GRAPH_VERSION`** (contrat évalué à la PRODUCTION, pas au replay ; lecteurs legacy préservés). tsc 0 ; conditions e2e + transform + prompt.guard + schemas + 2 pipelines + doctrine guards = 104+ verts ; suite complète verte dans le payload gate.
-
----
-## 2026-06-15 — Dé-scorisation — P4-b1 — team-investigator : retrait des notes par fondateur
-
-### Fichiers
-- `src/agents/tier1/team-investigator.ts` (−58) : retrait de `founderProfiles[].scores.*` (domainExpertise / entrepreneurialExperience / executionCapability / networkStrength / overallFounderScore = note d'appréciation agrégée par fondateur) — type `LLMTeamInvestigatorResponse`, schéma de sortie du prompt, exemple JSON, ligne du MAUVAIS exemple, et le bloc transform `scores:(()=>{capScore…})()`. Prompt : échelle chiffrée « Score domainExpertise 0-100 » → guidance qualitative (reflétée dans strengths/concerns) ; section « Impact sur les scores » → « Impact sur l'évaluation ». Métriques internes : les 4 dérivées `unit:"score"` (domain_expertise / entrepreneurial_experience / execution_capability / network_strength) + le helper `avg()` retirés ; **conservées** les observables `linkedin_verified_ratio` (%) et `successful_exits` (count). **Top-level `data.score.value` CONSERVÉ** (score agent des 15 standardStructuredAgents = LARGE-déféré per Codex ; désormais dérivé des 2 métriques observables + fallback breakdown LLM).
-- `src/agents/types.ts` + `src/agents/type-modules/tier1.ts` : champ `scores` retiré de `FounderProfile` / `TeamInvestigatorFindings`.
-- `src/agents/tier3/devils-advocate.ts` (−10) : **fuite LLM** retirée — le bloc qui poussait « name: Score N/100 » dans le contexte de challenge (devils-advocate reçoit déjà les founderProfiles complets via previousResults).
-- `src/agents/orchestrator/persistence.ts` (−2) : `scores: profile.scores` retiré de `analysisData` (merge `verifiedInfo`) + champ de type `scores?`.
-- `src/components/deals/team-management.tsx` (−9) : interface morte `AnalysisScores` + champ `scores?` retirés (rendering déjà retiré en `c63620d`).
-
-### Description
-**Chantier dé-scorisation, P4-b1 (périmètre BORNÉE gaté Codex APPROVE).** Premier producteur du périmètre P4 borné. Retrait des notes 0-100 PAR FONDATEUR (appréciation agrégée bannie même interne) + la fuite vers le contexte LLM de devils-advocate + persistence + UI/types. **Laissé intentionnellement** : top-level `data.score.value` de l'agent (carry interne transitoire non rendu, retrait dans le chantier LARGE/P5 per Codex) ; `TEAM_INVESTIGATOR_CRITERIA` (config de pondération du score déféré ; `calculateAgentScore` tolère déjà les métriques absentes) ; PDF `domainExpertise?:string` (dead rendering préexistant, lit un champ inexistant) ; context-engine `networkStrength` enum qualitatif (autre système). **Pas de bump `STEPWISE_GRAPH_VERSION`** (ni topologie ni step-id ni clé durable changés ; contrat partagé toujours satisfait). tsc 0 ; sequential-pipeline + agent-pipeline 45/45 ; suite complète verte dans le payload gate.
-
----
-## 2026-06-15 — Dé-scorisation — P4-a — synthesis-deal-scorer : retrait de la PRODUCTION de note de deal
-
-### Fichiers
-- `src/agents/tier3/synthesis-deal-scorer.ts` (cœur, −296/+67) : `transformResponse` ne produit plus `overallScore` / `confidence` / `dimensionScores` / `scoreBreakdown` / `comparativeRanking`. Supprimés : extraction dimensionScores + calcul overallScore pondéré, caps de cohérence (Rule 1 skepticism, Rule 2 critical), meta-gate thèse (Rule 4), pénalité de score (Rule 3 ; le **relevé** `partialAgents` est conservé pour `keyWeaknesses`), confidence + pénalité, `patchScoreInText`, helper mort `normalizeDimensionWeight`. `execute()` : un SEUL appel LLM (retry « dimensions » retiré, sans objet en scoreless) + **bloc F37 retiré** (percentile DE SCORE via `percentile-calculator` → écriture comparativeRanking + confidence = note de deal bannie). Rationale restituée scrubbée via `stripDealScoreMentions` (remplace le patch). `buildSignalContribution(orientation, context)` ne porte plus `score`. Type `SynthesisDealScorerData` : 5 champs de score rendus **OPTIONNELS** (compat durable snapshots en vol + historiques + lecteurs défensifs `?? null`). Orientation 100% scoreless (`finalVerdict` + `signalProfile`) inchangée.
-- `src/agents/types.ts` + `src/agents/type-modules/tier3.ts` : mêmes 5 champs de score rendus OPTIONNELS dans les copies dupliquées de `SynthesisDealScorerData`.
-- `src/agents/base-agent.ts` : contrat de sortie synthesis SCORELESS. `getRequiredOutputContractFields` → `["verdict", "investmentRecommendation", "keyStrengths", "keyWeaknesses", "criticalRisks", "signalProfile"]` (overallScore/dimensionScores retirés). Bloc de validation synthesis : check structurel `signalProfile.orientation` + `dimensionCoverage` (au lieu de overallScore/dimensionScores/comparativeRanking). Sinon CONTRACT_BROKEN → `success:false`.
-- `src/agents/tier3/__tests__/synthesis-deal-scorer-transform.test.ts` : invariant `signalContribution.score === overallScore` supprimé (les deux champs n'existent plus).
-- `src/agents/tier3/__tests__/synthesis-deal-scorer-llm-budget.guard.test.ts` : `MAX_IN_EXECUTE_CALLS` 2→1 ; assertion count `>=2`→`toBe(1)` (retry retiré) ; doc/worst-case alignés (1×100s, F37 retiré).
-
-### Description
-**Chantier dé-scorisation, P4-a (retrait des scores producteurs, ordre additif).** La synthèse ne RESTITUE plus de note depuis P3 ; ici on retire sa **production** (1er producteur). Ordre ADDITIF : champs de note rendus optionnels (PAS supprimés du type) → snapshots stepwise en vol + analyses historiques + lecteurs défensifs (persistence `if (overallScore != null)`, score-extraction) compilent et tolèrent l'absence. La persistence (`Deal.*Score` gatée sur `overallScore != null`) **skippe** naturellement le write pour les nouveaux runs. **Pas de bump `STEPWISE_GRAPH_VERSION` (reste 4)** : ni topologie ni step-ids changés ; le contrat de sortie n'est validé qu'à la PRODUCTION (pas au replay du snapshot). Clé durable `"synthesis-deal-scorer"` inchangée. Gain collatéral : 1 appel LLM au lieu de 2. **Différé (micro-étapes P4 suivantes)** : prompt LLM (instruit encore score/dimensions, ignorés), purge finale des champs optionnels + write persistence inerte, retrait `percentile-calculator` (P5), type mort `SynthesisDealScorerDataV2`. tsc 0 ; suite unit complète 4515 passed / 9 skipped / 0 failed.
-
----
-## 2026-06-15 — Dé-scorisation — sweep complétude — 3 surfaces (analysis-complete-view, deck-coherence, board thesis-debate)
-
-### Fichiers
-- `src/components/deals/analysis-complete-view.tsx` (vue complète par agent, rendue par analysis-panel + analysis-preview-tabs) : fonction `getScore` + badge `{value}/100 · {grade}` par agent **retirés**. `score` déjà dans `hiddenKeys` (non listé en findings). Reste inchangé.
-- `src/components/deals/deck-coherence-report.tsx` (rapport cohérence deck, via analysis-panel) : header — `GradeBadge` (reliabilityGrade A-F) + badge `coherenceScore/100` retirés ; composant `GradeBadge` + `GRADE_CONFIG` orphelins retirés. Body conservé : `RecommendationBanner` (verbal) + compteurs issues critical/warning/info (observables) + liste issues ; auto-déplie si criticalIssues>0. `coherenceScore`/`reliabilityGrade` restent dans le type producteur (P4).
-- `src/components/deals/board/thesis-debate-view.tsx` (Board Round 0) : `thesisSolidityScore/100` par membre (barre+nombre) + `avgSolidity/100` retirés (axe Solidité en nombre = anti-doctrine, axe-2 doit être verbal). Badge `agreement` (strong_agree…strong_disagree, verbal) conservé par membre ; description → « Thèse débattue par N membres IA, désaccords et critiques exposés » (on-doctrine Board). justification/weakestAssumption/majorCritique/recommandations conservés. Helper `solidityColor` orphelin retiré. `thesisSolidityScore` reste dans le type producteur (P4).
-
-### Description
-**Sweep complétude** : 3 surfaces de restitution de note NON listées dans le RESTE du relais. Producteurs inchangés (P4, ordre additif). **Gate Codex APPROVE.** tsc 0 ; board-orchestrator 2 + doctrine guards 27 = 29 verts. Restitutions écran restantes à classer : thesis « Confiance /100 » (×4 — allowlist per-item confidence vs note ?), react-trace + extraction-audit (qualité extraction/confiance dev = allowlist probable).
-
----
-## 2026-06-15 — Dé-scorisation — sweep complétude — team-management (scores fondateurs)
-
-### Fichiers
-- `src/components/deals/team-management.tsx` : carte fondateur (onglet Équipe) dé-scorée. Avatar : nombre `overallFounderScore` (coloré) → initiale du nom. Grille 4 `ScoreMiniBar` (Domain/Startup XP/Execution/Network /100) **supprimée**. Caveat provenance « Scores estimés depuis le deck » → « Analyse estimée depuis le deck » (sorti du gate scores). Retirés : composant `ScoreMiniBar`, helpers locaux `getScoreColor`/`getScoreBg`, icônes Target/TrendingUp/Zap/Network, consts `scores`/`overallScore` (orphelins). **Conservé verbal natif** : strengths/concerns/redFlags/background/highlights. **Carry interne (Option B, → P4)** : interface `AnalysisScores` + `VerifiedInfo.scores` (data shape team-investigator, plus lue en rendu).
-
-### Description
-**Découverte sweep complétude** : surface de restitution de scores NON listée dans le RESTE du relais. Producteur `team-investigator` inchangé (P4, ordre additif). **Gate Codex APPROVE.** tsc 0 ; doctrine guards 27 verts. Sweep en cours : restent analysis-complete-view (score/100·grade), deck-coherence-report (coherenceScore/100), board thesis-debate (avgSolidity/100) ; thesis « Confiance /100 » à classer (allowlist per-item vs note).
-
----
-## 2026-06-15 — Dé-scorisation — étape G4-b — cleanup composants + helpers de score orphelins
-
-### Fichiers
-- `src/components/deals/verdict-panel.tsx` : **supprimé** (composant MORT, 0 importeur ; panneau de score ScoreRing + dimensions + VERDICT_CONFIG).
-- `src/components/ui/score-ring.tsx` : **supprimé** (orphelin après dé-scorisation G4 de conditions-analysis-cards ; seul consumer restant = verdict-panel supprimé).
-- `src/lib/ui-configs.ts` : retrait section « Score Thresholds » — `getScoreColor` + `getScoreLabel` (ancienne échelle mono-axe Excellent/Solide/…) + `getScoreBarColor` (importeurs = verdict-panel + score-ring seulement). Commentaire périmé « verdict-panel » → « tier3-results & analysis-v2 ».
-- `src/lib/format-utils.ts` : retrait `getScoreColor` (0 importeur, team-management a sa version locale) + `getScoreBadgeColor` (0 ref, orphelin depuis suppression score-badge étape D = le NIT du plan).
-
-### Description
-Cleanup des vestiges de score rendus orphelins par la dé-scorisation. Tous vérifiés orphelins par `git grep` avant suppression. **Hors-scope laissé (Karpathy)** : `team-management.tsx` garde `getScoreColor`/`getScoreBg` LOCAUX (scores fondateurs `overallFounderScore`/`domainExpertise`…) = surface de score SÉPARÉE vivante → sweep de complétude avant P4. Le source-guard `orientation-solidity-display.test.ts` référence `getScoreColor`/`getScoreLabel` comme chaînes BANNIES (pas de consommation) → non cassé. **Gate Codex APPROVE.** tsc 0 ; doctrine-guard 10 + doctrine-runtime-guard 17 + orientation-solidity 14 + ui-configs 71 verts.
-
----
-## 2026-06-14 — Dé-scorisation — étape G4 — onglet Conditions entièrement scoreless (4 sous-onglets + 2 routes)
-
-### Fichiers
-- `src/components/deals/conditions/conditions-analysis-cards.tsx` : `ConditionsHeroCard` dé-scoré — retrait `ScoreRing` (note /100), `getVerdictConfig(score)` (verdict verbal « Conditions favorables/défavorables » **dérivé du score** = anti-pattern orientation-depuis-score-caché), badge `getScoreLabel`, `MiniBar` + nombres de breakdown par dimension. Layout 2 colonnes → 1 colonne. **Conservé verbal natif** : `narrative.oneLiner` (titre), compteur red flags (observable), justification qualitative par critère (criterion + justification, sans nombre ni poids), valuation quick view (verdict + percentile observable + rationale). `StructuredAssessmentCard` : `ta.score/100` + barre par tranche retirés (label + assessment + risks conservés). Imports `getScoreColor/getScoreBarColor/getScoreLabel/ScoreRing` retirés.
-- `src/components/deals/conditions/conditions-tab.tsx` : prop `score` retiré du hero ; sentinel de présence d'analyse `conditionsScore` → `conditionsAnalysis` (montre la dernière analyse valide même après re-run échoué) ; `isEmpty` idem ; 2 textes empty-state dé-scorés.
-- `src/components/deals/conditions/version-timeline.tsx` (Historique) : badges `Score: X/100` + delta `pts` retirés ; type `VersionWithDelta` (deltaScore) supprimé → lit `TermsVersionData`.
-- `src/components/deals/conditions/percentile-comparator.tsx` (Comparateur) : notes `protections.score`/`governance.score` /100 + barres + `getScoreColor` local retirés → **checklist OBSERVABLE present/absent** (`TermsChecklist`) des protections/gouvernance saisies au formulaire. Conservé : valuation percentile P25/P50/P75, dilution médiane, instrument standard (observables).
-- `src/app/api/deals/[dealId]/terms/versions/route.ts` : dérivation `deltaScore` (delta de note) retirée ; `conditionsScore` conservé en payload (carry interne, → P5).
-- `src/app/api/deals/[dealId]/terms/benchmarks/route.ts` : tally `protectionScore`/`governanceScore` (0-100) → listes `items` present/absent dérivées des mêmes booléens observables du formulaire (terms null → items vides → « Non évalué »).
-
-### Description
-Directive Sacha « dégager tous les scores » + leçon défaut = SUPPRIMER. Toute la surface **Conditions** (4 sous-onglets) ne restitue plus de note de deal. Garde-fou respecté : aucune orientation dérivée d'un vieux score (suppression pure, contenu verbal natif conservé). Agent producteur `conditions-analyst` (score interne) + colonne DB `conditionsScore` **inchangés** = P4/P5 (ordre additif) ; les `conditionsScore` restants côté route = écritures DB + lecture producteur, jamais restitués écran. **Gate Codex APPROVE après 1 REQUEST_CHANGES** (Codex a flaggé version-timeline = même surface non dé-scorée ; corrigé + percentile-comparator dé-scoré proactivement par le même principe). Non-bloquant noté par Codex : select `globalScore` mort dans `/terms` GET → cleanup sweep P5/carry. tsc 0 ; 117 tests verts (doctrine-guard, doctrine-runtime-guard, signal-profile, orientation-solidity-display, conditions-analyst ×3).
-
----
-## 2026-06-14 — Dé-scorisation cluster — étape G3 — export RGPD + contexte LLM chat scoreless (+ scrubber texte libre)
-
-### Fichiers
-- `src/services/signal-profile/index.ts` : nouveaux scrubbers de **texte libre** `stripDealScoreMentions(text)` (retire les patterns de NOTE : `X/100`, `score/note` qualifié deal, `grade A-F` ; préserve les observables %/montants/ratios non-/100 ; idempotent) et `deepStripScoreMentions(value)` (récursif, ne recurse que dans objets simples + arrays, laisse intacts Date/Decimal).
-- `src/app/api/user/export/route.ts` (RGPD) : retrait des 7 `*Score` du select + des champs score par deal + du champ `scores` par analyse + de la machinerie `loadResults`/`extractAnalysisScores` (morte). `analysis.summary` scrubé via `stripDealScoreMentions` ; red flags historiques via `deepStripScoreMentions` (summaries/red flags persistés avant la bascule pouvaient contenir « Score : X/100 »).
-- `src/agents/chat/deal-chat-agent.ts` : **scrub au niveau du bloc de contexte** — `contextPrompt` (l.1158) et `retrievedContextPrompt` (l.1151) passés par `stripDealScoreMentions` (couvre agentSummaries/keyFindings/findings/fallback summary/analysisSummary) ; `buildConversationHistory` scrub les messages **ASSISTANT** historiques (user intact). System prompt déjà sans note, `scrubAgentScoreData` (P3-a) sur les fullData agents conservé.
-- Tests : `signal-profile.test.ts` (+10 cas strip/deep), `user/export/__tests__/route.test.ts` réécrit (assert observables + guard d'ABSENCE de score).
-
-### Description
-Directive Sacha : dégager tous les scores. **Vérification chat LLM** : le prompt n'expose aucune note (system prompt propre, blocs de contexte scrubés au boundary, historique assistant scrubé, `dealMetrics` mort sans consumer). **Export RGPD** scoreless (les `results` blobs gardent `overallScore` même après le drop DB P5 → scrub explicite requis, fait). **Gate Codex APPROVE après 3 REQUEST_CHANGES** (convergence : summary → agentSummaries/findings/red flags → historique assistant ; chaque vecteur distinct corrigé). Caveat non-bloquant acté : le scrub bloc retire aussi de rares « X/100 » de confiance de thèse (pas une note de deal ; la confiance reste exprimable en %). Internes tolérés (Option B, → P5) : `canonical-read-model.*Score`, `score-extraction`, `dealMetrics`. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; signal-profile 40 + chat/route/chat-context 46 + export 1 tests verts.
-
----
-## 2026-06-14 — Dé-scorisation cluster — étape G2 — dashboard : suppression du KPI « Score moyen » + métriques portfolio observables
-
-### Fichiers
-- `src/app/(dashboard)/dashboard/page.tsx` : (1) carte KPI « Score moyen » (`avgScore/100` + « N deals scorés ») **supprimée**. (2) data : calcul `scores`/`avgScore` retiré ; `sectorDistribution` **découplé de globalScore** (secteurs distincts de tout le portefeuille, observable) ; `dealsWithScoresCount` → `portfolioDealsCount` (= `metricDeals.length`, observable) ; select Prisma `globalScore` retiré de `metricDeals` ; appel mort `loadCanonicalDealSignals(signals)` (servait aux scores) retiré ; commentaire cap portfolio mis à jour. (3) carte « Métriques Portfolio » : gate `avgScore !== null` → `sectorDistribution.length > 0` ; tuile « Deals scorés » → « Deals suivis ». **Conservé** : « Secteurs couverts ».
-
-### Description
-Directive Sacha : dégager tous les scores. Dashboard scoreless ; métriques portfolio = observables (secteurs couverts, deals suivis). **Gate Codex APPROVE** (nit commentaire stale corrigé). Note hors-scope : `recentDeals` passe encore `globalScore` à `resolveCanonicalDealFields` (input du read-model canonique, **non restitué** par `RecentDealsList` — vérifié) → carry interne, sweep canonical-read-model/P5. PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; eslint dashboard clean ; doctrine guards 27 passed.
-
----
-## 2026-06-14 — Dé-scorisation cluster — étape G1 — comparaison de deals : suppression pure des notes /100
-
-### Fichiers
-- `src/components/deals/deal-comparison.tsx` : retrait des 5 lignes de notes /100 (Score Global/Équipe/Marché/Produit/Financier) + `DIMENSION_LABELS` + memo `bestScores` + footnote « Meilleur score » + champs score du type `DealComparisonData` + import `useMemo` devenu inutile. Lignes **observables conservées** : Red Flags, Valorisation, ARR, Croissance.
-- `src/app/api/deals/compare/route.ts` : retrait des 5 `*Score` du select Prisma + de toute la machinerie qui ne servait qu'à extraire les scores (thèses, analyses, `pickCanonicalAnalysis`, `loadResults`, `extractAnalysisScores`, `resultsByAnalysisId`, `analysisScores`, `canFallbackToDealScores`). La route ne charge plus que les current facts (valo/ARR/croissance) + redFlags → simplification + suppression du chargement de blobs `results` multi-MB pour la comparaison.
-- `src/app/api/deals/compare/__tests__/route.test.ts` : réécrit pour le contrat scoreless (assert métriques observables + `redFlagCount`/`criticalRedFlagCount` + assert explicite ABSENCE des champs score = guard anti-régression).
-
-### Description
-Directive Sacha (suite AskUserQuestion) : **on dégage tous les scores, pas de remplacement**. La comparaison reste sur les métriques observables. **Gate Codex APPROVE** : comparaison scoreless de bout en bout, aucune note restituée, machinerie morte retirée. Note hors-scope : un `globalScore` subsiste dans `src/components/deals/types.ts` (type interne, à traiter dans le sweep cluster/P5). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; compare route test 2 passed ; doctrine guards 27 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 14/N (D) — suppression des composants score partagés orphelins (clôt la cible du plan)
-
-### Fichiers
-- **Supprimés** (4 fichiers totalement orphelins, 0 consumer runtime, 0 import de test) : `src/components/shared/score-badge.tsx` (`ScoreBadge`, plus aucun consumer après tier1-results C1-C4 + listes E) ; `src/components/deals/score-display.tsx` (`ScoreGrid`, plus aucun consumer après overview F) ; `src/components/deals/delta-indicator.tsx` + `src/components/deals/adjusted-score-badge.tsx` (orphelins préexistants depuis le cluster analysis-panel).
-- **Conservé** : `src/components/ui/score-ring.tsx` — consumer **vivant** `conditions/conditions-analysis-cards.tsx` (via `conditions-tab.tsx`) ; `verdict-panel.tsx` l'importe aussi mais est MORT (aucun importeur).
-
-### Description
-Cleanup des composants de note de deal devenus orphelins après la bascule des consumers (tier1-results, listes, overview). **Gate Codex APPROVE** : 4 suppressions sûres (aucun import runtime restant de `ScoreBadge`/`ScoreGrid`/`DeltaIndicator`/`AdjustedScoreBadge` dans `src` ; occurrences restantes = docs/commentaires) ; conservation de `score-ring.tsx` correcte. **Ceci clôt la cible du plan de relais (« tier1-results puis composants score partagés »).** Restent des sous-chantiers SÉPARÉS hors cible : (1) cluster read-model/delta/compare/score-extraction (`canonical-read-model.ts` expose encore `*Score`, `analysis-delta`, `analysis-variance`, `compare`, `score-extraction`) ; (2) sous-chantier conditions (`conditions-analysis-cards.tsx` rend `ScoreRing(score)`) ; (3) nit futur `getScoreBadgeColor` dans `format-utils.ts` (à nettoyer si plus aucun consumer). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; doctrine guards 40 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 13/N (F) — vue d'ensemble : ScoreGrid /100 → BadgePair orientation × solidité (décision Sacha)
-
-### Fichiers
-- `src/app/(dashboard)/deals/[dealId]/page.tsx` : la carte « Scores » de l'overview rendait un `ScoreGrid` de 7 sous-scores /100 (`global`/`team`/`market`/`product`/`financials` depuis `canonicalDeal.*Score` + `fundamentals`/`conditions` depuis `deal.*Score` — toutes notes de deal bannies). Remplacé par **`BadgePair` (orientation × solidité)**. Orientation/solidité dérivées via `aggregateOrientation`/`aggregateSolidity` sur `latestCompletedResults` (déjà chargé server-side pour le view model analysis-v2 → aucun chargement de blob supplémentaire, pas de régression perf SSR). Gating `showOverviewScores` (globalScore != null) → `showOverviewSignal` (orientation != null && latestThesis && !thesisGated, gating thèse conservé). En-tête « Scores » → « Orientation » ; empty-state « Score masqué/indisponible » → « Orientation masquée/indisponible ». Import `ScoreGrid` retiré (→ `BadgePair` + agrégateurs).
-
-### Description
-Décision produit Sacha (AskUserQuestion, Q1 overview) : remplacer le score grid par le modèle 2 axes verbal. **Gate Codex APPROVE** (« plus de ScoreGrid ni 7 notes /100, BadgePair depuis results déjà chargé, gating thèse préservé, orientation dérivée sans lecture de note de deal »). Mêmes agrégateurs score-indépendants que tier3/investor-view/tier1 (caveat C3 connu : `aggregateSolidity` peut en dernier fallback dériver une solidité verbale depuis `coherenceScore` documentaire — pas la note de deal, nombre jamais rendu). **Périmètre = surface overview uniquement.** Le CLUSTER read-model/delta/compare (`canonical-read-model.ts` expose encore `*Score`, `analysis-delta` scoreDelta, `analysis-variance`, `compare/route.ts`, `score-extraction.ts`) = sous-chantier séparé à venir ; champs DB intacts (= P5). PAS de bump `STEPWISE_GRAPH_VERSION`. tsc 0 ; eslint page clean ; doctrine guards 54 passed.
-
----
-## 2026-06-14 — Dé-scorisation P3 (legacy panel) étape 12/N (E) — listes de deals : note /100 → compteur de signaux (décision Sacha)
-
-### Fichiers
-- `src/components/deals/deals-table.tsx` : les 2 `ScoreBadge score={deal.globalScore}` (note /100, bannie — vue mobile carte + cellule desktop) remplacés par un badge compteur « N signal/signaux » = `deal.redFlags.length` (total des red flags, observable). Branche `thesisGated` → « Thèse d'abord » conservée. En-tête colonne desktop « Score » → « Signaux ». Import `ScoreBadge` retiré.
-- `src/components/deals/deals-kanban.tsx` : même remplacement `ScoreBadge` → compteur « N signaux ». Import `ScoreBadge` retiré. Commentaire `Name + score` → `Name + signals count` (stale, nit Codex).
-
-### Description
-Décision produit Sacha (AskUserQuestion, Q2 listes) : remplacer la note de deal des listes par un **compteur de signaux d'alerte**. Le nouveau badge montre le **total** (toutes sévérités) pour coller à la formulation « N signaux dont M critiques » ; les 3 surfaces affichent **déjà** ailleurs un compteur CRITICAL+HIGH (colonne « Alertes » desktop + tooltip, footers mobile/kanban) → total vs critique = deux lectures distinctes. **Gate Codex APPROVE** (« maintien séparé Signaux total / Alertes critique acceptable, colле à la décision produit » ; nit comment stale corrigé). Plus aucune note de deal (`deal.globalScore`) restituée dans les listes. `score-badge.tsx` devient probablement orphelin (à confirmer/retirer en étape D composants partagés). tsc 0 ; eslint clean ; doctrine guards 40 passed.
-
----

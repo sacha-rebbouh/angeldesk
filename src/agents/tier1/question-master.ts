@@ -929,12 +929,11 @@ Chaque point de negociation doit avoir un LEVERAGE concret.
       if (result.success && result.data) {
         const data = result.data;
 
-        // Extract score if available
-        if (data.score && typeof data.score === "object") {
-          const score = data.score as { value?: number; grade?: string };
-          if (score.value !== undefined) {
-            agentSummary += `Score: ${score.value}/100 (Grade: ${score.grade || "N/A"})\n`;
-          }
+        // Le contexte LLM exclut toute appréciation numérique agrégée ;
+        // l'intensité de signal interne conserve l'information analytique
+        // nécessaire à la priorisation des questions.
+        if (typeof (data as Record<string, unknown>).signalIntensity === "string") {
+          agentSummary += `Intensite des signaux: ${(data as Record<string, unknown>).signalIntensity}\n`;
         }
 
         // Extract red flags if available

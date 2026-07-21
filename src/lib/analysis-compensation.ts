@@ -13,14 +13,16 @@ import { logger } from '@/lib/logger'
  * Idempotent côté refund (clé d'idempotence) ; pose `refundedAt` pour que le
  * resume logic sache que l'analyse a déjà été remboursée avant toute re-tentative.
  */
+type FailedAnalysisRefundIdentity =
+  | { analysisId: string; refundIdempotencyKey?: string }
+  | { analysisId?: string; refundIdempotencyKey: string };
+
 export async function compensateFailedAnalysis(params: {
-  analysisId?: string;
   userId: string;
   dealId: string;
   type: string;
-  refundIdempotencyKey?: string;
   refundAmount?: number;
-}) {
+} & FailedAnalysisRefundIdentity) {
   const { refundCredits, refundCreditAmount, getActionForAnalysisType, CREDIT_COSTS } = await import("@/services/credits");
   const action = getActionForAnalysisType(params.type);
   try {
@@ -31,12 +33,13 @@ export async function compensateFailedAnalysis(params: {
         idempotencyKey: params.refundIdempotencyKey,
         description: `Remboursement analyse echouee (${refundAmount} credits)`,
       });
+    } else if (params.refundIdempotencyKey) {
+      await refundCredits(params.userId, action, params.dealId, {
+        idempotencyKey: params.refundIdempotencyKey,
+      });
     } else {
       await refundCredits(params.userId, action, params.dealId, {
-        analysisId: params.analysisId,
-        ...(params.refundIdempotencyKey
-          ? { idempotencyKey: params.refundIdempotencyKey }
-          : {}),
+        analysisId: params.analysisId!,
       });
     }
     if (params.analysisId) {

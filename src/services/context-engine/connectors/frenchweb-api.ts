@@ -16,6 +16,7 @@ import type {
   SimilarDeal,
   DataSource,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // TYPES
@@ -622,7 +623,7 @@ export const frenchWebApiConnector: Connector = {
     }
 
     return filtered.slice(0, 20).map(deal => ({
-      title: `${deal.companyName} lève ${deal.amount ? `€${(deal.amount / 1_000_000).toFixed(1)}M` : "un montant non divulgué"}`,
+      title: `${deal.companyName} lève ${deal.amount ? formatContextMoney(deal.amount, deal.currency) : "un montant non divulgué"}`,
       description: `${deal.stage || "Levée de fonds"} - Investisseurs: ${deal.investors.join(", ") || "Non communiqués"}`,
       url: deal.url,
       source: "FrenchWeb",
@@ -656,6 +657,7 @@ export const frenchWebApiConnector: Connector = {
         sector: deal.sector || query.sector || "tech",
         stage: deal.stage || "Unknown",
         fundingAmount: deal.amount!,
+        currency: deal.currency,
         fundingDate: deal.date,
         investors: deal.investors,
         geography: "France",

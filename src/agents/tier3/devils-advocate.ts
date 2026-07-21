@@ -31,6 +31,7 @@
 
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { factCheckDevilsAdvocate } from "@/services/fact-checking";
 import { DEVILS_ADVOCATE_SYSTEM_PROMPT } from "./prompts/devils-advocate-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
@@ -573,12 +574,10 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
   private extractChallengeableElements(agentName: string, data: Record<string, unknown>): string {
     const elements: string[] = [];
 
-    // Extract score if present
-    if (data.score && typeof data.score === "object") {
-      const score = data.score as { value?: number; grade?: string };
-      if (score.value !== undefined) {
-        elements.push(`Score: ${score.value}/100 (${score.grade ?? "N/A"})`);
-      }
+    // Le contexte LLM exclut toute appréciation numérique agrégée ;
+    // l'intensité de signal suffit pour orienter le challenge analytique.
+    if (typeof data.signalIntensity === "string") {
+      elements.push(`Intensite des signaux: ${data.signalIntensity}`);
     }
 
     // Extract narrative/summary if present
@@ -603,12 +602,11 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
       }
     }
 
-    // Extract alert signal if present
+    // Le contexte LLM ne reçoit jamais l'enum prescriptif interne
+    // `recommendation` (STOP/PROCEED…) ; seul `hasBlocker`, qui décrit un
+    // état analytique, peut être transmis.
     if (data.alertSignal && typeof data.alertSignal === "object") {
       const alert = data.alertSignal as { recommendation?: string; hasBlocker?: boolean };
-      if (alert.recommendation) {
-        elements.push(`Recommandation: ${alert.recommendation}`);
-      }
       if (alert.hasBlocker) {
         elements.push(`BLOCKER DETECTE`);
       }
@@ -648,7 +646,7 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
     if (competitors && competitors.length > 0) {
       text += "### Concurrents (pour rechercher echecs similaires)\n";
       for (const c of competitors) {
-        text += `- ${c.name}: ${c.totalFunding ? `€${c.totalFunding.toLocaleString()}` : "?"} - Status: ${c.status ?? "unknown"}\n`;
+        text += `- ${c.name}: ${c.totalFunding ? formatContextMoney(c.totalFunding, c.currency) : "?"} - Status: ${c.status ?? "unknown"}\n`;
       }
     }
 
@@ -1040,7 +1038,7 @@ NOTE OPERATIONNELLE (interne, non-decisionnelle) : le champ \`alertSignal\` (has
             : this.deriveSkepticismVerdict(hasScore ? Math.min(100, Math.max(0, rawScore)) : fallbackScore),
           verdictRationale: data.findings?.skepticismAssessment?.verdictRationale
             ?? (!hasScore
-              ? `Verdict derive defensivement a partir du score ${fallbackScore}/100 et des risques structurels identifies.`
+              ? `Verdict derive defensivement a partir des risques structurels identifies (donnees de scoring absentes).`
               : ""),
         };
       })(),

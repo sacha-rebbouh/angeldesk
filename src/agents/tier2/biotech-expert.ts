@@ -19,6 +19,7 @@
  */
 
 import { z } from "zod";
+import { formatContextMoney } from "@/services/context-engine/money";
 import type { AgentResult, EnrichedAgentContext } from "../types";
 import {
   SectorExpertOutputSchema,
@@ -564,12 +565,13 @@ ${dbCompetitors
     (c: {
       name: string;
       totalFunding?: number;
+      currency?: string;
       lastRound?: string;
       status?: string;
       therapeuticArea?: string;
       clinicalPhase?: string;
     }) =>
-      `- **${c.name}**: ${c.totalFunding ? `${(c.totalFunding / 1_000_000).toFixed(1)}M€ leves` : "funding inconnu"}, ${c.lastRound ?? "stage inconnu"}, ${c.therapeuticArea ?? ""}, ${c.clinicalPhase ?? ""}`
+      `- **${c.name}**: ${c.totalFunding ? `${formatContextMoney(c.totalFunding, c.currency)} leves` : "funding inconnu"}, ${c.lastRound ?? "stage inconnu"}, ${c.therapeuticArea ?? ""}, ${c.clinicalPhase ?? ""}`
   )
   .join("\n")}
 `

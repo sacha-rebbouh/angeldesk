@@ -23,6 +23,10 @@
  */
 
 import { z } from "zod";
+import {
+  formatCompetitiveLandscapeAmountsForPrompt,
+  formatDealIntelligenceAmountsForPrompt,
+} from "@/services/context-engine/money";
 import type { EnrichedAgentContext } from "../types";
 import type { SectorExpertResult, SectorExpertData, SectorExpertType, ExtendedSectorData } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
@@ -670,11 +674,19 @@ function buildBlockchainUserPrompt(
   if (context.contextEngine) {
     if (context.contextEngine.dealIntelligence) {
       contextEngineData += `\n### Similar Blockchain/Web3 Deals (from Context Engine):\n`;
-      contextEngineData += JSON.stringify(context.contextEngine.dealIntelligence, null, 2).slice(0, 3000);
+      contextEngineData += JSON.stringify(
+        formatDealIntelligenceAmountsForPrompt(context.contextEngine.dealIntelligence),
+        null,
+        2
+      ).slice(0, 3000);
     }
     if (context.contextEngine.competitiveLandscape) {
       contextEngineData += `\n### Competitive Landscape:\n`;
-      contextEngineData += JSON.stringify(context.contextEngine.competitiveLandscape, null, 2).slice(0, 2500);
+      contextEngineData += JSON.stringify(
+        formatCompetitiveLandscapeAmountsForPrompt(context.contextEngine.competitiveLandscape),
+        null,
+        2
+      ).slice(0, 2500);
     }
   }
 

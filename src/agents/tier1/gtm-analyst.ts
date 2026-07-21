@@ -1,5 +1,6 @@
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
 import { BaseAgent } from "../base-agent";
+import { formatContextMoney } from "@/services/context-engine/money";
 import type {
   EnrichedAgentContext,
   GTMAnalystResult,
@@ -477,7 +478,9 @@ Si le Context Engine fournit des données de marché (CAC benchmarks, deals simi
       const competitors = context.contextEngine.competitiveLandscape.competitors.slice(0, 5);
       competitorSection = `\n## Concurrents Identifiés (pour patterns GTM)\n${JSON.stringify(competitors.map(c => ({
         name: c.name,
-        funding: c.totalFunding,
+        funding: typeof c.totalFunding === "number"
+          ? formatContextMoney(c.totalFunding, c.currency)
+          : undefined,
         positioning: c.positioning,
       })), null, 2)}`;
     }

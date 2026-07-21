@@ -8,6 +8,8 @@
  */
 
 import { z } from "zod";
+import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { BaseAgent, AgentResultWithData } from "../base-agent";
 import type { AgentContext, EnrichedAgentContext } from "../types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
@@ -484,7 +486,7 @@ Réponds UNIQUEMENT avec un JSON valide.`;
       for (const deal of deals.slice(0, 5)) {
         text += `- **${deal.companyName}** (${deal.sector}, ${deal.stage}): `;
         if (deal.fundingAmount) {
-          text += `€${(deal.fundingAmount / 1_000_000).toFixed(1)}M`;
+          text += formatContextMoney(deal.fundingAmount, deal.currency);
         }
         if (deal.valuationMultiple) {
           text += ` @ ${deal.valuationMultiple}x`;
@@ -494,9 +496,18 @@ Réponds UNIQUEMENT avec un JSON valide.`;
 
       if (contextEngine.dealIntelligence.fundingContext) {
         const fc = contextEngine.dealIntelligence.fundingContext;
-        text += `\n**Contexte marché (${fc.period}):**\n`;
-        text += `- Multiple valo: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x\n`;
-        text += `- Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
+        text += `\n**Contexte marché${fc.period ? ` (${fc.period})` : ""}:**\n`;
+        if (hasDefensibleMultiples(fc)) {
+          text += `- Multiple valo: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x (échantillon: ${fc.multiplesSampleSize} deals avec multiple vérifié, stage ${fc.multiplesStage})\n`;
+        } else {
+          text += `- Multiple valo: INDISPONIBLE (pas d'échantillon suffisant de multiples vérifiés). NE PAS citer de médiane sectorielle de multiple valo/ARR.\n`;
+        }
+        if (fc.trend) {
+          const percentage = typeof fc.trendPercentage === "number"
+            ? ` (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)`
+            : "";
+          text += `- Tendance: ${fc.trend}${percentage}\n`;
+        }
       }
 
       return text;

@@ -1,4 +1,6 @@
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
+import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -329,21 +331,31 @@ Le TAM est probablement correct."
     let fundingDbSection = "";
     if (context.contextEngine?.dealIntelligence) {
       const di = context.contextEngine.dealIntelligence;
+      const fundingPeriodLine = di.fundingContext?.period
+        ? `- Periode: ${di.fundingContext.period}\n`
+        : "";
+      const fundingTrendLine = di.fundingContext?.trend
+        ? `- Tendance: ${di.fundingContext.trend}${
+            typeof di.fundingContext.trendPercentage === "number"
+              ? ` (${di.fundingContext.trendPercentage > 0 ? "+" : ""}${di.fundingContext.trendPercentage}%)`
+              : ""
+          }\n`
+        : "";
       fundingDbSection = `\n## Donnees Funding Database
 
 ### Deals Similaires
 ${di.similarDeals?.length ?? 0} deals comparables identifies dans la DB.
 ${di.similarDeals?.slice(0, 10).map(d =>
-  `- ${d.companyName} (${d.sector}, ${d.stage}): ${d.fundingAmount ? `€${(d.fundingAmount/1000000).toFixed(1)}M` : 'N/A'} - ${d.fundingDate ?? 'N/A'}`
+  `- ${d.companyName} (${d.sector}, ${d.stage}): ${d.fundingAmount ? formatContextMoney(d.fundingAmount, d.currency) : 'N/A'} - ${d.fundingDate ?? 'N/A'}`
 ).join('\n') ?? 'Aucun deal comparable'}
 
 ### Contexte Funding
 ${di.fundingContext ? `
-- Periode: ${di.fundingContext.period}
-- Tendance: ${di.fundingContext.trend} (${di.fundingContext.trendPercentage > 0 ? '+' : ''}${di.fundingContext.trendPercentage}%)
-- Deals sur la periode: ${di.fundingContext.totalDealsInPeriod}
-- Valorisation mediane: ${di.fundingContext.medianValuationMultiple}x ARR
-- P25: ${di.fundingContext.p25ValuationMultiple}x | P75: ${di.fundingContext.p75ValuationMultiple}x
+${fundingPeriodLine}${fundingTrendLine}- Deals comparables: ${di.fundingContext.totalDealsInPeriod}
+${hasDefensibleMultiples(di.fundingContext)
+  ? `- Valorisation mediane: ${di.fundingContext.medianValuationMultiple}x ARR (echantillon: ${di.fundingContext.multiplesSampleSize} deals avec multiple verifie, stage ${di.fundingContext.multiplesStage})
+- P25: ${di.fundingContext.p25ValuationMultiple}x | P75: ${di.fundingContext.p75ValuationMultiple}x`
+  : `- Multiples valo/ARR: INDISPONIBLES (pas d'echantillon suffisant de multiples verifies). NE PAS citer de mediane sectorielle.`}
 ` : 'Non disponible'}
 
 ### Verdict Valorisation DB

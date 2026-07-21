@@ -1,4 +1,6 @@
 import { clampConfidenceLevel } from "@/agents/orchestration/confidence-clamp";
+import { hasDefensibleMultiples } from "@/services/context-engine/deal-intelligence";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { BaseAgent } from "../base-agent";
 import type {
   EnrichedAgentContext,
@@ -355,7 +357,7 @@ OBLIGATOIRE:
       competitorContext += `${competitors.length} concurrents dans notre base:\n`;
       for (const c of competitors.slice(0, 10)) {
         competitorContext += `- ${c.name}: ${c.positioning}`;
-        if (c.totalFunding) competitorContext += ` (Funding: ${(c.totalFunding / 1000000).toFixed(1)}M€)`;
+        if (c.totalFunding) competitorContext += ` (Funding: ${formatContextMoney(c.totalFunding, c.currency)})`;
         competitorContext += `\n`;
       }
     }
@@ -365,8 +367,17 @@ OBLIGATOIRE:
     if (context.contextEngine?.dealIntelligence?.fundingContext) {
       const fc = context.contextEngine.dealIntelligence.fundingContext;
       valuationContext = `\n## Benchmarks Valorisation (Context Engine DB)\n`;
-      valuationContext += `Multiples ARR du secteur: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x\n`;
-      valuationContext += `Tendance: ${fc.trend} (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)\n`;
+      if (hasDefensibleMultiples(fc)) {
+        valuationContext += `Multiples ARR du secteur: P25=${fc.p25ValuationMultiple}x, Median=${fc.medianValuationMultiple}x, P75=${fc.p75ValuationMultiple}x (echantillon: ${fc.multiplesSampleSize} deals avec multiple verifie, stage ${fc.multiplesStage})\n`;
+      } else {
+        valuationContext += `Multiples ARR du secteur: INDISPONIBLES (pas d'echantillon suffisant de multiples verifies). NE PAS citer de mediane sectorielle de multiple valo/ARR.\n`;
+      }
+      if (fc.trend) {
+        const percentage = typeof fc.trendPercentage === "number"
+          ? ` (${fc.trendPercentage > 0 ? "+" : ""}${fc.trendPercentage}%)`
+          : "";
+        valuationContext += `Tendance: ${fc.trend}${percentage}\n`;
+      }
     }
 
     // F75: Pre-LLM FOMO / artificial urgency detection on document content

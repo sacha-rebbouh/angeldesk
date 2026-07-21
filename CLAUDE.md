@@ -118,9 +118,9 @@ Ordre canonique strict :
 1. **Copilote analytique** (la catégorie)
 2. **Raisonnement sous incertitude** (la doctrine)
 3. **Effets evidence-first** (affirmations factuelles critiques sourcées, contradictions détectées, zones d'incertitude, fraîcheur — décrits comme effets, jamais comme noms de système)
-4. **43 agents en architecture de support** (preuve technique sous le capot, jamais en accroche)
+4. **41 agents actifs, 42 en analyse complète avec `thesis-reconciler` conditionnel** (preuve technique sous le capot, jamais en accroche)
 
-L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne mentionne pas *"43 agents"* ni *"Evidence Engine"*. Le pitch deck slide 1 ne mentionne pas le nombre.
+L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne mentionne pas *"41 agents actifs / 42 en analyse complète"* ni *"Evidence Engine"*. Le pitch deck slide 1 ne mentionne pas le nombre.
 
 ### Règle de séparation langage doctrine / public
 
@@ -136,7 +136,7 @@ L'inverse fait sonner machinerie. La section d'ouverture de la page d'accueil ne
 | **Board AI** | *"Sublimation — délibération qui trouve la vérité"* | *"4 modèles indépendants qui exposent leurs désaccords, leurs angles morts, leurs hypothèses faibles. Le désaccord persistant est une feature, pas un bug."* |
 | **Live Coaching** | *"IA temps réel — quoi répondre au fondateur"* | *"Vérification des preuves en temps réel pendant le call — fait remonter contradictions deck/fondateur, benchmarks dépassés, infos nouvelles, questions à poser maintenant."* |
 | **22 experts sectoriels** | *"Aucun analyste n'est expert en 22 secteurs"* | *"Chaque dossier obtient une lentille spécialisée lorsque le secteur est couvert, sinon un fallback général structuré (21 lentilles spécialisées + general-expert)."* |
-| **43 agents** | Accroche principale | *"Architecture en 4 couches — extraction, analyse horizontale (12 lentilles), expertise sectorielle (22 bibliothèques), synthèse et challenge (6 mécanismes). 43 agents / composants selon convention § 7 (3 + 12 + 22 + 6 ; thesis-reconciler conditionnel hors total), sous le capot."* |
+| **41 agents actifs / 42 en analyse complète** | Accroche principale | *"Architecture en 4 couches — 41 agents actifs (2 + 12 + 22 + 5), 42 en analyse complète avec thesis-reconciler conditionnel, sous le capot."* |
 | **Scoring** | Score global 0-100 / « score subordonné » | **Aucune note de deal restituée, jamais** (cf. § Restitution analytique). Orientation × solidité des preuves (verbal) + dimensions + sources + contradictions + questions montrés en premier. |
 
 ### Où ça s'applique concrètement
@@ -214,7 +214,7 @@ npx tsc --noEmit                # Type check
 ```
 
 ## Documents de référence
-- `docs-doctrine/angeldesk-strategic-pivot.md` — **Doctrine canonique versionnée et partagée (Claude + Codex + Sacha).** Source de vérité du pivot 2026-05-20 : phrase publique, doctrine à 2 strates, ICP, persona Pauline, scoring à 2 axes, glossaire interne→public, reframes de features, cascade documentaire. À lire en début de session. Tracké git (le dossier `docs-private/` est gitignored).
+- `docs-doctrine/angeldesk-strategic-pivot.md` — **Doctrine canonique versionnée et partagée (Claude + Codex + Sacha).** Source de vérité du pivot 2026-05-20 : phrase publique, doctrine à 2 strates, ICP, persona Pauline, scoring à 2 axes, glossaire interne→public, reframes de features, cascade documentaire. À lire en début de session. Tracké git (le dossier `docs-private/` est lui aussi tracké depuis le commit `9114490`).
 - `docs-private/reference.yaml` — Référence technique et produit centrale (forme YAML structurée). § 3 Vision & Positionnement aligné sur la doctrine pivotée ; autres sections en cours d'alignement.
 - `dbagents.md` — Système de maintenance DB (CLEANER, SOURCER, COMPLETER, SUPERVISOR).
 - `changes-log.md` — Historique des modifications.
@@ -223,23 +223,22 @@ npx tsc --noEmit                # Type check
 
 ## ARCHITECTURE ANALYTIQUE — 4 COUCHES
 
-Le nombre "43 agents" est une preuve technique sous le capot, pas une accroche publique. En public, parler d'architecture en 4 couches : extraction, analyse horizontale, expertise sectorielle, synthèse et challenge.
+La convention canonique est de 41 agents actifs (2 + 12 + 22 + 5), 42 en analyse complète avec `thesis-reconciler` conditionnel. C'est une preuve technique sous le capot, pas une accroche publique. En public, parler d'architecture en 4 couches : extraction, analyse horizontale, expertise sectorielle, synthèse et challenge.
 
 | Couche | Nb | Rôle | Exécution |
 |------|----|------|-----------|
-| Couche 0 | 3 | Extraction, scoring initial, détection de signaux d'alerte | Selon le parcours |
+| Couche 0 | 2 | Extraction, détection de signaux d'alerte | Selon le parcours |
 | Couche 1 | 12 | Lentilles d'analyse horizontales | Parallèle |
 | Couche 2 | 22 | Bibliothèques / experts sectoriels | Dynamique (1 expert activé selon secteur) |
-| Couche 3 | 5 autonomes / 6 en analyse complète (`full_analysis`) | Synthèse, contradiction, scoring, memo, challenge | Séquentiel (après couches 1 & 2) |
+| Couche 3 | 5 autonomes / 6 en analyse complète (`full_analysis`) | Synthèse, contradiction, memo, challenge | Séquentiel (après couches 1 & 2) |
 
-> `technical-dd` a été split en `tech-stack-dd` + `tech-ops-dd` (optimisation coûts/timeouts Haiku). `exit-strategist` et `scenario-modeler` retirés du pipeline actif (doctrine anti-oraculaire — pas de projection multiple/IRR/exit valuation).
+> `technical-dd` a été split en `tech-stack-dd` + `tech-ops-dd` (optimisation coûts/timeouts Haiku). `exit-strategist` et `scenario-modeler` ont été retirés du pipeline actif (doctrine anti-oraculaire — pas de projection multiple/IRR/exit valuation), ainsi que `deal-scorer` (doctrine anti-note — aucune note de deal restituée).
 
-### Couche 0 — Extraction et pré-analyse (3 agents)
+### Couche 0 — Extraction et pré-analyse (2 agents)
 ```
-src/agents/base/
+src/agents/
 ├── document-extractor.ts      Extraction structurée
-├── red-flag-detector.ts       Détection précoce de signaux d'alerte
-└── deal-scorer.ts             Scoring initial
+└── red-flag-detector.ts       Détection précoce de signaux d'alerte
 ```
 
 ### Couche 1 — Analyse horizontale (12 agents)

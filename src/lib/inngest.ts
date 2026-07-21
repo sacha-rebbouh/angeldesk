@@ -342,7 +342,7 @@ export const dealAnalysisFunction = inngest.createFunction(
       type: string;
       enableTrace: boolean;
       userId: string;
-      dispatchRefundKey?: string;
+      dispatchRefundKey: string;
       dispatchEventId?: string;
       stepwise?: boolean;
       stepwiseGraphVersion?: number;

@@ -17,6 +17,7 @@ import type {
   DbCrossReference,
 } from "../types";
 import { deriveTier1SignalIntensity, signalIntensityToRecommendation, type Tier1SignalIntensity } from "./utils/derive-alert-signal";
+import { filterMissedCompetitors, applyOmissionRedFlagGuard } from "./utils/competitor-omission-guard";
 import { calculateAgentScore, COMPETITIVE_INTEL_CRITERIA, type ExtractedMetric } from "@/scoring/services/agent-score-calculator";
 import { getSectorProfile, formatSectorProfileForPrompt, formatCompetitiveCalibrationForPrompt, applySectorRedFlagFilter } from "@/agents/orchestration/sector-profiles";
 
@@ -457,6 +458,9 @@ ${this.formatFactStoreData(context)}
    - Utilise le Context Engine (paysage concurrentiel fourni)
    - Cherche les concurrents NON MENTIONNÉS dans le deck
    - Classe par niveau de menace
+   - Un fournisseur de technologie/API (ex. fournisseur de modèles IA) n'est PAS un concurrent de catégorie: ne le liste JAMAIS comme concurrent ni comme concurrent manqué (au plus en competitiveThreats comme substitut technologique)
+   - Être dans le même secteur large (ex. "IA") ne suffit PAS: exige un overlap de use case concret et justifié
+   - En cas de doute sur la pertinence catégorie d'une entité, NE PAS l'inclure (un faux concurrent est pire qu'un concurrent manqué)
 
 2. VÉRIFIER chaque claim concurrentiel du deck:
    - Cross-reference avec la DB et Context Engine
@@ -500,7 +504,7 @@ Réponds en JSON avec EXACTEMENT cette structure.
   "questions": [{"priority": "CRITICAL|HIGH|MEDIUM", "category": "competition|moat|positioning|strategy", "question": "...", "context": "...", "whatToLookFor": "..."}],
   "findings": {
     "competitors": [{"name": "...", "website": null, "positioning": "...", "targetCustomer": "...", "overlap": "direct|indirect|adjacent|future_threat", "overlapExplanation": "...", "funding": {"total": null, "lastRound": null, "lastRoundDate": null, "stage": null, "investors": [], "source": "Funding DB|Context Engine|News|Unknown"}, "estimatedRevenue": null, "strengths": [{"point": "...", "evidence": "..."}], "weaknesses": [{"point": "...", "evidence": "..."}], "threatLevel": "CRITICAL|HIGH|MEDIUM|LOW", "threatRationale": "...", "timeToThreat": "...", "differentiationVsUs": {"ourAdvantage": "...", "theirAdvantage": "...", "verdict": "WE_WIN|THEY_WIN|PARITY|DIFFERENT_SEGMENT"}}],
-    "competitorsMissedInDeck": [{"name": "...", "funding": null, "whyRelevant": "...", "severity": "CRITICAL|HIGH|MEDIUM"}],
+    "competitorsMissedInDeck": [{"name": "...", "funding": null, "whyRelevant": "... (overlap de use case concret et sourcé, PAS une simple appartenance sectorielle)", "severity": "CRITICAL|HIGH|MEDIUM — CRITICAL UNIQUEMENT si l'entité est vérifiable (Funding DB ou Context Engine) ET l'overlap catégorie est établi"}],
     "marketStructure": {"concentration": "fragmented|moderate|concentrated|monopolistic", "totalPlayers": 0, "topPlayersMarketShare": "...", "entryBarriers": "low|medium|high", "entryBarriersExplanation": "..."},
     "moatAnalysis": {"primaryMoatType": "network_effects|data_moat|brand|switching_costs|scale|technology|regulatory|none", "secondaryMoatTypes": [], "moatScoring": [{"moatType": "...", "score": 0, "evidence": "...", "sustainability": "strong|moderate|weak", "timeframe": "..."}], "overallMoatStrength": 0, "moatVerdict": "STRONG_MOAT|EMERGING_MOAT|WEAK_MOAT|NO_MOAT", "moatJustification": "...", "moatRisks": [{"risk": "...", "probability": "HIGH|MEDIUM|LOW", "impact": "..."}]},
     "competitivePositioning": {"ourPosition": "...", "nearestCompetitor": "...", "differentiationStrength": "strong|moderate|weak|unclear", "sustainabilityOfPosition": "..."},
@@ -517,6 +521,7 @@ RAPPELS:
 - Justifications COURTES (1-2 phrases)
 - Chaque claim vérifié vs DB/Context Engine
 - Moat PROUVÉ, pas juste revendiqué
+- ZÉRO FAUX POSITIF: pas d'entité hors catégorie (fournisseur d'API, même secteur sans overlap de use case) dans competitors ou competitorsMissedInDeck
 - PRIORITE: JSON complet et valide > quantité de détails`;
 
     // Call LLM
@@ -630,6 +635,34 @@ RAPPELS:
       transformed.meta.limitations = [
         ...transformed.meta.limitations,
         "Verification des entites en Funding DB echouee. Concurrents non verifies.",
+      ];
+    }
+
+    // Une entité « manquée dans le deck » n'est conservée que si la liste
+    // Context Engine jugée établit et source sa pertinence de catégorie : une
+    // vérification Funding DB prouve l'existence, pas l'overlap. Un red flag
+    // d'omission ne reste CRITICAL que si une omission établie de même
+    // sévérité le soutient ; sinon il est déclassé ou supprimé.
+    const ceCompetitorNames = (
+      context.contextEngine?.competitiveLandscape?.competitors ?? []
+    ).map(c => c.name);
+    const { kept: keptMissed, dropped: droppedMissed } = filterMissedCompetitors(
+      transformed.findings.competitorsMissedInDeck ?? [],
+      ceCompetitorNames
+    );
+    transformed.findings.competitorsMissedInDeck = keptMissed;
+    if (droppedMissed.length > 0) {
+      transformed.meta.limitations = [
+        ...transformed.meta.limitations,
+        `Concurrents « manqués dans le deck » écartés faute de pertinence catégorie établie (absents du paysage concurrentiel Context Engine jugé): ${droppedMissed.map(d => d.name).join(", ")}.`,
+      ];
+    }
+    const omissionGuard = applyOmissionRedFlagGuard(transformed.redFlags, keptMissed);
+    transformed.redFlags = omissionGuard.flags;
+    if (omissionGuard.guardNotes.length > 0) {
+      transformed.meta.limitations = [
+        ...transformed.meta.limitations,
+        ...omissionGuard.guardNotes,
       ];
     }
 

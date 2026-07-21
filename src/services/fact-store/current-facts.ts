@@ -95,7 +95,8 @@ async function loadStaleSourceDocumentIds(
  * Get current facts using the materialized view (faster for large datasets).
  * Falls back to the computed version if the view doesn't exist.
  *
- * Note: This version doesn't include event history or dispute details.
+ * Note: This version doesn't include event history. Current values come from
+ * the view, while pending disputes are loaded separately for the same fact keys.
  * Use getCurrentFacts() if you need the full event history.
  *
  * @param dealId - The deal ID
@@ -144,9 +145,37 @@ export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFa
       return getCurrentFacts(dealId);
     }
 
+    const factKeys = [...new Set(rows.map((row) => row.factKey))];
+    const pendingReviewEvents = factKeys.length > 0
+      ? await prisma.factEvent.findMany({
+          where: {
+            dealId,
+            eventType: 'PENDING_REVIEW',
+            factKey: { in: factKeys },
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            factKey: true,
+            value: true,
+            source: true,
+          },
+        })
+      : [];
+    const pendingReviewByFactKey = new Map<
+      string,
+      (typeof pendingReviewEvents)[number]
+    >();
+    for (const event of pendingReviewEvents) {
+      const factKey = canonicalizeFactKey(event.factKey);
+      if (!pendingReviewByFactKey.has(factKey)) {
+        pendingReviewByFactKey.set(factKey, event);
+      }
+    }
+
     const facts = rows.map((row): CurrentFact | null => {
       const factKey = canonicalizeFactKey(row.factKey);
       const category = getFactKeyDefinition(factKey)?.category ?? (row.category as FactCategory);
+      const disputeEvent = pendingReviewByFactKey.get(factKey);
 
       if (!passesCurrentFactQualityGate(
         factKey,
@@ -176,7 +205,13 @@ export async function getCurrentFactsFromView(dealId: string): Promise<CurrentFa
         currentSourceDocumentId: row.sourceDocumentId ?? undefined,
         currentConfidence: row.sourceConfidence,
         currentTruthConfidence: row.truthConfidence ?? undefined,
-        isDisputed: false, // View doesn't track disputes yet
+        isDisputed: disputeEvent !== undefined,
+        disputeDetails: disputeEvent
+          ? {
+              conflictingValue: disputeEvent.value,
+              conflictingSource: disputeEvent.source as FactSource,
+            }
+          : undefined,
         eventHistory: [], // View doesn't include history
         firstSeenAt: row.createdAt,
         lastUpdatedAt: row.createdAt,
@@ -303,7 +338,9 @@ export async function getCurrentFacts(dealId: string): Promise<CurrentFact[]> {
     }
 
     // Check if there's a dispute
-    const disputeEvent = factEvents.find((e) => e.eventType === 'DISPUTED');
+    const disputeEvent = factEvents.find(
+      (e) => e.eventType === 'PENDING_REVIEW' || e.eventType === 'DISPUTED'
+    );
     const isDisputed = disputeEvent !== undefined;
 
     // Get dispute details if disputed

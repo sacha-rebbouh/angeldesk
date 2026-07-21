@@ -18,6 +18,7 @@ import type {
   NewsArticle,
   DataSource,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // TYPES
@@ -384,34 +385,6 @@ function matchesSector(dealSector: string, querySector: string): boolean {
   return false;
 }
 
-function calculateValuationMultiple(
-  amount: number,
-  stage: string
-): number | undefined {
-  // Rough estimate based on typical dilution per stage
-  const dilutionByStage: Record<string, number> = {
-    "pre-seed": 0.15,
-    "seed": 0.20,
-    "series a": 0.20,
-    "series b": 0.15,
-    "series c": 0.12,
-    "series d": 0.10,
-    "series e": 0.08,
-    "series f": 0.06,
-    "growth": 0.05,
-  };
-
-  const stageLower = stage.toLowerCase();
-  const dilution = dilutionByStage[stageLower];
-
-  if (!dilution) return undefined;
-
-  // Post-money valuation = amount / dilution
-  // Assume ARR = post-money / 20 (rough SaaS multiple)
-  // Return the implied ARR multiple
-  return 20; // Simplified - would need actual ARR data
-}
-
 // ============================================================================
 // CONNECTOR IMPLEMENTATION
 // ============================================================================
@@ -458,8 +431,11 @@ export const eldoradoConnector: Connector = {
       stage: deal.stage,
       geography: "France",
       fundingAmount: deal.amount,
+      currency: "EUR",
       fundingDate: deal.date,
-      valuationMultiple: calculateValuationMultiple(deal.amount, deal.stage),
+      // Pas de valuationMultiple : aucune donnée ARR réelle dans ce dataset
+      // (l'ancien helper retournait une constante 20 fabriquée).
+      valuationMultiple: undefined,
       investors: deal.investors,
       source: {
         ...eldoradoSource,
@@ -485,7 +461,7 @@ export const eldoradoConnector: Connector = {
     }
 
     return matches.slice(0, 5).map(deal => ({
-      title: `${deal.companyName} raises €${(deal.amount / 1_000_000).toFixed(1)}M ${deal.stage}`,
+      title: `${deal.companyName} raises ${formatContextMoney(deal.amount, "EUR")} ${deal.stage}`,
       description: `${deal.description || deal.sector}. Investors: ${deal.investors.join(", ")}`,
       url: `https://eldorado.co/company/${normalizeForSearch(deal.companyName)}`,
       source: "Eldorado.co",
@@ -671,6 +647,6 @@ export function assessFundingRound(
     percentile,
     assessment,
     comparables: deals.slice(0, 5).map(d => d.companyName),
-    marketContext: `Based on ${stats.count} ${sector} ${stage} deals in France. Median: €${(stats.medianAmount / 1_000_000).toFixed(1)}M`,
+    marketContext: `Based on ${stats.count} ${sector} ${stage} deals in France. Median: ${formatContextMoney(stats.medianAmount, "EUR")}`,
   };
 }

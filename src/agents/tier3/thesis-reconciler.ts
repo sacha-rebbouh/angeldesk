@@ -75,7 +75,6 @@ type DeterministicGuardrails = {
   blockers: Array<{
     agentName: string;
     reason: string;
-    recommendation?: string;
   }>;
   challenges: DeterministicChallenge[];
   verdictFloor?: ThesisVerdict;
@@ -302,9 +301,10 @@ LANGUE: Francais.`;
       const summary: string[] = [];
       summary.push(`### ${agentName}`);
 
-      // Score
-      const score = (data.score as { value?: number } | undefined)?.value;
-      if (typeof score === "number") summary.push(`Score: ${score}/100`);
+      // Le contexte LLM exclut toute appréciation numérique agrégée ;
+      // l'intensité de signal suffit à résumer l'état analytique de l'agent.
+      const intensity = data.signalIntensity;
+      if (typeof intensity === "string") summary.push(`Intensite des signaux: ${intensity}`);
 
       // Narrative / oneLiner
       const narrative = data.narrative as { oneLiner?: string; summary?: string } | undefined;
@@ -369,7 +369,6 @@ LANGUE: Francais.`;
         blockers.push({
           agentName,
           reason,
-          recommendation: alertSignal.recommendation,
         });
         this.pushDeterministicChallenge(
           challenges,

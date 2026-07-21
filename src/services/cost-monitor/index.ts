@@ -468,11 +468,84 @@ class CostMonitor {
     const current = this.resolveAccumulator(options.analysisId, {
       allowMonoAnalysisFallback: !callerProvidedAnalysisId,
     });
-    if (!current) {
+    if (!current && !options.analysisId) {
       return null;
     }
 
-    const { analysisId, dealId, type, startTime, calls } = current;
+    const analysisId = current?.analysisId ?? options.analysisId!;
+    let dealId = current?.dealId;
+    let type = current?.type;
+    let startTime = current?.startTime;
+    let calls: Array<
+      Pick<AnalysisAccumulator["calls"][number], "model" | "agent" | "inputTokens" | "outputTokens" | "cost">
+    > = current?.calls ?? [];
+
+    if (callerProvidedAnalysisId) {
+      // Les invocations stepwise ne partagent pas leur Map mémoire. Pour un
+      // analysisId explicite, LLMCallLog permet de détecter un accumulateur vide
+      // ou incomplet et de reconstruire le rapport depuis la source durable.
+      try {
+        const durableCalls = await prisma.lLMCallLog.findMany({
+          where: { analysisId },
+          select: {
+            model: true,
+            provider: true,
+            agentName: true,
+            inputTokens: true,
+            outputTokens: true,
+            cost: true,
+          },
+          orderBy: { createdAt: "asc" },
+        });
+
+        if (!current && durableCalls.length === 0) {
+          return null;
+        }
+
+        if (durableCalls.length > calls.length) {
+          calls = durableCalls.map((call) => ({
+            model: call.model,
+            agent: call.agentName,
+            inputTokens: call.inputTokens,
+            outputTokens: call.outputTokens,
+            cost: Number(call.cost),
+          }));
+        }
+
+        if (!current) {
+          const durableAnalysis = await prisma.analysis.findUnique({
+            where: { id: analysisId },
+            select: {
+              dealId: true,
+              mode: true,
+              type: true,
+              startedAt: true,
+              createdAt: true,
+            },
+          });
+          if (!durableAnalysis) {
+            return null;
+          }
+
+          dealId = durableAnalysis.dealId;
+          type = durableAnalysis.mode ?? durableAnalysis.type.toLowerCase();
+          startTime = (durableAnalysis.startedAt ?? durableAnalysis.createdAt).getTime();
+        }
+      } catch (error) {
+        logger.warn(
+          { err: error, analysisId },
+          "Failed to rebuild analysis cost report from LLMCallLog"
+        );
+        if (!current) {
+          return null;
+        }
+      }
+    }
+
+    if (!dealId || !type || startTime === undefined) {
+      return null;
+    }
+
     const duration = Date.now() - startTime;
 
     // Aggregate by model

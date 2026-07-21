@@ -15,6 +15,11 @@
  */
 
 import type { EnrichedAgentContext } from "../types";
+import {
+  formatCompetitiveLandscapeAmountsForPrompt,
+  formatContextMoney,
+  formatDealIntelligenceAmountsForPrompt,
+} from "@/services/context-engine/money";
 import type { SectorExpertType, SectorExpertResult, SectorExpertData, ExtendedSectorData } from "./types";
 import { getStandardsOnlyInjection } from "./benchmark-injector";
 import { setAgentContext } from "@/services/openrouter/router";
@@ -468,16 +473,16 @@ IMPORTANT: Retourne UNIQUEMENT le JSON, sans texte avant ou apres.`;
   // Format funding DB context if available
   const fundingDbText = fundingDbContext
     ? `### Deals Comparables de la DB
-${fundingDbContext.competitors?.map(c => `- ${c.name}: ${c.totalFunding ? `€${c.totalFunding.toLocaleString()}` : "N/A"} - ${c.lastRound || "N/A"}`).join("\n") || "Pas de comparables"}
+${fundingDbContext.competitors?.map(c => `- ${c.name}: ${c.totalFunding ? formatContextMoney(c.totalFunding, c.currency) : "N/A"} - ${c.lastRound || "N/A"}`).join("\n") || "Pas de comparables"}
 ${fundingDbContext.sectorBenchmarks ? `\nBenchmarks secteur: ${JSON.stringify(fundingDbContext.sectorBenchmarks, null, 2)}` : ""}`
     : "Pas de donnees de comparables disponibles";
 
   // Format context engine data if available
   const contextEngineText = contextEngine?.dealIntelligence || contextEngine?.marketData || contextEngine?.competitiveLandscape
     ? `### Context Engine Data
-${contextEngine.dealIntelligence ? `Deal Intelligence: ${JSON.stringify(contextEngine.dealIntelligence, null, 2)}` : ""}
+${contextEngine.dealIntelligence ? `Deal Intelligence: ${JSON.stringify(formatDealIntelligenceAmountsForPrompt(contextEngine.dealIntelligence), null, 2)}` : ""}
 ${contextEngine.marketData ? `Market Data: ${JSON.stringify(contextEngine.marketData, null, 2)}` : ""}
-${contextEngine.competitiveLandscape ? `Competitive Landscape: ${JSON.stringify(contextEngine.competitiveLandscape, null, 2)}` : ""}`
+${contextEngine.competitiveLandscape ? `Competitive Landscape: ${JSON.stringify(formatCompetitiveLandscapeAmountsForPrompt(contextEngine.competitiveLandscape), null, 2)}` : ""}`
     : "Pas de donnees Context Engine disponibles";
 
   // Get extracted text from documents

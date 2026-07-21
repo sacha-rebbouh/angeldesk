@@ -16,6 +16,7 @@ import type {
   DataSource,
   NewsArticle,
 } from "../types";
+import { formatContextMoney } from "../money";
 
 // ============================================================================
 // TYPES
@@ -31,6 +32,13 @@ interface SeedtableStartup {
   geography: string;
   website: string | null;
   investors: string[];
+}
+
+/** Records without a funding date cannot back dated news or similar deals. */
+export function hasKnownFundingDate<T extends { fundingDate: string | null }>(
+  startup: T
+): startup is T & { fundingDate: string } {
+  return typeof startup.fundingDate === "string" && startup.fundingDate.trim().length > 0;
 }
 
 // ============================================================================
@@ -503,12 +511,12 @@ export const seedtableConnector: Connector = {
       filtered = filtered.filter(s => matchesSector(s, query.sector!));
     }
 
-    return filtered.slice(0, 15).map(startup => ({
+    return filtered.filter(hasKnownFundingDate).slice(0, 15).map(startup => ({
       title: `${startup.name} - ${startup.stage} (${startup.geography})`,
-      description: `${startup.description}. Raised €${startup.fundingAmount ? (startup.fundingAmount / 1_000_000).toFixed(0) : "?"}M. Investors: ${startup.investors.slice(0, 3).join(", ")}`,
+      description: `${startup.description}. Raised ${startup.fundingAmount ? formatContextMoney(startup.fundingAmount) : "an undisclosed amount"}. Investors: ${startup.investors.slice(0, 3).join(", ")}`,
       url: startup.website || "https://seedtable.com",
       source: "Seedtable",
-      publishedAt: startup.fundingDate || new Date().toISOString(),
+      publishedAt: startup.fundingDate,
       sentiment: "positive" as const,
       relevance: query.companyName ? 0.95 : 0.8,
       category: "company" as const,
@@ -535,6 +543,7 @@ export const seedtableConnector: Connector = {
     }
 
     return filtered
+      .filter(hasKnownFundingDate)
       .filter(s => s.fundingAmount !== null)
       .slice(0, 30)
       .map(startup => ({
@@ -543,7 +552,7 @@ export const seedtableConnector: Connector = {
         subSector: startup.description.slice(0, 50),
         stage: startup.stage,
         fundingAmount: startup.fundingAmount!,
-        fundingDate: startup.fundingDate || new Date().toISOString(),
+        fundingDate: startup.fundingDate,
         investors: startup.investors,
         geography: startup.geography,
         source: seedtableSource,

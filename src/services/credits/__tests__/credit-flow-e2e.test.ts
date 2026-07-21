@@ -486,7 +486,9 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
     expect(getBalance()).toBe(92);
 
     // Bot deploy fails → refund
-    await refundCredits(USER, 'LIVE_COACHING', DEAL);
+    await refundCredits(USER, 'LIVE_COACHING', DEAL, {
+      idempotencyKey: 'refund:LIVE_COACHING:failed-action',
+    });
     expect(getBalance()).toBe(100);
 
     // Transaction log should show deduction then refund
@@ -585,11 +587,15 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
     expect(getBalance()).toBe(95);
 
     // Refund once → 100
-    await refundCredits(USER, 'DEEP_DIVE', DEAL);
+    await refundCredits(USER, 'DEEP_DIVE', DEAL, {
+      idempotencyKey: 'refund:DEEP_DIVE:single-action',
+    });
     expect(getBalance()).toBe(100);
 
     // Refund again (double refund scenario — idempotence check prevents over-refund)
-    await refundCredits(USER, 'DEEP_DIVE', DEAL);
+    await refundCredits(USER, 'DEEP_DIVE', DEAL, {
+      idempotencyKey: 'refund:DEEP_DIVE:single-action',
+    });
     expect(getBalance()).toBe(100); // Stays at 100 — second refund is correctly skipped
   });
 
@@ -657,7 +663,9 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
     // Board deducted...
     await deductCredits(USER, 'AI_BOARD', 'deal_C');         // -10 → 56
     // ...but Board crashed → refund
-    await refundCredits(USER, 'AI_BOARD', 'deal_C');         // +10 → 66
+    await refundCredits(USER, 'AI_BOARD', 'deal_C', {
+      idempotencyKey: 'refund:AI_BOARD:deal_C:first-attempt',
+    });                                                      // +10 → 66
     // Retry Board → success
     await deductCredits(USER, 'AI_BOARD', 'deal_C');         // -10 → 56
 
@@ -748,7 +756,9 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
       expect(getBalance()).toBe(95);
 
       // orchestrator.runAnalysis() throws → .catch() refunds
-      await refundCredits(USER, 'DEEP_DIVE', DEAL);
+      await refundCredits(USER, 'DEEP_DIVE', DEAL, {
+        idempotencyKey: 'refund:DEEP_DIVE:route-crash',
+      });
       expect(getBalance()).toBe(100);
     });
 
@@ -758,7 +768,9 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
       expect(getBalance()).toBe(90);
 
       // BoardOrchestrator throws → refundCredit()
-      await refundCredits(USER, 'AI_BOARD', DEAL);
+      await refundCredits(USER, 'AI_BOARD', DEAL, {
+        idempotencyKey: 'refund:AI_BOARD:route-crash',
+      });
       expect(getBalance()).toBe(100);
     });
 
@@ -768,7 +780,9 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
       expect(getBalance()).toBe(92);
 
       // createBot() throws → refundCredits()
-      await refundCredits(USER, 'LIVE_COACHING', DEAL);
+      await refundCredits(USER, 'LIVE_COACHING', DEAL, {
+        idempotencyKey: 'refund:LIVE_COACHING:route-crash',
+      });
       expect(getBalance()).toBe(100);
     });
 
@@ -778,19 +792,25 @@ describe('Credit Flow E2E — 100 credits full lifecycle', () => {
       expect(getBalance()).toBe(97);
 
       // triggerTargetedReanalysis() throws → refundCredits()
-      await refundCredits(USER, 'RE_ANALYSIS', DEAL);
+      await refundCredits(USER, 'RE_ANALYSIS', DEAL, {
+        idempotencyKey: 'refund:RE_ANALYSIS:route-crash',
+      });
       expect(getBalance()).toBe(100);
     });
 
     it('Chat refund is a no-op (cost = 0)', async () => {
       await setupUser();
-      await refundCredits(USER, 'CHAT', DEAL);
+      await refundCredits(USER, 'CHAT', DEAL, {
+        idempotencyKey: 'refund:CHAT:route-noop',
+      });
       expect(getBalance()).toBe(100); // No change
     });
 
     it('PDF refund is a no-op (cost = 0)', async () => {
       await setupUser();
-      await refundCredits(USER, 'PDF_EXPORT', DEAL);
+      await refundCredits(USER, 'PDF_EXPORT', DEAL, {
+        idempotencyKey: 'refund:PDF_EXPORT:route-noop',
+      });
       expect(getBalance()).toBe(100); // No change
     });
   });

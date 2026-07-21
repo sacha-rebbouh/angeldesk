@@ -25,6 +25,8 @@ import type {
   WebsiteContent,
   SourceHealth,
 } from "./types";
+import { buildDealIntelligence } from "./deal-intelligence";
+import { filterCompetitorsByCategoryRelevance } from "./competitor-relevance";
 import { crawlWebsite } from "./connectors/website-crawler";
 import { resolveWebsiteUrl } from "./website-resolver";
 import { newsApiConnector } from "./connectors/news-api";
@@ -484,10 +486,15 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
     await fetchSimilarDealsParallel(query, configuredConnectors);
   const { marketData, results: marketResults } =
     await fetchMarketDataParallel(query, configuredConnectors);
-  const { competitors, results: competitorResults } =
+  const { competitors: rawCompetitors, results: competitorResults } =
     await fetchCompetitorsParallel(query, configuredConnectors);
   const { news, results: newsResults } =
     await fetchNewsParallel(query, configuredConnectors);
+
+  // Check de pertinence catégorie AVANT restitution : les connecteurs statiques
+  // matchent par secteur et ne produisent pas de vrais concurrents (cf.
+  // competitor-relevance.ts). Suppression des hors-catégorie, pas de « peut-être ».
+  const competitors = await filterCompetitorsByCategoryRelevance(rawCompetitors, query);
 
   // =========================================================================
   // AGGREGATE METRICS
@@ -572,7 +579,7 @@ async function computeDealContext(query: ConnectorQuery): Promise<DealContext> {
     dealIntelligence,
     marketData: marketData || undefined,
     competitiveLandscape: competitors.length > 0
-      ? { competitors, marketConcentration: "moderate", competitiveAdvantages: [], competitiveRisks: [] }
+      ? { competitors, competitiveAdvantages: [], competitiveRisks: [] }
       : undefined,
     newsSentiment,
     enrichedAt: new Date().toISOString(),
@@ -1079,51 +1086,6 @@ export {
 
 // NOTE: Old sequential gather functions removed in favor of parallel-fetcher.ts
 // which provides: circuit breaker, retry with backoff, individual timeouts
-
-function buildDealIntelligence(
-  deals: SimilarDeal[],
-  _query: ConnectorQuery
-): import("./types").DealIntelligence {
-  void _query;
-  // Calculate statistics from similar deals
-  const multiples = deals
-    .map((d) => d.valuationMultiple)
-    .filter((m): m is number => m !== undefined)
-    .sort((a, b) => a - b);
-
-  const median = multiples.length > 0
-    ? multiples[Math.floor(multiples.length / 2)]
-    : 20;
-
-  const p25 = multiples.length > 3
-    ? multiples[Math.floor(multiples.length * 0.25)]
-    : median * 0.7;
-
-  const p75 = multiples.length > 3
-    ? multiples[Math.floor(multiples.length * 0.75)]
-    : median * 1.3;
-
-  return {
-    similarDeals: deals.slice(0, 10), // Top 10
-    fundingContext: {
-      totalDealsInPeriod: deals.length,
-      medianValuationMultiple: median,
-      p25ValuationMultiple: p25,
-      p75ValuationMultiple: p75,
-      trend: "stable",
-      trendPercentage: 0,
-      downRoundCount: 0,
-      period: "Last 12 months",
-    },
-    percentileRank: 50, // Would need current deal valuation to calculate
-    fairValueRange: {
-      low: 0,
-      high: 0,
-      currency: "EUR",
-    },
-    verdict: "fair",
-  };
-}
 
 function buildNewsSentiment(news: NewsArticle[]): import("./types").NewsSentiment {
   // Calculate overall sentiment

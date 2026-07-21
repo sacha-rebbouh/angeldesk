@@ -1,185 +1,90 @@
 # Angel Desk — Product Overview
 
-Angel Desk est une plateforme d'intelligence d'investissement par IA. Elle transforme un pitch deck en une due diligence complète — quarante-quatre agents orchestrés en quatre tiers d'analyse, vingt-deux experts sectoriels, un comité d'investissement virtuel composé de quatre modèles d'IA en débat, et un coaching temps réel pendant les appels avec les fondateurs. L'analyse qu'un fonds VC ferait faire à un analyste senior pendant deux jours, en une heure, et pour une fraction du coût.
+> Angel Desk est le copilote analytique des investisseurs privés qui doivent décider avec rigueur, sans infrastructure d'analyse lourde. Il transforme documents, déclarations des fondateurs et échanges en signaux sourcés, contradictions visibles, zones d'incertitude et questions prioritaires. La décision reste à l'investisseur.
 
-Ce n'est pas un outil qui traite de la data. C'est un partenaire qui réagit, rebondit, accompagne, et coache — de la première lecture du deck jusqu'à la négociation des termes.
+Angel Desk ne remplace pas le jugement de l'investisseur. Il augmente sa capacité à raisonner sous incertitude. Le produit organise une trace analytique défendable autour d'un dossier et rend explicite ce qui est établi, contesté, incomplet ou à clarifier.
 
----
+## Pour qui
 
-## L'IA augmentée
+Le cœur du produit est conçu pour les équipes d'investissement légères : responsables d'investissement de micro-fonds, chefs de syndicat structurés, angel clubs, family offices directs, petits fonds et équipes M&A légères.
 
-Tout le monde peut utiliser l'IA. La différence entre Angel Desk et un investisseur qui envoie son deck à ChatGPT tient en un mot : **fiabilité**.
+**Pauline est la persona principale.** Responsable d'investissement dans un micro-fonds ou chef de syndicat structuré, elle traite 100 à 200 dossiers par an, prépare des mémos défendables et justifie ses raisonnements devant associés, co-investisseurs ou LPs. Elle pilote l'essai et porte le besoin auprès de l'équipe qui arbitre l'achat.
 
-Un modèle de langage interrogé seul produit une réponse enthousiaste. Il dit oui. Il suit le framing du fondateur. Il invente des chiffres quand il n'en a pas. Il ne dit jamais qu'il ne sait pas — parce que personne ne lui a dit que se tromper coûte plus cher que se taire.
+**Marie est une porte d'entrée secondaire.** Business Angel expérimenté, elle peut découvrir le produit dans un parcours Starter. Elle ne définit pas le centre stratégique. Le Business Angel novice qui consacre quelques heures par semaine à cette activité est exclu du centre de conception : une restitution trop simplifiée risquerait de transformer le copilote en oracle.
 
-Angel Desk repose sur une discipline que nous appelons l'IA augmentée — une optimisation systématique des capacités de l'IA mise au service de l'investissement. Chaque agent est soumis à cinq directives anti-hallucination calibrées sur la recherche du coût asymétrique des erreurs. Chaque donnée extraite d'un deck est classifiée selon six niveaux de fiabilité — de l'information auditée par un tiers jusqu'à la projection invérifiable — et le modèle sait qu'il ne doit pas traiter un chiffre déclaré par le fondateur comme un fait établi. Chaque score est calculé par une formule déterministe, pas par un jugement du modèle — ce qui garantit la reproductibilité. Et chaque affirmation est sourcée, ou explicitement marquée comme non vérifiée.
+## Raisonner sous incertitude
 
-Ce sont des centaines de réglages, maintenus dans plus de soixante fichiers, personnalisés par modèle et par agent. Aucun d'entre eux n'est révolutionnaire pris isolément. Mis bout à bout, ils sont la différence entre un résultat générique et une intelligence fiable.
+Angel Desk part d'une contrainte simple : un dossier d'investissement contient des faits, des déclarations, des projections, des omissions et des documents de fraîcheur inégale. Une réponse utile doit conserver ces différences au lieu de les aplatir.
 
----
+Le produit vise donc à rendre observables quatre effets :
 
-## L'architecture en quatre tiers
+- les affirmations factuelles critiques sont rattachées à une source, à une date connue ou à une absence de date explicitée, et à une fiabilité documentaire ;
+- les contradictions entre documents, analyses et déclarations des fondateurs sont exposées ;
+- les zones d'incertitude et les limites de couverture restent visibles ;
+- les questions prioritaires relient chaque point à clarifier aux éléments qui le motivent.
 
-L'analyse se déploie en couches successives. Chaque tier enrichit le suivant.
+Les garde-fous de prompt imposent notamment l'abstention lorsque la donnée manque, la citation des éléments critiques, l'auto-relecture et une expression structurée de l'incertitude. Ils réduisent certains risques ; ils ne garantissent pas qu'une sortie soit vraie.
 
-### Tier 0 — Extraction et classification
+## Restitution analytique
 
-Avant toute analyse, chaque donnée du deck est extraite, structurée, et classifiée. Les métriques financières, les claims du fondateur, les données d'équipe, de produit, de marché — tout est identifié et étiqueté par niveau de fiabilité. Si le deck a été rédigé en septembre et prétend montrer des résultats annuels, le système détecte automatiquement que les quatre derniers mois sont des projections, pas des faits. Ce travail d'extraction constitue le socle factuel sur lequel tout le reste s'appuie.
+La synthèse repose sur deux axes verbaux indépendants :
 
-### Tier 1 — Treize analyses parallèles
+| Axe | Valeurs | Lecture |
+|---|---|---|
+| **Orientation du signal** | favorable / contrasté / alerte / non exploitable | Synthèse justifiée de l'intensité des signaux et de la couverture par dimension |
+| **Solidité des preuves** | solide / partielle / contradictoire / insuffisante | Dérivation TypeScript déterministe à partir de la provenance, de la fraîcheur, des contradictions, de la couverture et de la fiabilité des sources |
 
-Treize agents spécialisés sont lancés simultanément, chacun avec un mandat précis :
+Cette séparation distingue une tendance favorable peu étayée d'une alerte solidement documentée. `non exploitable` décrit une limite de couverture explicite — par exemple un document critique absent, une extraction trop faible, des sources incompatibles ou l'échec d'une analyse essentielle — et non une conclusion par défaut.
 
-**L'audit financier** déconstruit les métriques : revenus, unit economics, burn rate, multiples de valorisation, projections. Il compare chaque chiffre aux benchmarks de la base de données interne — plus de mille cinq cents deals avec des métriques réelles. Si le fondateur annonce un ARR de 500K€ avec une valorisation de 15M€, l'agent calcule le multiple implicite et le positionne contre les percentiles du marché.
+La restitution met ensuite en avant les dimensions analysées, les sources, les contradictions, les incertitudes et les questions. L'orientation n'est jamais dérivée d'une appréciation numérique cachée.
 
-**L'investigation équipe** explore le parcours des fondateurs : expériences précédentes, complémentarité, gaps dans l'équipe, conflits d'intérêt potentiels, exits antérieurs. Le profil LinkedIn du fondateur n'est pas pris pour argent comptant — il est croisé avec les données du Context Engine.
+## Capacités produit
 
-**La cartographie concurrentielle** identifie les concurrents que le fondateur mentionne — et surtout ceux qu'il omet. Si la base de données contient trois concurrents directs que le deck ne mentionne pas, c'est un red flag d'omission immédiatement remonté.
+### Construire le socle documentaire
 
-**L'analyse de marché** valide les claims de TAM/SAM/SOM, évalue le timing du marché, et croise avec les tendances de funding du secteur. L'agent ne se contente pas de répéter les chiffres du fondateur — il les confronte aux données disponibles.
+Le dossier rassemble les documents transmis, les déclarations des fondateurs et les échanges. L'extraction structure les éléments financiers, d'équipe, de produit et de marché. Leur fiabilité est qualifiée selon six niveaux, de `AUDITED` à `UNVERIFIABLE`, et leur temporalité distingue notamment données actuelles et projections.
 
-Les neuf autres agents couvrent la due diligence technique (stack et maturité opérationnelle, séparés en deux agents pour l'efficacité), les risques juridiques et réglementaires, la stratégie de sortie et les comparables d'exit, la stratégie go-to-market, l'intelligence client, l'audit de cap table et de dilution, et la consolidation des questions à poser au fondateur.
+Lorsque le contexte existe, les analyses rapprochent les affirmations du dossier de documents connexes, de références externes et de dossiers comparables. Une source externe ne vaut pas automatiquement preuve : sa provenance, sa date, sa devise et la pertinence de la comparaison doivent rester explicites.
 
-### Tier 2 — L'expert sectoriel
+<!-- TODO à vérifier : resynchroniser avant toute diffusion les connecteurs réellement actifs et le volume courant de la base de dossiers comparables ; les anciens chiffres ne sont pas assez stables pour constituer un claim. -->
 
-Après les analyses horizontales du Tier 1, un expert sectoriel est mobilisé parmi vingt-deux spécialités : SaaS, FinTech, HealthTech, AI, Climate, Biotech, DeepTech, Consumer, Hardware, Gaming, Blockchain, EdTech, PropTech, Mobility, FoodTech, HRTech, LegalTech, Cybersecurity, SpaceTech, Creator Economy — et un expert généraliste pour les secteurs non couverts.
+### Croiser des lentilles complémentaires
 
-Chaque expert évalue le deal contre les benchmarks spécifiques de son industrie. Un expert SaaS regarde la Rule of 40, le NRR, le CAC payback, le magic number. Un expert FinTech examine les multiples fintech, le take rate, la conformité réglementaire. Un expert HealthTech évalue les timelines FDA/CE, les risques de clinical trials.
+Les analyses transverses couvrent notamment les dimensions financière, équipe, marché, concurrence, technologie, opérations, juridique, stratégie commerciale, clients et cap table. Une lentille sectorielle spécialisée est activée lorsque le secteur est couvert ; un fallback général structuré prend le relais dans les autres cas.
 
-Aucun analyste humain n'est expert dans vingt-deux secteurs simultanément. C'est une capacité surhumaine en termes de breadth — et c'est précisément ce dont un investisseur généraliste a besoin.
+La couche de synthèse rapproche les constats, détecte leurs contradictions, challenge les hypothèses fragiles et prépare un mémo structuré. L'analyse des conditions et de la dilution, les éléments de négociation et les questions fondateur sont présentés comme matériaux de raisonnement. L'investisseur reste responsable de leur interprétation et de leur usage.
 
-### Tier 3 — Synthèse et challenge
+### Confronter plusieurs lectures
 
-La dernière couche croise tout ce qui précède :
+Le débat multi-modèle met d'abord en regard des lectures indépendantes, puis confronte leurs hypothèses et leurs preuves. Les convergences ne sont pas assimilées à une vérité. Les divergences persistantes sont conservées comme signaux à examiner, avec les arguments qui les soutiennent.
 
-**Le détecteur de contradictions** identifie les incohérences entre les conclusions des agents du Tier 1. Si l'audit financier estime l'ARR à 500K€ mais que l'analyse de marché cite 800K€ — un écart de 60% — la contradiction est détectée, classifiée par sévérité, et si elle est critique, résolue par le Consensus Engine via un débat structuré entre agents avec hiérarchie de sources.
+<!-- TODO à vérifier : resynchroniser la liste des modèles et les règles de routage avec la configuration runtime avant de les citer dans une surface externe. -->
 
-**Le devil's advocate** challenge systématiquement la thèse haussière. Tout ce qui semble positif est stress-testé. Les hypothèses sont questionnées. Les incentives du fondateur sont examinées. Si le deal paraît trop beau, c'est précisément le moment où la vigilance doit augmenter.
+### Vérifier les preuves pendant l'appel
 
-**Le modélisateur de scénarios** construit trois trajectoires — base, bull, bear — avec des outcomes chiffrés : exit value, multiples, timeframes, analyse de sensibilité.
+Pendant un échange avec un fondateur, le produit peut faire remonter une contradiction entre présentation et déclaration, un benchmark daté à recontextualiser, une information nouvelle ou une question prioritaire. L'investisseur conduit la conversation ; le système apporte le contexte du dossier au moment où il devient utile.
 
-**L'analyseur de conditions** décortique le term sheet : valorisation, instrument financier, dilution, vesting, gouvernance, droits de protection. Chaque clause est comparée aux standards du marché et positionnée par rapport aux benchmarks de la base de données.
+Un rapport post-call structure les éléments recueillis. Les informations nouvelles peuvent alimenter une nouvelle lecture ciblée du dossier selon le parcours suivi.
 
-**Le générateur de mémo** produit un document d'investissement structuré — executive summary, company overview, investment highlights, key risks, financial summary, team assessment, market opportunity, competitive landscape, terms analysis, exit strategy, questions pour le fondateur. Un mémo de qualité institutionnelle — le type de livrable qu'un cabinet de conseil facturerait des dizaines de milliers d'euros.
+<!-- TODO à vérifier : mesurer la latence de bout en bout et confirmer les conditions exactes de relance post-call avant toute promesse chiffrée ou formulation d'automatisme. -->
 
----
+### Maintenir une trace vivante
 
-## Le Board AI — La sublimation
+Le dossier évolue à mesure que de nouveaux documents, réponses ou échanges sont intégrés. Les contradictions peuvent apparaître ou se résoudre ; les questions ouvertes persistent ; les changements doivent pouvoir être reliés à une preuve nouvelle ou à une évolution méthodologique tracée.
 
-Le Board AI est l'incarnation du concept fondateur d'Angel Desk : l'IA ne se dépasse que lorsqu'elle est contrainte.
+Le chat contextuel permet d'explorer un point du dossier à partir des documents et analyses pertinents. Les sorties incluent un mémo, un rapport PDF structuré et des interfaces REST et webhooks pour intégrer la trace analytique aux workflows existants.
 
-Quatre modèles d'IA — **Claude** (Anthropic), **GPT-4o** (OpenAI), **Gemini** (Google), **Grok** (xAI) — sont mis face à face dans un débat structuré sur le deal. Le processus se déroule en trois phases.
+## Architecture de support
 
-**Phase 1 — Analyse indépendante.** Chaque modèle analyse le deal séparément, sans voir les positions des autres. Il forme un verdict et le défend avec des preuves.
+L'architecture en 4 couches intervient en dernier dans le récit produit :
 
-**Phase 2 — Débat multi-rounds.** Les modèles voient les verdicts des autres et répondent. Ils peuvent changer de position s'ils sont convaincus par les preuves. Ils doivent défendre leurs divergences avec des données. Le débat continue sur plusieurs rounds jusqu'à convergence — ou jusqu'à ce que les désaccords soient clairement documentés.
+1. **Extraction et qualification** — structurer les documents, leur provenance, leur fraîcheur et leur fiabilité.
+2. **Analyses transverses** — examiner le dossier sous des lentilles complémentaires exécutées en parallèle selon le parcours.
+3. **Expertise sectorielle** — activer une lentille spécialisée ou un fallback général structuré.
+4. **Synthèse et challenge** — rapprocher constats, contradictions, conditions, questions et mémo.
 
-**Phase 3 — Vote final.** Un vote basé sur les outcomes du débat produit une recommandation agrégée. Les positions minoritaires sont documentées — un désaccord persistant est souvent plus informatif qu'un consensus facile.
-
-Ce n'est pas quatre avis juxtaposés. C'est une délibération. La pression du débat élimine la complaisance. Les hallucinations survivent rarement à quatre regards croisés. Le consensus qui en émerge est structurellement plus fiable qu'un avis unique. C'est la théorie des groupes appliquée à l'IA — ce que nous appelons la **sublimation** : pousser l'IA au-delà de ce qu'elle ne se serait poussée si elle avait été interrogée seule.
-
----
-
-## Le Live Coaching
-
-Angel Desk n'est pas un rapport que l'on consulte après coup. C'est un partenaire qui intervient en temps réel.
-
-Pendant un appel avec un fondateur, l'investisseur reçoit des **coaching cards** en réaction directe à ce qui est dit :
-
-- **Contradictions** — Le fondateur annonce un churn de 2% mensuel. L'audit financier avait estimé 5% à partir des données du deck. La carte apparaît en moins de huit secondes avec la comparaison et une question de suivi à poser.
-
-- **Benchmarks** — Le fondateur affirme que son take rate de 15% est standard pour son marché. L'expert marketplace a identifié un benchmark médian à 8-10%. La carte le signale.
-
-- **Questions critiques** — Le fondateur évoque un pivot récent. L'agent détecte que cette information n'apparaît nulle part dans le deck et génère trois questions de suivi prioritaires.
-
-- **Nouvelles informations** — Le fondateur mentionne un contrat enterprise signé la semaine dernière. L'information est captée, classifiée, et signalée comme donnée significative non couverte par l'analyse initiale.
-
-Le pipeline combine la transcription audio en temps réel, l'analyse visuelle des slides partagées pendant l'appel, et le contexte complet de la due diligence déjà réalisée. Le tout dans un budget de latence de huit secondes — un hard timeout qui garantit que les suggestions arrivent pendant que le sujet est encore à l'écran, pas trois minutes après.
-
-Après l'appel, un **rapport post-call** synthétise tout : les points clés, les nouvelles informations, les contradictions détectées, les questions restantes, le delta de confiance par rapport à l'analyse initiale. Et les agents impactés par les nouvelles informations sont automatiquement relancés en arrière-plan.
+Le socle technique associe Next.js et TypeScript, PostgreSQL avec Prisma, Clerk pour l'authentification, OpenRouter pour le routage des modèles, React Query pour l'état client et Vercel Blob pour le stockage. Cette architecture soutient la traçabilité et l'orchestration ; elle n'est pas la promesse principale.
 
 ---
 
-## L'analyse vivante
-
-La plupart des outils d'analyse produisent un rapport. Un livrable figé, un snapshot à l'instant T. Angel Desk produit un **organisme qui évolue avec le deal**.
-
-**V1** — Le deck est uploadé. Les quarante-quatre agents produisent la due diligence initiale. Les red flags sont identifiés. Les questions sont générées. Le score multi-dimensionnel est calculé.
-
-**V2** — Le fondateur répond aux questions. Ses réponses déclenchent une re-analyse. De nouvelles contradictions apparaissent entre ce que le deck affirmait et ce que le fondateur précise. Des red flags se résolvent — d'autres émergent. Les scores sont recalculés. Les questions non répondues persistent avec un score boosté, signalant leur importance croissante.
-
-**V3** — Le coaching en direct capte des informations que ni le deck ni les réponses écrites ne contenaient. Le rapport post-call les intègre. Les agents impactés sont relancés avec les nouvelles données. L'analyse reflète désormais tout ce que l'investisseur sait du deal — pas seulement ce que le fondateur a choisi de mettre dans ses slides.
-
-Ce paradigme crée un switching cost naturel. Après cinquante deals analysés avec leur historique complet — scores, red flags résolus et non résolus, questions persistantes, notes de coaching, rapports post-call — cette intelligence ne se transfère pas vers un autre outil. Elle est enracinée dans Angel Desk.
-
----
-
-## Le scoring multi-dimensionnel
-
-Le score d'un deal n'est pas un jugement. C'est une mesure, calculée par une formule déterministe.
-
-Cinq dimensions sont évaluées : **Team** (25%), **Market** (20%), **Product** (20%), **Financials** (20%), **Timing** (15%). Chaque agent retourne un breakdown avec des critères pondérés, des scores, et des justifications. Le score global est la somme pondérée des sous-scores, calculée par une fonction TypeScript — pas par un modèle de langage.
-
-Cette approche garantit la reproductibilité. Le même deal analysé deux fois produit le même score, ce qui n'est jamais le cas avec un scoring par jugement LLM. Et chaque score est accompagné d'un profil de signal — pas d'un verdict. Angel Desk ne dit jamais "investir" ou "ne pas investir". Il rapporte des signaux : signaux très favorables, signaux favorables, signaux contrastés, vigilance requise, signaux d'alerte dominants. L'investisseur décide.
-
----
-
-## La stratégie de négociation
-
-L'analyse ne s'arrête pas au diagnostic. Angel Desk génère une stratégie de négociation personnalisée à partir des résultats de l'audit financier, de l'audit de cap table, et du scoring global.
-
-La stratégie inclut une évaluation du rapport de force (fort, modéré, faible — avec les raisons), cinq à dix points de négociation priorisés (valorisation, termes, gouvernance, droits, protection), chacun avec la situation actuelle, le benchmark de marché, l'argument basé sur les red flags identifiés, la demande, la position de repli, et l'impact estimé. Elle inclut aussi les compromis stratégiques — ce qu'il est rationnel de céder pour obtenir quelque chose de plus important — et une projection du score du deal si tous les points de négociation étaient obtenus.
-
----
-
-## Le chat IA contextuel
-
-Le chat permet à l'investisseur de poser n'importe quelle question sur son deal et d'obtenir une réponse sourcée, tirée de l'analyse complète.
-
-Le système classifie automatiquement l'intention — clarification, comparaison, simulation, deep dive, suivi, négociation — et récupère le contexte pertinent : faits extraits, résumés d'agents, red flags, benchmarks. Chaque réponse cite ses sources (fait extrait, agent, red flag, document, benchmark, calcul). Et le niveau de détail s'adapte au profil de l'investisseur — débutant, intermédiaire, ou expert.
-
-Le chat est inclus sans limite dans tous les packs. C'est un coût négligeable pour Angel Desk et un facteur de rétention majeur — l'investisseur revient poser des questions au fur et à mesure que sa réflexion sur le deal mûrit.
-
----
-
-## Le Context Engine
-
-Chaque analyse est enrichie par des données externes issues de plus de quarante connecteurs : bases de funding (Crunchbase, Dealroom, Maddyness, TechCrunch), données fondateur (LinkedIn via API), données entreprise (Pappers, Société.com), signaux de traction (Product Hunt, App Stores, GitHub), signaux de recrutement (Welcome to the Jungle, Indeed), news (RSS TechCrunch, FrenchWeb, Sifted), listes de validation (Next40, FT120, BPI, Station F, Y Combinator), et la base interne de plus de mille cinq cents deals comparables.
-
-Ces données sont injectées dans le system prompt de chaque agent sous forme d'un contexte structuré. Quand l'agent financier analyse la valorisation, il voit les multiples médians du secteur. Quand l'agent concurrentiel cartographie le marché, il voit les concurrents identifiés dans la base. Quand l'agent équipe investigue le fondateur, il voit son profil LinkedIn enrichi et son historique de levées.
-
----
-
-## L'export PDF
-
-Angel Desk génère un rapport PDF professionnel de plus de vingt sections : page de couverture, résumé analytique, alertes précoces, décomposition des scores, findings de chaque agent du Tier 1, findings de l'expert sectoriel, synthèse complète du Tier 3 (contradictions, scoring, devil's advocate, scénarios, mémo), stratégie de négociation, questions consolidées, table des red flags.
-
-Le type de livrable qu'un cabinet de conseil facturerait des dizaines de milliers d'euros — avec une différence : chaque affirmation est sourcée, chaque score a un breakdown, et chaque red flag a une preuve, une sévérité, un impact, et une question à poser au fondateur.
-
----
-
-## L'API
-
-Angel Desk expose une API REST v1 avec des endpoints pour lister les deals, récupérer les analyses, accéder aux red flags, gérer les clés API, et configurer des webhooks sortants. Les événements couverts incluent la complétion d'une analyse, la détection d'un red flag, la fin d'un Board AI, et la fin d'une session de coaching.
-
-L'API permet aux fonds et aux équipes M&A d'intégrer Angel Desk dans leurs workflows existants — CRM, outils de reporting, data rooms, pipelines de décision.
-
----
-
-## Ce qu'Angel Desk remplace
-
-Angel Desk ne remplace pas un outil. Il remplace — ou complète — des rôles entiers :
-
-**L'analyste** — mais Angel Desk ne se contente pas de recevoir la data et de la traiter. Il réagit, il rebondit, il accompagne. Il mène une discussion, crée un lien avec le deal, ouvre différentes zones d'intervention.
-
-**Le comité d'investissement** — le Board AI met quatre intelligences en débat pour challenger la thèse, détecter les angles morts, et produire un consensus structuré.
-
-**Le coach** — le Live Coaching intervient en temps réel pendant les appels avec les fondateurs, avec le contexte complet de la due diligence déjà réalisée.
-
-**Le négociateur** — la stratégie de négociation est chiffrée, sourcée, et personnalisée à partir des faiblesses identifiées par l'analyse.
-
-La prise de décision d'investissement est multi-dimensionnelle. C'est la grande force d'Angel Desk — et c'est ce qui en fait un partenaire, pas un outil.
-
----
-
-_Angel Desk analyse et guide. L'investisseur décide._
+_Angel Desk analyse et guide. La décision reste à l'investisseur._

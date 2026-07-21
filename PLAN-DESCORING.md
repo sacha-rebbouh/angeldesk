@@ -1,6 +1,7 @@
 # PLAN — Dé-scorisation Angel Desk (« on analyse, on ne score pas »)
 
-> Statut : PLAN À VALIDER (pas une ligne de code écrite). Chantier de refonte transverse (~77 fichiers).
+> Statut au 2026-07-21 : P0→P6.2 livrés (`dd62e0a`→`79493c1` ; scrubbers complémentaires `b6bfe89` / `4b42de5`). P4 résiduel : statu quo « internalisation documentée + scrubbers + guards » (décision Sacha, 2026-07-21 ; à rouvrir seulement sur fuite détectée). P6.3 re-test prod : **PENDING** (prochaine analyse réelle).
+> Suivi opérationnel : `AUDIT-STATE.md`.
 > Construit avec : diagnostic racine Codex (run prod mort), sounding board Codex indépendant, revue adverse Codex de cette architecture. Chaque phase = une unité de gate Codex (`codex-gate-drive.sh`).
 
 ## Context — pourquoi ce chantier

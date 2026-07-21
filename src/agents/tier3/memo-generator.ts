@@ -90,16 +90,6 @@ interface LLMMemoResponse {
     confidenceLevel: number;
     limitations: string[];
   };
-  score: {
-    value: number;
-    grade: "A" | "B" | "C" | "D" | "F";
-    breakdown: {
-      criterion: string;
-      weight: number;
-      score: number;
-      justification: string;
-    }[];
-  };
   executiveSummary: {
     oneLiner: string;
     recommendation: "very_favorable" | "favorable" | "contrasted" | "vigilance" | "alert_dominant";
@@ -331,17 +321,6 @@ Réponds en JSON avec cette structure exacte:
     "dataCompleteness": "complete|partial|minimal",
     "confidenceLevel": 0-100,
     "limitations": ["limitation 1", "limitation 2"]
-  },
-  "score": {
-    "value": 0-100,
-    "grade": "A|B|C|D|F",
-    "breakdown": [
-      {"criterion": "Team", "weight": 25, "score": 0-100, "justification": "..."},
-      {"criterion": "Financials", "weight": 25, "score": 0-100, "justification": "..."},
-      {"criterion": "Market", "weight": 20, "score": 0-100, "justification": "..."},
-      {"criterion": "Product", "weight": 15, "score": 0-100, "justification": "..."},
-      {"criterion": "Traction", "weight": 15, "score": 0-100, "justification": "..."}
-    ]
   },
   "executiveSummary": {
     "oneLiner": "Une phrase mémorable avec chiffres clés",

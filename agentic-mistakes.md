@@ -27,6 +27,8 @@
 | 2026-06-12 | EXÉCUTION | `codex exec` lancé avec prompt en argument sans TTY → process gelés 0% CPU ~50 min, annoncé « ça tourne » sur la foi du statut `running` ; fix = pattern stdin/-o du gate + vérif CPU/sortie sous 30 s |
 | 2026-06-14 | COMMUNICATION | Proposé des remplacements "score-like" en question produit alors que la directive était « dégager tous les scores » (sur-généralisation Q1/Q2, sur-sollicitation) |
 | 2026-06-15 | VÉRIFICATION | Cru tsc vert via l'exit code d'un `echo` final, pas la sortie réelle (Codex a rattrapé l'échec tsc) |
+| 2026-07-20 | RECHERCHE | Évaluation venture depuis le brain Obsidian périmé (pivot ICP non ingéré) — check de fraîcheur brain vs repo manqué |
+| 2026-07-20 | RECHERCHE | Finding audit A3 sous-estimé : « chemin computé OK » affirmé sans suivre le symbole jusqu'à l'enum réellement écrit (DISPUTED jamais produit vs PENDING_REVIEW) |
 
 ---
 
@@ -225,3 +227,19 @@
 - **Comment corrigé** : Codex (gate P5-a.1) a renvoyé REQUEST_CHANGES « tsc échoue, erreur dans le cluster chat ». Re-run en lisant la sortie réelle (`tsc > f 2>&1; rc=$?; grep -c "error TS" f`) → échec confirmé, fix appliqué (route + FullChatContext + tests).
 - **Impact** : 1 round de gate gaspillé (REQUEST_CHANGES évitable). Aucun commit erroné (le gate a bloqué avant).
 - **Lesson** : pour vérifier une commande dont le STATUT compte (tsc, vitest, build), ne pas terminer la ligne par un `echo` puis lire la notification — soit lire la SORTIE réelle (fichier/stdout) et compter les erreurs, soit capturer l'exit de la commande elle-même (`cmd > f 2>&1; rc=$?`). En arrière-plan, la notification rapporte le code de la commande COMPOSITE, pas de l'étape voulue. Evidence = lire la sortie, jamais un proxy.
+
+### 2026-07-20 — RECHERCHE — Évaluation venture depuis le brain Obsidian périmé (pivot ICP non ingéré)
+- **Contexte** : session vault Perso « penser la suite » ; évaluation go/no-go d'Angel Desk dans la stratégie post-exit de Sacha, sourcée depuis `Obsidian-AngelDesk-Brain`.
+- **Erreur** : livré une grille d'évaluation fondée sur la doctrine du brain (« BA solo = 95 % de la cible », value prop « la DD d'un fonds VC en 1h ») alors que le pivot ICP du 2026-05-20 — lean investment teams / persona Pauline, BA novice exclu du centre de conception, « DD en 1h » bannie, dé-scorisation — était versionné dans `docs-doctrine/angeldesk-strategic-pivot.md` (MàJ 2026-06-14), jamais ingéré dans le brain.
+- **Cause racine du raisonnement** : traité le brain comme source fraîche sans confronter sa date de dernière MàJ (2026-05-29, affichée dans son propre `index.md`) à l'activité du repo — que j'avais pourtant consultée (git log jusqu'au 2026-06-21) pour un autre usage (mesurer le momentum). Le concept « stale claims » figure dans le CLAUDE.md du vault lui-même (§10.3 lint).
+- **Comment corrigé** : Sacha a signalé que le positionnement BA était obsolète et demandé de relire la doctrine ; lecture intégrale de `angeldesk-strategic-pivot.md`, grille corrigée (marché / willingness-to-pay / distribution réévalués), pages du vault Perso amendées.
+- **Impact** : grille initiale fausse sur sa cellule la plus lourde (marché/WTP, jugé sur la cible abandonnée) ; consignée telle quelle dans le vault Perso avant correction (amendée depuis).
+- **Lesson** : avant d'utiliser un brain/wiki comme source d'une décision, comparer sa date de dernière ingest (`index.md`/`log.md`) à l'activité récente des sources qu'il synthétise (git log, mtimes de `docs-doctrine/`, `docs-private/`). Toute activité repo postérieure à la dernière ingest = présomption de staleness → chercher les docs doctrine/spec récents avant de conclure.
+
+### 2026-07-20 — RECHERCHE — Finding audit A3 sous-estimé : « chemin computé OK » affirmé sans suivre le symbole jusqu'à sa source de vérité
+- **Contexte** : audit complet (PROMPT-AUDIT-COMPLET.md), Vague A3 fact-store. Finding F-A3.2 : `getCurrentFactsFromView` hardcode `isDisputed: false`.
+- **Erreur** : affirmé dans AUDIT-STATE que « le pipeline agents utilise le chemin computé (OK) » après avoir lu `current-facts.ts:307` (`const isDisputed = disputeEvent !== undefined`) — sans remonter à la définition de `disputeEvent`, qui ne matchait que `eventType === 'DISPUTED'`, un type que l'ingestion ne produit JAMAIS (elle crée `PENDING_REVIEW`). Les DEUX chemins de lecture étaient donc cassés, pas un seul.
+- **Cause racine du raisonnement** : vérification arrêtée à un niveau d'indirection de la conclusion — la présence du calcul a été prise pour preuve de sa correction.
+- **Comment corrigé** : Codex (implémentation du chantier A3) a signalé l'écart en livrant ; vérifié par Fable contre le code et `git log -S` (le match `'DISPUTED'` datait du commit initial du fact-store).
+- **Impact** : aucun en prod (le fix du chantier couvre les deux chemins) ; le finding aurait minimisé le périmètre du bug si l'implémenteur n'avait pas creusé.
+- **Lesson** : pour tout claim « X fonctionne », suivre chaque symbole jusqu'à sa source de vérité (ici : l'enum d'eventType réellement ÉCRIT par l'ingestion), pas seulement jusqu'au site qui le consomme. Un chemin « correct par structure » peut être mort par valeur.

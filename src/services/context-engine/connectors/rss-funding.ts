@@ -136,25 +136,31 @@ function isFundingRelated(title: string, description: string): boolean {
 /**
  * Extract funding amount from text
  */
-function extractFundingAmount(text: string): number | null {
-  // Match patterns like "$5M", "€10 million", "5 million dollars", etc.
-  const patterns = [
-    /\$(\d+(?:\.\d+)?)\s*(?:m|million)/i,
-    /€(\d+(?:\.\d+)?)\s*(?:m|million)/i,
-    /(\d+(?:\.\d+)?)\s*million\s*(?:dollars|euros|€|\$)/i,
-    /(\d+(?:\.\d+)?)\s*M€/i,
-    /(\d+(?:\.\d+)?)\s*M\$/i,
-    /(\d+)\s*million/i,
+function extractFundingAmount(text: string): { amount: number | null; currency?: string } {
+  const patterns: Array<[RegExp, string | undefined]> = [
+    [/\$(\d+(?:[.,]\d+)?)\s*(?:m|million)/i, "USD"],
+    [/€(\d+(?:[.,]\d+)?)\s*(?:m|million)/i, "EUR"],
+    [/£(\d+(?:[.,]\d+)?)\s*(?:m|million)/i, "GBP"],
+    [/(\d+(?:[.,]\d+)?)\s*million\s*(?:dollars|USD|\$)/i, "USD"],
+    [/(\d+(?:[.,]\d+)?)\s*million\s*(?:euros|EUR|€)/i, "EUR"],
+    [/(\d+(?:[.,]\d+)?)\s*million\s*(?:pounds|GBP|£)/i, "GBP"],
+    [/(\d+(?:[.,]\d+)?)\s*M€/i, "EUR"],
+    [/(\d+(?:[.,]\d+)?)\s*M\$/i, "USD"],
+    [/(\d+(?:[.,]\d+)?)\s*M£/i, "GBP"],
+    [/(\d+(?:[.,]\d+)?)\s*million/i, undefined],
   ];
 
-  for (const pattern of patterns) {
+  for (const [pattern, currency] of patterns) {
     const match = text.match(pattern);
     if (match) {
-      return parseFloat(match[1]) * 1_000_000;
+      return {
+        amount: parseFloat(match[1].replace(",", ".")) * 1_000_000,
+        currency,
+      };
     }
   }
 
-  return null;
+  return { amount: null };
 }
 
 /**
@@ -349,7 +355,9 @@ export const rssFundingConnector: Connector = {
         .filter((item) => isFundingRelated(item.title, item.description))
         .map((item) => {
           const companyName = extractCompanyName(item.title);
-          const fundingAmount = extractFundingAmount(`${item.title} ${item.description}`);
+          const { amount: fundingAmount, currency } = extractFundingAmount(
+            `${item.title} ${item.description}`
+          );
 
           if (!companyName || !fundingAmount) return null;
 
@@ -377,6 +385,7 @@ export const rssFundingConnector: Connector = {
             stage,
             geography,
             fundingAmount,
+            currency,
             fundingDate: new Date(item.pubDate).toISOString().split("T")[0],
             investors: [], // RSS doesn't reliably provide this
             source: {

@@ -19,6 +19,7 @@
  */
 
 import { BaseAgent } from "../base-agent";
+import { formatContextMoney } from "@/services/context-engine/money";
 import { severityRank } from "@/services/red-flag-dedup";
 import { CONDITIONS_ANALYST_SYSTEM_PROMPT } from "./prompts/conditions-analyst-prompt";
 import { buildEvidenceSolidityForContext } from "@/services/evidence-solidity";
@@ -379,7 +380,14 @@ export class ConditionsAnalystAgent extends BaseAgent<ConditionsAnalystData, Con
       for (const deal of similarDeals.slice(0, 5)) {
         const d = deal as Record<string, unknown>;
         const amt = d.amount ?? d.amountUsd;
-        const amtStr = typeof amt === "number" ? `€${amt.toLocaleString()}` : "montant inconnu";
+        const currency = typeof d.currency === "string"
+          ? d.currency
+          : typeof d.amountUsd === "number"
+            ? "USD"
+            : undefined;
+        const amtStr = typeof amt === "number"
+          ? formatContextMoney(amt, currency)
+          : "montant inconnu";
         lines.push(`- ${d.companyName ?? d.name ?? "?"}: ${amtStr} (${d.stage ?? "?"}, ${d.sector ?? "?"})`);
       }
     }

@@ -164,6 +164,28 @@ function stripKeys(obj: Record<string, unknown>, keys: readonly string[]): Recor
 }
 
 /**
+ * Parcours récursif : supprime toute clé de `DEEP_DEAL_NOTE_KEYS` à n'importe
+ * quelle profondeur + `recommendation` à l'intérieur de tout objet
+ * `alertSignal`. Ne recurse que dans les objets simples et les arrays. Pur.
+ * (Déclaration hoistée — `DEEP_DEAL_NOTE_KEYS` est défini plus bas, évalué à
+ * l'appel.)
+ */
+function deepStripDealNoteKeys<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((entry) => deepStripDealNoteKeys(entry)) as T;
+  if (!isRecord(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (DEEP_DEAL_NOTE_KEYS.has(key)) continue;
+    if (key === "alertSignal" && isRecord(entry)) {
+      out[key] = deepStripDealNoteKeys(stripKeys(entry, ["recommendation"]));
+      continue;
+    }
+    out[key] = deepStripDealNoteKeys(entry);
+  }
+  return out as T;
+}
+
+/**
  * Retire les champs de NOTE DE DEAL d'un objet `data` de synthesis-deal-scorer.
  *
  * Pure et IMMUTABLE (n'altère jamais l'entrée — shallow clone + reconstruction
@@ -195,7 +217,9 @@ export function scrubSynthesisScoreData<T>(data: T): T {
   if (isRecord(clone.signalContribution)) {
     clone.signalContribution = stripKeys(clone.signalContribution, ["score", "scoreNote"]);
   }
-  return clone as T;
+  // Le scrub récursif par nom de clé retire les notes imbriquées et
+  // `alertSignal.recommendation` avant toute réinjection dans un contexte LLM.
+  return deepStripDealNoteKeys(clone) as T;
 }
 
 /**
@@ -250,6 +274,18 @@ const AGENT_DEAL_NOTE_KEYS = [
 ] as const;
 
 /**
+ * Clés de NOTE DE DEAL retirées RÉCURSIVEMENT : le contrat couvre aussi les
+ * notes imbriquées en profondeur (`teamAssessment.overallScore` du memo,
+ * `findings.score.grade` des experts Tier 2). Le retrait opère par NOM de clé
+ * — pattern de note (§ 4.1 : bannir les patterns de note, pas tous les
+ * nombres) ; les métriques observables (arr, mrr, valuation…) et
+ * l'orientation analytique (`recommendation` 5 valeurs hors `alertSignal`)
+ * ne portent pas ces noms et sont préservées.
+ */
+export const DEEP_DEAL_NOTE_KEY_LIST = [...AGENT_DEAL_NOTE_KEYS, "weightedScore"] as const;
+const DEEP_DEAL_NOTE_KEYS = new Set<string>(DEEP_DEAL_NOTE_KEY_LIST);
+
+/**
  * Retire les champs de NOTE DE DEAL du `data` d'UN SEUL agent avant réinjection
  * dans un contexte LLM (ex. sérialisation JSON brute de `fullData` d'un agent
  * dans le prompt du chat). synthesis-deal-scorer reçoit le scrub profond dédié
@@ -262,7 +298,9 @@ export function scrubAgentScoreData<T>(agentName: string, data: T): T {
   return (
     agentName === "synthesis-deal-scorer"
       ? scrubSynthesisScoreData(data)
-      : stripKeys(data, AGENT_DEAL_NOTE_KEYS)
+      : // Récursif : couvre les clés top-level (AGENT_DEAL_NOTE_KEYS), les
+        // notes imbriquées en profondeur ET `alertSignal.recommendation`.
+        deepStripDealNoteKeys(data)
   ) as T;
 }
 
@@ -278,12 +316,23 @@ export function scrubAgentScoreData<T>(agentName: string, data: T): T {
 export function scrubAllScoresForLLMContext<R extends Record<string, unknown>>(results: R): R {
   const cloned: Record<string, unknown> = {};
   for (const [name, result] of Object.entries(results)) {
-    const data = (result as { data?: unknown } | undefined)?.data;
-    if (!result || !isRecord(data)) {
+    if (!isRecord(result)) {
       cloned[name] = result;
       continue;
     }
-    cloned[name] = { ...(result as Record<string, unknown>), data: scrubAgentScoreData(name, data) };
+    // Les champs de trace internes (`_traceFull`, `_traceMetrics`) portent la
+    // réponse LLM brute pré-transform, score et grade inclus. Ils ne sont
+    // jamais destinés à un contexte LLM et sont donc retirés de chaque clone,
+    // y compris pour un agent en échec sans `data`.
+    const entry: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(result)) {
+      if (key.startsWith("_")) continue;
+      entry[key] = value;
+    }
+    if (isRecord(entry.data)) {
+      entry.data = scrubAgentScoreData(name, entry.data);
+    }
+    cloned[name] = entry;
   }
   return cloned as R;
 }

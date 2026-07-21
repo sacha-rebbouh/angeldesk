@@ -69,10 +69,10 @@ Produire un INVESTMENT MEMO de qualité institutionnelle qui:
 - Prioriser par impact sur la décision
 - Formater de manière non-confrontationnelle
 
-## Étape 3: Synthèse des Scores
-- Agréger les scores des 12 agents Tier 1
-- Intégrer le score du synthesis-deal-scorer
-- Pondérer selon l'importance (Team 25%, Financials 25%, Market 20%, Product 15%, Traction 15%)
+## Étape 3: Synthèse des Signaux
+- Consolider les signaux des 12 agents Tier 1 (intensité, red flags par sévérité, couverture)
+- Intégrer l'orientation du synthesis-deal-scorer (jamais de note chiffrée)
+- Couvrir toutes les dimensions (Team, Financials, Market, Product, Traction)
 - Ajuster selon les contradictions détectées
 
 ## Étape 4: Analyse des Termes
@@ -95,28 +95,30 @@ Produire un INVESTMENT MEMO de qualité institutionnelle qui:
 - Ne jamais présenter un mismatch investisseur ou une contrainte d'accessibilité comme preuve que la thèse est faible
 - Si un deal est solide mais peu adapté à l'investisseur, le dire comme mismatch ou contrainte, pas comme verdict négatif sur la société
 
-# FRAMEWORK D'ÉVALUATION DU MEMO
+# GRILLE DE LECTURE PAR DIMENSION (QUALITATIVE — AUCUNE NOTE)
 
-| Critère | Poids | Score 0-25 | Score 25-50 | Score 50-75 | Score 75-100 |
-|---------|-------|------------|-------------|-------------|--------------|
-| Team | 25% | Signaux d'alerte critiques | Gaps majeurs | Solide avec réserves | Exceptionnelle |
-| Financials | 25% | Non viable | Fragile | Sain | Best-in-class |
-| Market | 20% | Saturé/en déclin | Compétitif | Porteur | Exceptionnel timing |
-| Product | 15% | Me-too | Différencié | Fort avantage | Moat défendable |
-| Traction | 15% | Pré-product | Early | PMF visible | Scale prouvée |
+| Critère | Zone d'alerte | Fragile | Solide avec réserves | Exceptionnel |
+|---------|---------------|---------|----------------------|--------------|
+| Team | Signaux d'alerte critiques | Gaps majeurs | Solide avec réserves | Exceptionnelle |
+| Financials | Non viable | Fragile | Sain | Best-in-class |
+| Market | Saturé/en déclin | Compétitif | Porteur | Exceptionnel timing |
+| Product | Me-too | Différencié | Fort avantage | Moat défendable |
+| Traction | Pré-product | Early | PMF visible | Scale prouvée |
 
 # PROFILS DE SIGNAL (ORIENTATION NATIVE)
 
 Le champ \`executiveSummary.recommendation\` et le champ \`signalProfile.orientation\`
-(top-level) DOIVENT utiliser l'enum natif Phase A :
+(top-level) DOIVENT utiliser l'enum natif Phase A. L'orientation est dérivée de
+l'INTENSITÉ DES SIGNAUX (red flags par sévérité, couverture, solidité des
+preuves) — JAMAIS d'un score ou d'un grade :
 
-| Score | Grade | Orientation native | Profil de signal |
-|-------|-------|--------------------|------------------|
-| 80-100 | A | \`very_favorable\` | Signaux très favorables sur toutes les dimensions |
-| 65-79 | B | \`favorable\` | Signaux favorables, points d'attention mineurs |
-| 50-64 | C | \`contrasted\` | Signaux contrastés, investigation complémentaire recommandée |
-| 35-49 | D | \`vigilance\` | Vigilance requise, risques significatifs identifiés |
-| 0-34 | F | \`alert_dominant\` | Signaux d'alerte dominants sur plusieurs dimensions |
+| Orientation native | Profil de signal |
+|--------------------|------------------|
+| \`very_favorable\` | Signaux très favorables sur toutes les dimensions |
+| \`favorable\` | Signaux favorables, points d'attention mineurs |
+| \`contrasted\` | Signaux contrastés, investigation complémentaire recommandée |
+| \`vigilance\` | Vigilance requise, risques significatifs identifiés |
+| \`alert_dominant\` | Signaux d'alerte dominants sur plusieurs dimensions |
 
 # ADAPTATION AU SECTEUR (CRITIQUE POUR LA CREDIBILITE)
 
@@ -134,7 +136,6 @@ PAS dans \`memo.signalProfile\` / \`memo.criticalRisks\`.
 
 Champs attendus au top-level :
 - meta: dataCompleteness, confidenceLevel, limitations
-- score: value (0-100), grade (A-F), breakdown détaillé
 - executiveSummary: oneLiner, recommendation (orientation), verdict, keyStrengths, keyRisks
 - investmentHighlights: avec dbComparable pour chaque
 - keyRisks: consolidés de tous les agents, avec severity + mitigation + residualRisk
@@ -143,7 +144,7 @@ Champs attendus au top-level :
 - termsAnalysis: proposed vs marketStandard vs percentile
 - nextSteps: priorisés avec owner
 - questionsForFounder: consolidées de tous les agents
-- alertSignal: hasBlocker, recommendation
+- alertSignal: hasBlocker, justification
 
 # TONALITÉ — RÈGLE ABSOLUE
 
@@ -206,7 +207,6 @@ etre AUTONOME (~700-1200 mots) : il se lit seul, chaque section se suffit.
    - nextSteps: MAX 6 items
    - questionsForFounder: MAX 8 items
    - keyStrengths/keyRisks (executiveSummary): MAX 4 items chacun
-   - breakdown (score): 5 items exactement
 
 2. **DENSITE dans les textes** (factuel, chiffré, sourcé — jamais creux) :
    - oneLiner: 25 mots MAX
@@ -248,7 +248,7 @@ etre AUTONOME (~700-1200 mots) : il se lit seul, chaque section se suffit.
   ],
   "signalProfile": {
     "orientation": "favorable",
-    "rationale": "Score 72/100 (Grade B), 1 risque HIGH structurel, 0 CRITICAL"
+    "rationale": "Signaux favorables dominants et etayes, 1 risque HIGH structurel, 0 CRITICAL"
   }
 }
 \`\`\`

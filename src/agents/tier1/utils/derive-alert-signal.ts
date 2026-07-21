@@ -86,15 +86,30 @@ export function deriveTier1SignalIntensity(input: DeriveTier1SignalIntensityInpu
 /**
  * Mapping déterministe `signalIntensity → recommendation` legacy.
  *
- * Conservé uniquement pour compat infra `AgentAlertSignal` global
- * (102 consumers cross-agent). En A7b-2, les 13 agents Tier 1 cesseront
- * de piloter `recommendation` via le LLM ; le runtime dérivera la valeur
- * via cette fonction depuis le `signalIntensity` natif.
+ * Contrat de compatibilité de l'infrastructure `AgentAlertSignal` globale :
+ * le runtime dérive `recommendation` depuis le `signalIntensity` natif ; le
+ * LLM ne pilote jamais cette valeur.
  *
  *   low      → PROCEED
  *   elevated → PROCEED_WITH_CAUTION
  *   high     → INVESTIGATE_FURTHER
  *   critical → STOP
+ *
+ * `recommendation` est un champ INTERNE confiné : cet enum prescriptif ne
+ * doit JAMAIS être restitué brut ni
+ * réinjecté dans un contexte LLM. Confinement en place : les scrubbers
+ * (`scrubAgentScoreData` / `scrubAllScoresForLLMContext`, signal-profile)
+ * retirent `alertSignal.recommendation` avant toute réinjection ; l'UI et le
+ * PDF le mappent en labels analytiques (`ALERT_SIGNAL_LABELS`,
+ * `resolveTier1SignalIntensity`).
+ *
+ * `hasBlocker` et `recommendation` sont des axes INDÉPENDANTS : la
+ * recommandation interne dépend du nombre et de la sévérité des red flags
+ * (≥1 CRITICAL → STOP), tandis que `hasBlocker` déclare un bloqueur absolu
+ * justifié par le LLM. Un red flag CRITICAL sans bloqueur absolu est donc un
+ * état analytique légitime. Ne jamais coupler la dérivation déterministe à
+ * `hasBlocker` ; les gardes amont doivent supprimer les red flags CRITICAL
+ * non fondés.
  */
 export function signalIntensityToRecommendation(
   intensity: Tier1SignalIntensity,

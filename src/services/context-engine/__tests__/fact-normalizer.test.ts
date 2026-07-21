@@ -101,6 +101,7 @@ describe("extractFactsFromDealContext", () => {
               stage: "Series A",
               geography: "France",
               fundingAmount: 4_000_000,
+              currency: "EUR",
               fundingDate: "2026-01-10",
               investors: ["SeedX"],
               source: {
@@ -116,6 +117,7 @@ describe("extractFactsFromDealContext", () => {
               stage: "Seed",
               geography: "France",
               fundingAmount: 2_500_000,
+              currency: "EUR",
               fundingDate: "2025-11-02",
               investors: ["North"],
               source: {
@@ -192,6 +194,7 @@ describe("extractFactsFromDealContext", () => {
                 confidence: 0.78,
               },
               totalFunding: 20000000,
+              currency: "USD",
               stage: "Series A",
             },
             {
@@ -206,7 +209,6 @@ describe("extractFactsFromDealContext", () => {
               },
             },
           ],
-          marketConcentration: "moderate",
           competitiveAdvantages: ["Faster onboarding", "Deeper workflow automation"],
           competitiveRisks: ["Microsoft could bundle adjacent workflow tooling"],
         },
@@ -226,6 +228,20 @@ describe("extractFactsFromDealContext", () => {
     expect(byKey.get("market.tam")?.value).toBe(1000000000);
     expect(byKey.get("competition.main_competitor")?.value).toBe("Rival One");
     expect(byKey.get("competition.competitors_count")?.value).toBe(2);
+    expect(byKey.get("competition.competitors_funded")?.value).toEqual([
+      expect.objectContaining({
+        name: "Rival One",
+        totalFunding: 20_000_000,
+        currency: "USD",
+      }),
+    ]);
+    expect(byKey.get("competition.competitors_funded")?.displayValue).toContain("$20.0M");
+    expect(byKey.get("competition.competitors_funded")?.displayValue).not.toContain("€");
+    const competitorMetadata = byKey.get("competition.competitors_funded")
+      ?.sourceMetadata?.competitors as unknown[];
+    expect(competitorMetadata).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Rival One", currency: "USD" }),
+    ]));
     expect(String(byKey.get("competition.differentiation")?.value)).toContain("Faster onboarding");
     expect(byKey.get("competition.big_tech_threat")?.value).toBe("medium");
     expect(byKey.get("traction.customers_count")?.value).toBe(150);
@@ -268,5 +284,60 @@ describe("extractFactsFromDealContext", () => {
 
     const teamSizeFact = facts.find((fact) => fact.factKey === "team.size");
     expect(teamSizeFact?.value).toBe(11);
+  });
+
+  it("does not create a timing fact when funding trend and news are unavailable", () => {
+    const facts = extractFactsFromDealContext({
+      enrichedAt: "2026-04-19T12:00:00.000Z",
+      completeness: 0.2,
+      dealIntelligence: {
+        similarDeals: [],
+        fundingContext: {
+          totalDealsInPeriod: 12,
+          multiplesSampleSize: 0,
+          multiplesStage: "seed",
+        },
+      },
+    });
+
+    expect(facts.find((fact) => fact.factKey === "market.timing_assessment")).toBeUndefined();
+    expect(facts.map((fact) => fact.extractedText).join(" ")).not.toContain("stable");
+  });
+
+  it("creates a news-only timing fact when funding trend is unavailable", () => {
+    const facts = extractFactsFromDealContext({
+      enrichedAt: "2026-04-19T12:00:00.000Z",
+      completeness: 0.3,
+      dealIntelligence: {
+        similarDeals: [],
+        fundingContext: {
+          totalDealsInPeriod: 12,
+          multiplesSampleSize: 0,
+          multiplesStage: "seed",
+        },
+      },
+      newsSentiment: {
+        articles: [
+          {
+            title: "Acme publishes verified company update",
+            description: "Company update",
+            url: "https://news.example/acme-update",
+            source: "News",
+            publishedAt: "2026-04-18T00:00:00.000Z",
+            sentiment: "positive",
+            relevance: 0.9,
+            category: "company",
+          },
+        ],
+        overallSentiment: "positive",
+        sentimentScore: 0.7,
+        keyTopics: ["company update"],
+      },
+    });
+
+    const timingFact = facts.find((fact) => fact.factKey === "market.timing_assessment");
+    expect(timingFact?.value).toBe("News sentiment is positive (1 relevant articles).");
+    expect(timingFact?.extractedText).not.toContain("Funding market is");
+    expect(timingFact?.extractedText).not.toContain("stable");
   });
 });

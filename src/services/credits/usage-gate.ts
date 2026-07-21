@@ -416,36 +416,34 @@ export async function grantFreeCredits(userId: string): Promise<boolean> {
  * (purchaser → 100% paid, non-purchaser → 100% free). Donc le refund cible le
  * même pot : crédite en `balance` paid si purchaser, en `balanceFree` si non-purchaser.
  *
- * Idempotence : scopedKey scope précis (analysisId si dispo, sinon dealId
- * + timestamp arrondi à la minute pour absorber les doubles clics).
+ * Idempotence : chaque appelant fournit une clé explicite, ou un analysisId
+ * permettant de construire une clé stable.
  */
+type RefundCreditsOptions =
+  | { analysisId: string; idempotencyKey?: string }
+  | { analysisId?: string; idempotencyKey: string };
+
 export async function refundCredits(
   userId: string,
   action: CreditActionType,
-  dealId?: string,
-  options?: { analysisId?: string; idempotencyKey?: string }
+  dealId: string | undefined,
+  options: RefundCreditsOptions
 ): Promise<void> {
   const cost = CREDIT_COSTS[action];
   if (cost === 0) return;
 
-  const scopedKey = options?.idempotencyKey
-    ?? (options?.analysisId
-        ? `refund:${action}:analysis:${options.analysisId}`
-        : dealId
-          ? `refund:${action}:deal:${dealId}:${Math.floor(Date.now() / 60_000)}`
-          : undefined);
+  const scopedKey = options.idempotencyKey
+    ?? `refund:${action}:analysis:${options.analysisId}`;
 
   try {
     await prisma.$transaction(async (tx) => {
-      if (scopedKey) {
-        const existing = await tx.creditTransaction.findUnique({
-          where: { idempotencyKey: scopedKey },
-          select: { id: true },
-        });
-        if (existing) {
-          logger.warn({ userId, dealId, action, scopedKey }, 'Refund idempotency hit — skipping');
-          return;
-        }
+      const existing = await tx.creditTransaction.findUnique({
+        where: { idempotencyKey: scopedKey },
+        select: { id: true },
+      });
+      if (existing) {
+        logger.warn({ userId, dealId, action, scopedKey }, 'Refund idempotency hit — skipping');
+        return;
       }
 
       const balance = await tx.userCreditBalance.findUnique({
@@ -475,7 +473,7 @@ export async function refundCredits(
           action: 'REFUND',
           description: `Remboursement ${getActionDescription(action)}`,
           dealId: dealId ?? null,
-          idempotencyKey: scopedKey ?? null,
+          idempotencyKey: scopedKey,
         },
       });
     });

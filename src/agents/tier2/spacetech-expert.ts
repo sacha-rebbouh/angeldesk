@@ -20,6 +20,7 @@
  */
 
 import type { AgentResult, EnrichedAgentContext } from "../types";
+import { formatContextMoney } from "@/services/context-engine/money";
 import {
   SectorExpertOutputSchema,
   type SectorExpertOutput,
@@ -609,11 +610,12 @@ ${dbCompetitors
     (c: {
       name: string;
       totalFunding?: number;
+      currency?: string;
       lastRound?: string;
       status?: string;
       subSector?: string;
     }) =>
-      `- **${c.name}**: ${c.totalFunding ? `${(c.totalFunding / 1_000_000).toFixed(1)}M€ leves` : "funding inconnu"}, ${c.lastRound ?? "stage inconnu"}, ${c.subSector ?? ""}, ${c.status ?? ""}`
+      `- **${c.name}**: ${c.totalFunding ? `${formatContextMoney(c.totalFunding, c.currency)} leves` : "funding inconnu"}, ${c.lastRound ?? "stage inconnu"}, ${c.subSector ?? ""}, ${c.status ?? ""}`
   )
   .join("\n")}
 `
